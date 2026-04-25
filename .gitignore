@@ -1,0 +1,32 @@
+# SafeClaw — gitignore
+.env
+.env.local
+.env.*.local
+
+# Vendored third-party repos (cloned at build time).
+vendor/
+
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+
+# rclone-mirrored drive contents (ephemeral, regenerated on host).
+drive-mirror/
+
+# Personal Soul file — template is committed, populated file is not.
+brain/user.soul.md
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# OS
+.DS_Store
+.vscode/
+.idea/
+
+# Logs
+*.log

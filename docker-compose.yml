@@ -1,0 +1,370 @@
+# SafeClaw AI Assistant — Docker Compose
+# All services run on the safeclaw_net bridge network.
+# Egress is restricted to *.googleapis.com, *.slack.com, and internal traffic
+# via iptables rules applied at host level (see DEPLOY-RUNBOOK.md §Egress Rules).
+
+name: safeclaw
+
+networks:
+  safeclaw_net:
+    driver: bridge
+    # Internal-only flag intentionally NOT set here — egress restriction is handled
+    # by iptables allowlist on the host, giving more precise domain-level control.
+
+volumes:
+  obs_data:
+    name: safeclaw_obs_data
+  tasks_data:
+    name: safeclaw_tasks_data
+  nango_data:
+    name: safeclaw_nango_data
+  drive_mirror:
+    name: safeclaw_drive_mirror
+  hermes_reader_data:
+    name: safeclaw_hermes_reader_data
+  hermes_actor_data:
+    name: safeclaw_hermes_actor_data
+
+# ─── Postgres: Observation Database ──────────────────────────────────────────
+services:
+  postgres-obs:
+    # pgvector/pgvector:pg16 = Postgres 16 + pgvector extension preinstalled.
+    # Required for the Brain layer (observation_embeddings, fact_embeddings, style_sample_embeddings).
+    image: pgvector/pgvector:pg16
+    container_name: safeclaw-postgres-obs
+    restart: unless-stopped
+    networks:
+      - safeclaw_net
+    environment:
+      POSTGRES_USER: ${POSTGRES_OBS_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_OBS_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_OBS_DB}
+    volumes:
+      - obs_data:/var/lib/postgresql/data
+      - ./db/001_obs_schema.sql:/migrations/001_obs_schema.sql:ro
+      - ./db/003_brain_schema.sql:/migrations/003_brain_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_OBS_USER} -d ${POSTGRES_OBS_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    # Do NOT expose port 5432 to the host. Internal traffic only.
+
+  # ─── Postgres: Task Database + Nango DB ────────────────────────────────────
+  # Nango shares the tasks Postgres container with an isolated 'nango' database.
+  # This keeps service count down while maintaining data separation.
+  postgres-tasks:
+    image: postgres:16-alpine
+    container_name: safeclaw-postgres-tasks
+    restart: unless-stopped
+    networks:
+      - safeclaw_net
+    environment:
+      POSTGRES_USER: ${POSTGRES_TASKS_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_TASKS_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_TASKS_DB}
+    volumes:
+      - tasks_data:/var/lib/postgresql/data
+      - ./db/002_task_schema.sql:/migrations/002_task_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_TASKS_USER} -d ${POSTGRES_TASKS_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    # Do NOT expose port 5432 to the host.
+
+  # ─── PostgREST — Task API ──────────────────────────────────────────────────
+  postgrest:
+    image: postgrest/postgrest:latest
+    container_name: safeclaw-postgrest
+    restart: unless-stopped
+    networks:
+      - safeclaw_net
+    ports:
+      - "127.0.0.1:3001:3000"   # Localhost-only. Do not expose to 0.0.0.0.
+    environment:
+      PGRST_DB_URI: postgres://${POSTGRES_TASKS_USER}:${POSTGRES_TASKS_PASSWORD}@postgres-tasks:5432/${POSTGRES_TASKS_DB}
+      PGRST_DB_SCHEMA: public
+      PGRST_DB_ANON_ROLE: tasks_anon
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      PGRST_SERVER_PORT: "3000"
+      PGRST_DB_POOL: "10"
+      PGRST_LOG_LEVEL: info
+      PGRST_DB_MAX_ROWS: "500"
+    depends_on:
+      postgres-tasks:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/localhost/3000; echo -e \"GET / HTTP/1.0\\r\\n\\r\\n\" >&3; head -1 <&3 | grep -q 200'"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ─── Nango — OAuth Vault ───────────────────────────────────────────────────
+  nango:
+    # Correct image name is nangohq/nango-server (nangohq/nango does not exist on Docker Hub).
+    image: nangohq/nango-server:latest
+    container_name: safeclaw-nango
+    restart: unless-stopped
+    networks:
+      - safeclaw_net
+    ports:
+      - "127.0.0.1:3003:3003"   # Localhost-only for dashboard and OAuth callback.
+    environment:
+      NANGO_DB_CLIENT: pg
+      NANGO_DB_HOST: postgres-tasks
+      NANGO_DB_PORT: "5432"
+      NANGO_DB_USER: ${POSTGRES_TASKS_USER}
+      NANGO_DB_PASSWORD: ${POSTGRES_TASKS_PASSWORD}
+      NANGO_DB_NAME: nango
+      NANGO_ENCRYPTION_KEY: ${NANGO_ENCRYPTION_KEY}
+      NANGO_SECRET_KEY: ${NANGO_SECRET_KEY}
+      SERVER_PORT: "3003"
+      # OAuth callback URL — must match Google/Slack OAuth app config.
+      NANGO_CALLBACK_URL: "http://localhost:3003/oauth/callback"
+    volumes:
+      - nango_data:/nango/data
+    depends_on:
+      postgres-tasks:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e 'fetch(\"http://localhost:3003/health\").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))'"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ─── rclone: Drive Mirror ──────────────────────────────────────────────────
+  # Runs rclone sync on a 15-minute cron. Mirrors the client Drive folder to
+  # ./drive-mirror/ on the host so hermes-reader can inspect file change events.
+  rclone-sync:
+    image: rclone/rclone:latest
+    container_name: safeclaw-rclone
+    restart: unless-stopped
+    networks:
+      - safeclaw_net
+    environment:
+      RCLONE_DRIVE_FOLDER_ID: ${RCLONE_DRIVE_FOLDER_ID}
+    volumes:
+      - drive_mirror:/data/drive-mirror
+      # rclone config with Drive OAuth token — managed by Nango, mounted separately.
+      # Operator must create this file after OAuth setup (see DEPLOY-RUNBOOK.md).
+      - ./config/rclone.conf:/config/rclone/rclone.conf:ro
+    command: >
+      sh -c '
+        echo "Starting rclone sync daemon (every 15 min)..." &&
+        while true; do
+          rclone sync \
+            "gdrive:${RCLONE_DRIVE_FOLDER_ID}" \
+            /data/drive-mirror \
+            --drive-root-folder-id "${RCLONE_DRIVE_FOLDER_ID}" \
+            --log-level INFO \
+            --stats 0 \
+            --transfers 4 \
+            --checkers 8 &&
+          echo "rclone sync complete at $(date)" ||
+          echo "rclone sync FAILED at $(date)";
+          sleep 900;
+        done
+      '
+
+  # ─── Tasks API MCP Server ──────────────────────────────────────────────────
+  # Runs the Node.js MCP server that wraps PostgREST for hermes-actor.
+  tasks-api-mcp:
+    build:
+      context: ./mcp-tools/tasks-api
+      dockerfile_inline: |
+        FROM node:20-alpine AS builder
+        WORKDIR /app
+        COPY package.json package-lock.json* ./
+        RUN npm install
+        COPY tsconfig.json ./
+        COPY src/ ./src/
+        RUN npm run build
+        RUN npm prune --omit=dev
+
+        FROM node:20-alpine
+        WORKDIR /app
+        COPY --from=builder /app/node_modules ./node_modules
+        COPY --from=builder /app/dist ./dist
+        COPY --from=builder /app/package.json ./
+        CMD ["node", "dist/index.js"]
+    container_name: safeclaw-tasks-api-mcp
+    # MCP servers run on stdio — Hermes spawns them via `docker exec`, so this
+    # container is not meant to stay running as a standalone daemon.
+    restart: "no"
+    # Keep alive as a shell until Hermes exec's into it.
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["echo 'tasks-api-mcp ready; will be invoked via docker exec'; sleep infinity"]
+    networks:
+      - safeclaw_net
+    environment:
+      POSTGREST_URL: http://postgrest:3000
+      TASKS_AGENT_JWT: ${TASKS_AGENT_JWT}
+    depends_on:
+      postgrest:
+        condition: service_healthy
+
+  # ─── hermes-reader — Read-Only Intake Agent ────────────────────────────────
+  # Hermes has no prebuilt image on ghcr.io — we vendor the repo at ./vendor/hermes-agent
+  # (git-cloned from github.com/NousResearch/hermes-agent) and build locally.
+  # Only this reader service carries the `build:` block; hermes-actor reuses the
+  # same image tag so docker compose builds it exactly once.
+  hermes-reader:
+    build:
+      context: ./vendor/hermes-agent
+      dockerfile: Dockerfile
+    image: safeclaw/hermes:local
+    container_name: safeclaw-hermes-reader
+    restart: unless-stopped
+    networks:
+      - safeclaw_net
+    environment:
+      HERMES_LLM_API_KEY: ${HERMES_LLM_API_KEY}
+      HERMES_LLM_BASE_URL: ${HERMES_LLM_BASE_URL}
+      HERMES_MODEL: ${HERMES_MODEL}
+      NANGO_SECRET_KEY: ${NANGO_SECRET_KEY}
+      NANGO_BASE_URL: "http://nango:3003"
+    volumes:
+      - ./config/reader-hermes.yaml:/config/hermes.yaml:ro
+      - hermes_reader_data:/opt/data
+    # Run as the long-lived daemon (gateway), not the interactive REPL.
+    command: ["gateway", "run"]
+    depends_on:
+      - nango
+      - postgres-obs
+      # reader also calls brain_recall / brain_get_soul (read-only brain access).
+      - brain-api-mcp
+
+  # ─── hermes-actor — Write/Action Agent (Phase 2+) ─────────────────────────
+  # Disabled by default (ACTOR_ENABLED=false). Set ACTOR_ENABLED=true in .env
+  # to start this service in Phase 2.
+  hermes-actor:
+    # Reuses the image built by hermes-reader (safeclaw/hermes:local).
+    image: safeclaw/hermes:local
+    container_name: safeclaw-hermes-actor
+    restart: unless-stopped
+    networks:
+      - safeclaw_net
+    environment:
+      HERMES_LLM_API_KEY: ${HERMES_LLM_API_KEY}
+      HERMES_LLM_BASE_URL: ${HERMES_LLM_BASE_URL}
+      HERMES_MODEL: ${HERMES_MODEL}
+      NANGO_SECRET_KEY: ${NANGO_SECRET_KEY}
+      NANGO_BASE_URL: "http://nango:3003"
+      TASKS_AGENT_JWT: ${TASKS_AGENT_JWT}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN}
+      SLACK_APP_TOKEN: ${SLACK_APP_TOKEN}
+      SLACK_REVIEW_CHANNEL_ID: ${SLACK_REVIEW_CHANNEL_ID}
+      AUTO_SEND_ENABLED: ${AUTO_SEND_ENABLED}
+    volumes:
+      - ./config/actor-hermes.yaml:/config/hermes.yaml:ro
+      - hermes_actor_data:/opt/data
+    # Gate: exit cleanly if ACTOR_ENABLED is not true; otherwise run gateway daemon.
+    command: >
+      sh -c '
+        if [ "${ACTOR_ENABLED:-false}" != "true" ]; then
+          echo "hermes-actor is disabled (ACTOR_ENABLED=${ACTOR_ENABLED:-false}). Set ACTOR_ENABLED=true to enable.";
+          exit 0;
+        fi;
+        exec hermes-agent gateway run
+      '
+    depends_on:
+      - nango
+      - postgrest
+      - tasks-api-mcp
+      - hermes-reader   # ensures the shared safeclaw/hermes:local image has been built
+      - brain-api-mcp
+
+  # ─── Brain: Embedder ───────────────────────────────────────────────────────
+  # Polls postgres-obs every 30s for rows missing embeddings (observations,
+  # facts, style_samples) and writes 384-dim vectors via pgvector. Also runs a
+  # tiny HTTP server on :8000 so brain-api can turn queries into vectors.
+  embedder:
+    build:
+      context: ./services/embedder
+      dockerfile: Dockerfile
+    image: safeclaw/embedder:local
+    container_name: safeclaw-embedder
+    restart: unless-stopped
+    networks:
+      - safeclaw_net
+    ports:
+      - "127.0.0.1:8000:8000"   # Localhost-only; internal clients use http://embedder:8000.
+    environment:
+      DATABASE_URL: ${BRAIN_OBS_DATABASE_URL}
+      BRAIN_EMBEDDING_MODEL: ${BRAIN_EMBEDDING_MODEL}
+    depends_on:
+      postgres-obs:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request,sys; sys.exit(0 if urllib.request.urlopen(\"http://localhost:8000/health\", timeout=3).status==200 else 1)'"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  # ─── Brain: Reflector ──────────────────────────────────────────────────────
+  # Runs at startup, then weekly (Mon 06:00 UTC). Reads observations + review
+  # feedback, proposes Soul + preference updates to soul_revisions / review_queue.
+  reflector:
+    build:
+      context: ./services/reflector
+      dockerfile: Dockerfile
+    image: safeclaw/reflector:local
+    container_name: safeclaw-reflector
+    restart: unless-stopped
+    networks:
+      - safeclaw_net
+    environment:
+      DATABASE_URL: ${BRAIN_OBS_DATABASE_URL}
+      HERMES_LLM_API_KEY: ${HERMES_LLM_API_KEY}
+      HERMES_LLM_BASE_URL: ${HERMES_LLM_BASE_URL}
+      HERMES_MODEL: ${HERMES_MODEL}
+      BRAIN_USER_KEY: ${BRAIN_USER_KEY}
+    depends_on:
+      postgres-obs:
+        condition: service_healthy
+
+  # ─── Brain: MCP Server ─────────────────────────────────────────────────────
+  # TypeScript MCP server exposing brain_recall / brain_write / brain_get_soul /
+  # brain_list_relationships to hermes-reader and hermes-actor.
+  brain-api-mcp:
+    build:
+      context: ./mcp-tools/brain-api
+      dockerfile_inline: |
+        FROM node:20-alpine AS builder
+        WORKDIR /app
+        COPY package.json package-lock.json* ./
+        RUN npm install
+        COPY tsconfig.json ./
+        COPY src/ ./src/
+        RUN npm run build
+        RUN npm prune --omit=dev
+
+        FROM node:20-alpine
+        WORKDIR /app
+        COPY --from=builder /app/node_modules ./node_modules
+        COPY --from=builder /app/dist ./dist
+        COPY --from=builder /app/package.json ./
+        CMD ["node", "dist/index.js"]
+    image: safeclaw/brain-api:local
+    container_name: safeclaw-brain-api-mcp
+    # Same stdio MCP model as tasks-api-mcp — kept alive for docker exec invocation.
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["echo 'brain-api-mcp ready; will be invoked via docker exec'; sleep infinity"]
+    networks:
+      - safeclaw_net
+    environment:
+      DATABASE_URL: ${BRAIN_OBS_DATABASE_URL}
+      EMBEDDER_URL: ${BRAIN_EMBEDDER_URL}
+      BRAIN_USER_KEY: ${BRAIN_USER_KEY}
+    depends_on:
+      postgres-obs:
+        condition: service_healthy
+      embedder:
+        condition: service_started

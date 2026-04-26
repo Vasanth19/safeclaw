@@ -16,8 +16,6 @@ volumes:
     name: safeclaw_obs_data
   tasks_data:
     name: safeclaw_tasks_data
-  nango_data:
-    name: safeclaw_nango_data
   drive_mirror:
     name: safeclaw_drive_mirror
   hermes_reader_data:
@@ -103,39 +101,10 @@ services:
       retries: 3
       start_period: 10s
 
-  # ─── Nango — OAuth Vault ───────────────────────────────────────────────────
-  nango:
-    # Correct image name is nangohq/nango-server (nangohq/nango does not exist on Docker Hub).
-    image: nangohq/nango-server:latest
-    container_name: safeclaw-nango
-    restart: unless-stopped
-    networks:
-      - safeclaw_net
-    ports:
-      - "127.0.0.1:3003:3003"   # Localhost-only for dashboard and OAuth callback.
-    environment:
-      NANGO_DB_CLIENT: pg
-      NANGO_DB_HOST: postgres-tasks
-      NANGO_DB_PORT: "5432"
-      NANGO_DB_USER: ${POSTGRES_TASKS_USER}
-      NANGO_DB_PASSWORD: ${POSTGRES_TASKS_PASSWORD}
-      NANGO_DB_NAME: nango
-      NANGO_ENCRYPTION_KEY: ${NANGO_ENCRYPTION_KEY}
-      NANGO_SECRET_KEY: ${NANGO_SECRET_KEY}
-      SERVER_PORT: "3003"
-      # OAuth callback URL — must match Google/Slack OAuth app config.
-      NANGO_CALLBACK_URL: "http://localhost:3003/oauth/callback"
-    volumes:
-      - nango_data:/nango/data
-    depends_on:
-      postgres-tasks:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "node -e 'fetch(\"http://localhost:3003/health\").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))'"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
+  # ─── (Nango removed — replaced by Composio managed OAuth + MCP servers) ──
+  # OAuth tokens for Gmail/Drive/Slack now live in Composio's vault. Hermes
+  # reaches them by talking to the Composio MCP servers (HTTP transport).
+  # See COMPOSIO_READER_MCP_URL and COMPOSIO_ACTOR_MCP_URL in .env.
 
   # ─── rclone: Drive Mirror ──────────────────────────────────────────────────
   # Runs rclone sync on a 15-minute cron. Mirrors the client Drive folder to
@@ -226,15 +195,20 @@ services:
       HERMES_LLM_API_KEY: ${HERMES_LLM_API_KEY}
       HERMES_LLM_BASE_URL: ${HERMES_LLM_BASE_URL}
       HERMES_MODEL: ${HERMES_MODEL}
-      NANGO_SECRET_KEY: ${NANGO_SECRET_KEY}
-      NANGO_BASE_URL: "http://nango:3003"
+      # Composio replaces Nango — Hermes connects to a hosted MCP server
+      # for Gmail/Slack reads. Toolkit access is gated by allowed_tools at
+      # MCP server creation time (the broken-trifecta enforcement boundary).
+      COMPOSIO_API_KEY: ${COMPOSIO_API_KEY}
+      COMPOSIO_USER_ID: ${COMPOSIO_USER_ID}
+      COMPOSIO_READER_MCP_URL: ${COMPOSIO_READER_MCP_URL}
     volumes:
-      - ./config/reader-hermes.yaml:/config/hermes.yaml:ro
+      # Mount our reader config to /opt/data/config.yaml — the path Hermes
+      # actually reads from (~/.hermes/config.yaml inside the container).
+      - ./config/reader-hermes.yaml:/opt/data/config.yaml
       - hermes_reader_data:/opt/data
     # Run as the long-lived daemon (gateway), not the interactive REPL.
     command: ["gateway", "run"]
     depends_on:
-      - nango
       - postgres-obs
       # reader also calls brain_recall / brain_get_soul (read-only brain access).
       - brain-api-mcp
@@ -253,15 +227,13 @@ services:
       HERMES_LLM_API_KEY: ${HERMES_LLM_API_KEY}
       HERMES_LLM_BASE_URL: ${HERMES_LLM_BASE_URL}
       HERMES_MODEL: ${HERMES_MODEL}
-      NANGO_SECRET_KEY: ${NANGO_SECRET_KEY}
-      NANGO_BASE_URL: "http://nango:3003"
+      COMPOSIO_API_KEY: ${COMPOSIO_API_KEY}
+      COMPOSIO_USER_ID: ${COMPOSIO_USER_ID}
+      COMPOSIO_ACTOR_MCP_URL: ${COMPOSIO_ACTOR_MCP_URL}
       TASKS_AGENT_JWT: ${TASKS_AGENT_JWT}
-      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN}
-      SLACK_APP_TOKEN: ${SLACK_APP_TOKEN}
-      SLACK_REVIEW_CHANNEL_ID: ${SLACK_REVIEW_CHANNEL_ID}
       AUTO_SEND_ENABLED: ${AUTO_SEND_ENABLED}
     volumes:
-      - ./config/actor-hermes.yaml:/config/hermes.yaml:ro
+      - ./config/actor-hermes.yaml:/opt/data/config.yaml
       - hermes_actor_data:/opt/data
     # Gate: exit cleanly if ACTOR_ENABLED is not true; otherwise run gateway daemon.
     command: >
@@ -273,7 +245,6 @@ services:
         exec hermes-agent gateway run
       '
     depends_on:
-      - nango
       - postgrest
       - tasks-api-mcp
       - hermes-reader   # ensures the shared safeclaw/hermes:local image has been built

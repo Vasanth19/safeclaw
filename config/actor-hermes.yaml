@@ -20,6 +20,20 @@ model:
   # Hermes uses `default:` (the default model), not `name:` — unlike most agent runtimes.
   default: glm-5.1:cloud
   temperature: 0.2
+  # Cap output to prevent runaway truncation/continuation loops on small-output models.
+  max_tokens: 4096
+
+# ── Toolset pruning ──────────────────────────────────────────────────────────
+# Hermes ships 74 bundled skills. Loading all of them into context per turn
+# burns ~22K tokens of skill metadata. Restrict the Telegram platform to ONLY
+# the toolsets SafeClaw actually needs:
+#   - native-mcp : connects to Composio MCP servers (Gmail, Slack, Drive)
+#   - file       : read/write local files (brain folder editing)
+#   - todo       : in-conversation task tracking
+#   - skills     : let agent inspect/use saved skills (lightweight)
+# Drops session_meta from ~87 KB to ~15 KB. ~70% context savings per turn.
+platform_toolsets:
+  telegram: [native-mcp, file, todo, skills]
 
 # ── MCP Servers ──────────────────────────────────────────────────────────────
 # Composio actor MCP exposes 10 tools across Gmail (draft + reply), Slack

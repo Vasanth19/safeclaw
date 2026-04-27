@@ -1,0 +1,85 @@
+# SafeClaw — default Hermes config seed.
+#
+# Copied into /opt/data/config.yaml on first boot ONLY IF the operator did NOT
+# mount a config-template at /safeclaw/config-template/config.yaml.
+#
+# Customers who provision via docker-compose normally bind their own
+# config (actor-hermes.yaml or reader-hermes.yaml) to /safeclaw/config-template/
+# and the entrypoint copies that into /opt/data/. This file is the bare-minimum
+# fallback when no template is mounted (e.g. ad-hoc `docker run` for testing).
+#
+# Secrets MUST come from env vars (.env / docker-compose env_file). This file
+# never embeds API keys directly.
+
+# ── Model / provider ─────────────────────────────────────────────────────────
+# The provider field is rewritten by safeclaw-entrypoint.sh based on which API
+# key env var the operator supplies (OLLAMA_API_KEY > ANTHROPIC_API_KEY >
+# OPENAI_API_KEY). The placeholder below is what ships in the image.
+model:
+  provider: "auto"
+  default: "anthropic/claude-opus-4.6"
+  temperature: 0.2
+  max_tokens: 4096
+
+agent:
+  name: safeclaw
+  description: >
+    SafeClaw default agent. Replace this block by mounting your own config
+    template at /safeclaw/config-template/config.yaml.
+
+# ── Toolset pruning (matches the baked skill prune) ──────────────────────────
+# Only the four toolsets SafeClaw actually wires up. Keeps session_meta small.
+platform_toolsets:
+  cli: [native-mcp, file, todo, skills]
+  telegram: [native-mcp, file, todo, skills]
+  slack: [native-mcp, file, todo, skills]
+  discord: [native-mcp, file, todo, skills]
+
+# ── Session reset policy ─────────────────────────────────────────────────────
+# Auto-clears messaging session context to keep token costs bounded.
+#   mode: both   → reset on EITHER 24h idle OR daily 4am boundary
+#   idle_minutes: 1440 = 24 hours
+session_reset:
+  mode: both
+  idle_minutes: 1440
+  at_hour: 4
+
+# Hard ceiling on per-session messages. The entrypoint writes
+# SAFECLAW_MAX_MESSAGES_PER_SESSION into the env so adapters can act on it.
+# Hermes does not natively support a "reset every N messages" knob in
+# config.yaml as of v0.11; the env var is the source of truth and is
+# intentionally redundant here for visibility.
+safeclaw:
+  max_messages_per_session: 50
+  reset_after_messages: true
+
+# ── Skills allowlist ─────────────────────────────────────────────────────────
+# These match the packs that survived prune-skills.sh.
+skills:
+  enabled:
+    - mcp/native-mcp
+    - email/himalaya
+    - note-taking/obsidian
+    - productivity/google-workspace
+    - productivity/notion
+    - productivity/linear
+    - social-media/xurl
+    - software-development/test-driven-development
+    - software-development/systematic-debugging
+    - github/github-pr-workflow
+
+# ── Platforms ────────────────────────────────────────────────────────────────
+# Telegram home-channel ID is injected by safeclaw-entrypoint.sh from
+# TELEGRAM_HOME_CHAT_ID env var on first boot.
+platforms: []
+
+# ── MCP servers ──────────────────────────────────────────────────────────────
+# Operators must override this section in their own config template. The
+# Composio URLs and API keys live in env vars referenced via ${...}.
+mcp_servers: {}
+
+# ── System prompt placeholder ────────────────────────────────────────────────
+system_prompt: |
+  You are SafeClaw — a sandboxed, single-user AI assistant.
+  This is the default system prompt. Override it by mounting your own
+  config template at /safeclaw/config-template/config.yaml.

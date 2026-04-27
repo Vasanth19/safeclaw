@@ -1,0 +1,197 @@
+{% extends "base.html" %}
+{% block title %}SafeClaw — Setup{% endblock %}
+
+{% block content %}
+<section class="setup">
+  <header class="setup-header">
+    <h1>Setup</h1>
+    <p>Four short steps. Nothing leaves this VPS.</p>
+    <ol class="stepper" id="stepper">
+      <li class="step active" data-step="1"><span>1</span> LLM</li>
+      <li class="step" data-step="2"><span>2</span> Composio</li>
+      <li class="step" data-step="3"><span>3</span> Slack</li>
+      <li class="step" data-step="4"><span>4</span> Telegram</li>
+    </ol>
+  </header>
+
+  <form id="setup-form" class="setup-form" autocomplete="off" novalidate>
+
+    <!-- ── Step 1: LLM ──────────────────────────────────────────────── -->
+    <fieldset class="step-panel" data-step="1">
+      <legend>1 / 4 &middot; Which model should drive your assistant?</legend>
+
+      <div class="field">
+        <label>
+          <input type="radio" name="llm_provider" value="ollama-cloud" checked>
+          <span class="radio-title">Ollama Cloud <small>(default, fastest path to live)</small></span>
+        </label>
+        <label>
+          <input type="radio" name="llm_provider" value="anthropic">
+          <span class="radio-title">Anthropic Claude</span>
+        </label>
+        <label>
+          <input type="radio" name="llm_provider" value="openai">
+          <span class="radio-title">OpenAI gpt-4o</span>
+        </label>
+      </div>
+
+      <div class="field" data-show-when="llm_provider=ollama-cloud">
+        <label for="OLLAMA_BASE_URL">Ollama base URL</label>
+        <input type="url" id="OLLAMA_BASE_URL" name="OLLAMA_BASE_URL"
+               value="http://host.docker.internal:11434/v1"
+               placeholder="http://host.docker.internal:11434/v1">
+        <p class="hint">Leave the default unless you know what you're doing.</p>
+      </div>
+
+      <div class="field">
+        <label for="LLM_API_KEY">
+          API key
+          <a class="help-link" href="/help#llm" target="_blank">where do I get this?</a>
+        </label>
+        <input type="password" id="LLM_API_KEY" name="LLM_API_KEY" autocomplete="new-password"
+               placeholder="paste key here">
+        <p class="hint" data-when="llm_provider=ollama-cloud">For local Ollama, leave blank or use <code>ollama-local</code>.</p>
+        <p class="hint" data-when="llm_provider=anthropic">Starts with <code>sk-ant-</code>.</p>
+        <p class="hint" data-when="llm_provider=openai">Starts with <code>sk-</code>.</p>
+      </div>
+
+      <div class="field">
+        <label for="HERMES_DEFAULT_MODEL">Model</label>
+        <input type="text" id="HERMES_DEFAULT_MODEL" name="HERMES_DEFAULT_MODEL"
+               value="glm-5.1:cloud"
+               placeholder="e.g. glm-5.1:cloud, claude-sonnet-4, gpt-4o">
+      </div>
+
+      <div class="step-actions">
+        <button type="button" class="btn-next" data-goto="2">Next: Composio</button>
+      </div>
+    </fieldset>
+
+    <!-- ── Step 2: Composio ─────────────────────────────────────────── -->
+    <fieldset class="step-panel hidden" data-step="2">
+      <legend>2 / 4 &middot; Connect Composio (Gmail, Calendar, Drive)</legend>
+
+      <div class="field">
+        <label for="COMPOSIO_API_KEY">
+          Composio API key
+          <a class="help-link" href="/help#composio" target="_blank">where?</a>
+        </label>
+        <input type="password" id="COMPOSIO_API_KEY" name="COMPOSIO_API_KEY"
+               autocomplete="new-password" placeholder="ak_...">
+        <p class="hint">Starts with <code>ak_</code>.</p>
+      </div>
+
+      <div class="field">
+        <label for="COMPOSIO_USER_ID">Composio user ID</label>
+        <input type="text" id="COMPOSIO_USER_ID" name="COMPOSIO_USER_ID"
+               placeholder="usually your email or a UUID">
+      </div>
+
+      <div class="field">
+        <label for="COMPOSIO_READER_MCP_URL">Reader MCP URL</label>
+        <input type="url" id="COMPOSIO_READER_MCP_URL" name="COMPOSIO_READER_MCP_URL"
+               placeholder="https://...composio.dev/.../mcp?user_id=...">
+        <p class="hint">Must end with <code>/mcp?user_id=...</code></p>
+      </div>
+
+      <div class="field">
+        <label for="COMPOSIO_ACTOR_MCP_URL">Actor MCP URL</label>
+        <input type="url" id="COMPOSIO_ACTOR_MCP_URL" name="COMPOSIO_ACTOR_MCP_URL"
+               placeholder="https://...composio.dev/.../mcp?user_id=...">
+      </div>
+
+      <div class="step-actions">
+        <button type="button" class="btn-prev" data-goto="1">Back</button>
+        <button type="button" class="btn-next" data-goto="3">Next: Slack</button>
+      </div>
+    </fieldset>
+
+    <!-- ── Step 3: Slack ────────────────────────────────────────────── -->
+    <fieldset class="step-panel hidden" data-step="3">
+      <legend>3 / 4 &middot; Slack — your assistant's chat surface</legend>
+
+      <p class="step-intro">
+        First time creating a Slack app? Follow the
+        <a href="/help#slack" target="_blank">10-step walkthrough</a>
+        in another tab, then come back.
+      </p>
+
+      <div class="field">
+        <label for="SLACK_BOT_TOKEN">Bot Token</label>
+        <input type="password" id="SLACK_BOT_TOKEN" name="SLACK_BOT_TOKEN"
+               autocomplete="new-password" placeholder="xoxb-...">
+      </div>
+
+      <div class="field">
+        <label for="SLACK_APP_TOKEN">App Token (Socket Mode)</label>
+        <input type="password" id="SLACK_APP_TOKEN" name="SLACK_APP_TOKEN"
+               autocomplete="new-password" placeholder="xapp-...">
+      </div>
+
+      <div class="field-row">
+        <div class="field">
+          <label for="SLACK_WORKSPACE_ID">Workspace ID</label>
+          <input type="text" id="SLACK_WORKSPACE_ID" name="SLACK_WORKSPACE_ID"
+                 placeholder="T...">
+        </div>
+        <div class="field">
+          <label for="SLACK_BOT_ADMIN_USER_ID">Your Slack user ID (admin)</label>
+          <input type="text" id="SLACK_BOT_ADMIN_USER_ID" name="SLACK_BOT_ADMIN_USER_ID"
+                 placeholder="U...">
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="SLACK_PUBLIC_CHANNELS">Channel IDs to listen in</label>
+        <input type="text" id="SLACK_PUBLIC_CHANNELS" name="SLACK_PUBLIC_CHANNELS"
+               placeholder="C012ABCD,C098WXYZ">
+        <p class="hint">Comma-separated. The bot must already be invited to these channels.</p>
+      </div>
+
+      <div class="step-actions">
+        <button type="button" class="btn-prev" data-goto="2">Back</button>
+        <button type="button" class="btn-next" data-goto="4">Next: Telegram</button>
+      </div>
+    </fieldset>
+
+    <!-- ── Step 4: Telegram (optional) ─────────────────────────────── -->
+    <fieldset class="step-panel hidden" data-step="4">
+      <legend>4 / 4 &middot; Telegram <span class="badge">optional</span></legend>
+
+      <div class="field checkbox-field">
+        <label>
+          <input type="checkbox" id="telegram_enabled" name="telegram_enabled">
+          <span>I want a Telegram bot too — boss's pocket assistant.</span>
+        </label>
+      </div>
+
+      <div id="telegram-fields" class="hidden">
+        <div class="field">
+          <label for="TELEGRAM_BOT_TOKEN">Telegram bot token</label>
+          <input type="password" id="TELEGRAM_BOT_TOKEN" name="TELEGRAM_BOT_TOKEN"
+                 autocomplete="new-password" placeholder="123456:ABC-...">
+          <p class="hint">Get from <code>@BotFather</code> on Telegram.</p>
+        </div>
+        <div class="field">
+          <label for="TELEGRAM_ALLOWED_USERS">Allowed Telegram user IDs</label>
+          <input type="text" id="TELEGRAM_ALLOWED_USERS" name="TELEGRAM_ALLOWED_USERS"
+                 placeholder="987654321,123456789">
+          <p class="hint">Comma-separated numeric IDs. DM <code>@userinfobot</code> to find yours.</p>
+        </div>
+      </div>
+
+      <div class="step-actions">
+        <button type="button" class="btn-prev" data-goto="3">Back</button>
+        <button type="submit" class="btn-submit">Provision now</button>
+      </div>
+
+      <p class="error-banner hidden" id="form-error" role="alert"></p>
+    </fieldset>
+
+  </form>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='setup.js') }}"></script>
+{% endblock %}

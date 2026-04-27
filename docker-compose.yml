@@ -144,24 +144,11 @@ services:
   # ─── Tasks API MCP Server ──────────────────────────────────────────────────
   # Runs the Node.js MCP server that wraps PostgREST for hermes-actor.
   tasks-api-mcp:
-    build:
-      context: ./mcp-tools/tasks-api
-      dockerfile_inline: |
-        FROM node:20-alpine AS builder
-        WORKDIR /app
-        COPY package.json package-lock.json* ./
-        RUN npm install
-        COPY tsconfig.json ./
-        COPY src/ ./src/
-        RUN npm run build
-        RUN npm prune --omit=dev
-
-        FROM node:20-alpine
-        WORKDIR /app
-        COPY --from=builder /app/node_modules ./node_modules
-        COPY --from=builder /app/dist ./dist
-        COPY --from=builder /app/package.json ./
-        CMD ["node", "dist/index.js"]
+    image: ghcr.io/vasanth19/safeclaw-tasks-api:1.0
+    # Dev-only: rebuild from source.
+    # build:
+    #   context: ./mcp-tools/tasks-api
+    #   dockerfile: Dockerfile
     container_name: safeclaw-tasks-api-mcp
     # MCP servers run on stdio — Hermes spawns them via `docker exec`, so this
     # container is not meant to stay running as a standalone daemon.
@@ -179,15 +166,16 @@ services:
         condition: service_healthy
 
   # ─── hermes-reader — Read-Only Intake Agent ────────────────────────────────
-  # Hermes has no prebuilt image on ghcr.io — we vendor the repo at ./vendor/hermes-agent
-  # (git-cloned from github.com/NousResearch/hermes-agent) and build locally.
-  # Only this reader service carries the `build:` block; hermes-actor reuses the
-  # same image tag so docker compose builds it exactly once.
+  # Pulls the pre-built SafeClaw distribution image from GHCR (skill prune,
+  # bind-mount fix, default session reset, and provider auto-pick all baked in).
+  # Devs who want to rebuild from source can comment-toggle the build: block.
   hermes-reader:
-    build:
-      context: ./vendor/hermes-agent
-      dockerfile: Dockerfile
-    image: safeclaw/hermes:local
+    image: ghcr.io/vasanth19/safeclaw-hermes:1.0
+    # Dev-only: rebuild from source instead of pulling from GHCR.
+    # Uncomment to use; the image: tag above still controls the local tag name.
+    # build:
+    #   context: .
+    #   dockerfile: docker/Dockerfile.safeclaw-hermes
     container_name: safeclaw-hermes-reader
     restart: unless-stopped
     networks:
@@ -201,14 +189,14 @@ services:
       OLLAMA_API_KEY: ollama-local
       HERMES_DEFAULT_MODEL: glm-5.1:cloud
     volumes:
-      # Mount our reader config to /opt/data/config.yaml — the path Hermes
-      # actually reads from (~/.hermes/config.yaml inside the container).
-      - ./config/reader-hermes.yaml:/opt/data/config.yaml
+      # Mount the operator config as a READ-ONLY template at a separate path.
+      # safeclaw-entrypoint.sh COPIES it into /opt/data/config.yaml on startup
+      # so the runtime can rewrite the file (/sethome, hermes config set) without
+      # tripping the bind-mount "Device or resource busy" rename failure.
+      - ./config/reader-hermes.yaml:/safeclaw/config-template/config.yaml:ro
       - hermes_reader_data:/opt/data
-    # Run as the long-lived daemon (gateway). Default image entrypoint
-    # (/opt/hermes/docker/entrypoint.sh) handles privilege drop + skill sync,
-    # then exec's whatever command we pass. We call `hermes` (the CLI), NOT
-    # `hermes-agent` — that binary has a broken legacy demo path.
+    # Run as the long-lived daemon (gateway). The SafeClaw entrypoint handles
+    # config-copy + privilege drop + skill sync, then hands off to hermes.
     command: ["gateway", "run", "--accept-hooks"]
     depends_on:
       - postgres-obs
@@ -219,8 +207,12 @@ services:
   # Disabled by default (ACTOR_ENABLED=false). Set ACTOR_ENABLED=true in .env
   # to start this service in Phase 2.
   hermes-actor:
-    # Reuses the image built by hermes-reader (safeclaw/hermes:local).
-    image: safeclaw/hermes:local
+    # Same pre-built SafeClaw distribution image as hermes-reader.
+    image: ghcr.io/vasanth19/safeclaw-hermes:1.0
+    # Dev-only: rebuild from source instead of pulling from GHCR.
+    # build:
+    #   context: .
+    #   dockerfile: docker/Dockerfile.safeclaw-hermes
     container_name: safeclaw-hermes-actor
     restart: unless-stopped
     networks:
@@ -237,7 +229,9 @@ services:
       OLLAMA_API_KEY: ollama-local
       HERMES_DEFAULT_MODEL: glm-5.1:cloud
     volumes:
-      - ./config/actor-hermes.yaml:/opt/data/config.yaml
+      # Operator config as read-only template; entrypoint copies it into
+      # /opt/data/config.yaml so /sethome + `hermes config set` can rewrite.
+      - ./config/actor-hermes.yaml:/safeclaw/config-template/config.yaml:ro
       - hermes_actor_data:/opt/data
     # Gate: exit cleanly if ACTOR_ENABLED is not true; otherwise run gateway daemon.
     # Use full path to `hermes` (the CLI binary), not `hermes-agent` (broken legacy).
@@ -252,7 +246,7 @@ services:
     depends_on:
       - postgrest
       - tasks-api-mcp
-      - hermes-reader   # ensures the shared safeclaw/hermes:local image has been built
+      - hermes-reader   # reader pulls the shared image; actor reuses it
       - brain-api-mcp
 
   # ─── Brain: Embedder ───────────────────────────────────────────────────────
@@ -260,10 +254,11 @@ services:
   # facts, style_samples) and writes 384-dim vectors via pgvector. Also runs a
   # tiny HTTP server on :8000 so brain-api can turn queries into vectors.
   embedder:
-    build:
-      context: ./services/embedder
-      dockerfile: Dockerfile
-    image: safeclaw/embedder:local
+    image: ghcr.io/vasanth19/safeclaw-embedder:1.0
+    # Dev-only: rebuild from source.
+    # build:
+    #   context: ./services/embedder
+    #   dockerfile: Dockerfile
     container_name: safeclaw-embedder
     restart: unless-stopped
     networks:
@@ -309,25 +304,11 @@ services:
   # TypeScript MCP server exposing brain_recall / brain_write / brain_get_soul /
   # brain_list_relationships to hermes-reader and hermes-actor.
   brain-api-mcp:
-    build:
-      context: ./mcp-tools/brain-api
-      dockerfile_inline: |
-        FROM node:20-alpine AS builder
-        WORKDIR /app
-        COPY package.json package-lock.json* ./
-        RUN npm install
-        COPY tsconfig.json ./
-        COPY src/ ./src/
-        RUN npm run build
-        RUN npm prune --omit=dev
-
-        FROM node:20-alpine
-        WORKDIR /app
-        COPY --from=builder /app/node_modules ./node_modules
-        COPY --from=builder /app/dist ./dist
-        COPY --from=builder /app/package.json ./
-        CMD ["node", "dist/index.js"]
-    image: safeclaw/brain-api:local
+    image: ghcr.io/vasanth19/safeclaw-brain-api:1.0
+    # Dev-only: rebuild from source.
+    # build:
+    #   context: ./mcp-tools/brain-api
+    #   dockerfile: Dockerfile
     container_name: safeclaw-brain-api-mcp
     # Same stdio MCP model as tasks-api-mcp — kept alive for docker exec invocation.
     restart: "no"
@@ -344,3 +325,31 @@ services:
         condition: service_healthy
       embedder:
         condition: service_started
+
+  # ─── Onboarding webapp ────────────────────────────────────────────────────
+  # Customer self-service install UI — Flask + SSE on port 8080. Fronted by
+  # Caddy on the host (provision-vps.sh sets up the reverse proxy + SSL).
+  # The webapp IS the installer: writes .env, runs init-secrets, drives
+  # `docker compose up -d` to boot the rest of the stack on customer Submit.
+  onboarding:
+    build: ./onboarding
+    image: safeclaw/onboarding:1.0
+    container_name: safeclaw-onboarding
+    restart: unless-stopped
+    networks:
+      - safeclaw_net
+    ports:
+      # Localhost-only — Caddy on the host terminates TLS at 443 and proxies here.
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - .:/safeclaw:rw
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      SAFECLAW_INSTALL_DIR: /safeclaw
+      LOG_LEVEL: INFO
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/api/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s

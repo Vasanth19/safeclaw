@@ -29,31 +29,39 @@ A few things it is, and a few things it is not:
 
 ## 2. What you'll need before clicking Setup
 
-Block out 15–20 minutes of focused time. You'll want a second browser tab
+Block out 10–15 minutes of focused time. You'll want a second browser tab
 open in each of these places:
 
-### 2.1. A Composio account (free tier is fine)
+> **What about Gmail / Drive / Calendar tokens?** You don't need to think
+> about them — the Composio integration that handles those was set up by
+> our operator on your behalf, before we sent you the URL. Composio's
+> OAuth tokens live in Composio's vault, never on this VPS or anywhere
+> else. If you're curious about the mechanics, see section 7.
 
-Composio holds the OAuth tokens for Gmail, Slack, Google Drive, and any
-other tool we connect. We do this so the tokens never live in your AI
-agent's memory — they live in Composio's vault, and the agent reaches them
-through a scoped MCP server.
+### 2.1. An Ollama Cloud API key (recommended default)
 
-You'll need:
+SafeClaw uses a large language model to draft text. The default and
+fastest path to live is Ollama Cloud — it's the cheapest option and the
+form is preconfigured for it.
 
-- **Composio API key** — from `https://app.composio.dev/settings/api-keys`
-- **Composio User ID** — your account's UUID, visible at the top of the
-  dashboard
-- **Reader MCP server URL** — created in the dashboard, scoped to read-only
-  Gmail/Drive/Slack actions
-- **Actor MCP server URL** — created in the dashboard, scoped to draft and
-  send actions
+1. Open <https://ollama.com> and sign up (or sign in).
+2. Go to <https://ollama.com/settings/keys>.
+3. Click **Create new key**, give it a name like `safeclaw`, copy the
+   value. It looks like `ollama_xxxxxxxxxxxxxxxxxxxxxxxx`.
+4. Save it somewhere — you'll paste it into Step 1 of the form.
 
-> Don't have these yet? Sign up at https://app.composio.dev, then in the
-> dashboard click **Create MCP Server**, name one `safeclaw-reader` and
-> attach Gmail/Drive/Slack with read scopes; create another named
-> `safeclaw-actor` and attach Gmail (drafts.create + drafts.send) and Slack
-> (chat:write). Copy both URLs — you'll paste them into the form.
+Prefer a different provider? You can swap to Anthropic Claude or OpenAI on
+Step 1 — just pick the radio button for your provider and the form will
+adapt the field labels.
+
+| Provider                | Get the key at                       | Notes                              |
+| ----------------------- | ------------------------------------ | ---------------------------------- |
+| Ollama Cloud (default)  | https://ollama.com/settings/keys     | Cheapest. ~$25/mo at typical use.  |
+| Anthropic Claude        | https://console.anthropic.com/keys   | Best writing quality. ~$45/mo.     |
+| OpenAI                  | https://platform.openai.com/api-keys | Good middle ground. ~$40/mo.       |
+
+You can change provider later by editing `/opt/safeclaw/.env` on the VPS,
+but let's not worry about that today.
 
 ### 2.2. A Slack app
 
@@ -68,77 +76,53 @@ You'll come back from that doc with:
 - **Workspace ID** — starts with `T`
 - **Your Slack user ID** — starts with `U` (this is the "boss" account —
   the only one allowed to approve sends)
+- A list of channel IDs you want the bot to listen in (each starts with
+  `C`).
 
-### 2.3. An LLM API key
+### 2.3. (Optional) A Telegram bot
 
-SafeClaw uses a large language model to draft text. You can bring your own
-key from any of these:
-
-| Provider              | Get the key at                       | Notes                              |
-| --------------------- | ------------------------------------ | ---------------------------------- |
-| Ollama Cloud (default)| https://ollama.com/settings/keys     | Cheapest. ~$25/mo at typical use.  |
-| Anthropic Claude      | https://console.anthropic.com/keys   | Best writing quality. ~$45/mo.     |
-| OpenAI                | https://platform.openai.com/api-keys | Good middle ground. ~$40/mo.       |
-
-Pick one. You can change it later in `/opt/safeclaw/.env` on the VPS — but
-let's not worry about that today.
-
-### 2.4. Gmail and Google Drive connected to Composio
-
-Before you click Setup, make sure you've connected your Gmail and Drive
-accounts to Composio. From the Composio dashboard:
-
-1. Tools → Gmail → Connect → sign in with the Google account you want the
-   assistant to read from.
-2. Tools → Google Drive → Connect → same Google account.
-3. Tools → Slack → Connect → install in your workspace.
-
-You only need to do this once — Composio remembers the connections.
+Skip this if you only want Slack. If you want a Telegram pocket
+assistant, ping `@BotFather` on Telegram with `/newbot`, follow the
+prompts, and capture the bot token + your numeric user ID (DM
+`@userinfobot` to get yours). The form has a checkbox to enable this on
+Step 3 — it's off by default.
 
 ---
 
-## 3. Walking through the 4-step form
+## 3. Walking through the 3-step form
 
 Open the URL we sent you (it looks like `https://yourname.safeclaw.com/setup`).
-You'll see a four-step form. Here's what each step asks for.
+You'll see a three-step form. Here's what each step asks for.
 
-### Step 1 — Composio
+### Step 1 — LLM provider
 
-Three fields:
+Pick a provider (Ollama Cloud is selected by default), paste the API key,
+and confirm the model. The default model `glm-5.1:cloud` on Ollama is the
+cheapest setup that still produces solid drafts.
 
-- Composio API key (paste from your Composio dashboard)
-- Composio User ID
-- Reader MCP server URL
-- Actor MCP server URL
-
-[screenshot: composio-step.png]
-
-When you click Next, the webapp pings Composio's API to confirm the key is
-valid. If it isn't, you'll see a red error inline — fix and retry.
-
-### Step 2 — LLM provider
-
-Pick a provider from the dropdown, paste the key, optionally choose a
-specific model. The default is `glm-5.1:cloud` on Ollama which is the
-cheapest setup.
+If you stay with Ollama Cloud, leave the **Ollama base URL** as
+`http://host.docker.internal:11434/v1` — that's how Hermes containers
+reach the local Ollama daemon installed on your VPS.
 
 [screenshot: llm-step.png]
 
-Clicking Next runs a tiny test prompt against the provider — "say hello in
-five words" — to confirm the key works.
+When you click Next, the webapp runs a tiny test prompt against your
+provider — "ping" — to confirm the key works.
 
-### Step 3 — Slack
+### Step 2 — Slack
 
-Four fields:
+Four required fields plus the channel list:
 
 - Bot User OAuth Token (`xoxb-...`)
 - App-Level Token (`xapp-...`)
 - Workspace ID (`T...`)
 - Your Slack user ID (`U...`) — this is the **boss** account
+- Channel IDs to listen in (`C012ABCD,C098WXYZ` — comma-separated)
 
-The "boss" account is the only one whose messages count as approve / reject
-on draft cards. Other people in the workspace can still chat with the bot
-to ask questions, but they cannot approve a send. (More on this in section 6.)
+The "boss" account is the only one whose messages count as approve /
+reject on draft cards. Other people in the workspace can still chat with
+the bot to ask questions, but they cannot approve a send. (More on this
+in section 6.)
 
 If you haven't created the Slack app yet, click the **Help — how do I get
 these?** link on the form. It opens
@@ -146,12 +130,10 @@ these?** link on the form. It opens
 
 [screenshot: slack-step.png]
 
-### Step 4 — Review and confirm
+### Step 3 — Telegram (optional)
 
-A summary table of everything you entered, with masked secrets. One big
-green Submit button.
-
-[screenshot: review-step.png]
+A single checkbox: **I want a Telegram bot too**. Tick it to reveal the
+bot-token and user-ID fields; leave it untouched to skip Telegram.
 
 When you click Submit, the form locks and the install begins. Don't close
 the tab — the next page streams progress live.
@@ -165,7 +147,8 @@ means and why it takes the time it does.
 
 | Step                             | Time   | What's actually happening                                     |
 | -------------------------------- | ------ | -------------------------------------------------------------- |
-| Validating credentials           | ~10s   | One real API call against Composio, Slack, and your LLM.       |
+| Verifying preload                | <1s    | The webapp confirms the operator preloaded the four Composio values into `.env`. If you're seeing this fail, our operator forgot a step — email us. |
+| Validating credentials           | ~10s   | One real API call against Slack and your LLM. (Composio was already validated when the operator set you up.) |
 | Writing secrets                  | ~5s    | Your form values get written to `/opt/safeclaw/.env`. Auto-generated DB passwords + JWTs are added by `scripts/init-secrets.sh`. |
 | Pulling container images         | ~60s   | Docker downloads ~1 GB of pre-built images from GHCR.          |
 | Booting the stack                | ~90s   | Postgres starts, schemas get applied, PostgREST handshakes the JWT, Hermes-reader and Hermes-actor come up, the embedder loads its model into memory. |

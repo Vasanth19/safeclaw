@@ -8,7 +8,6 @@
 
   <nav class="help-toc">
     <a href="#llm">LLM keys</a>
-    <a href="#composio">Composio</a>
     <a href="#slack">Slack app</a>
     <a href="#telegram">Telegram</a>
     <a href="#troubleshooting">Troubleshooting</a>
@@ -16,11 +15,14 @@
 
   <article id="llm">
     <h2>LLM keys</h2>
-    <p>Pick whichever model provider you already have a key for.</p>
+    <p>Pick whichever model provider you already have a key for. The form
+    defaults to Ollama Cloud &mdash; cheapest path to live.</p>
     <ul>
-      <li><strong>Ollama Cloud</strong> &mdash; install the Ollama daemon locally, then sign in at
-        <a href="https://ollama.com" target="_blank" rel="noopener">ollama.com</a>.
-        Most installs leave the API key blank.</li>
+      <li><strong>Ollama Cloud (default)</strong> &mdash; sign up at
+        <a href="https://ollama.com" target="_blank" rel="noopener">ollama.com</a>,
+        then create a key at
+        <a href="https://ollama.com/settings/keys" target="_blank" rel="noopener">ollama.com/settings/keys</a>.
+        Starts with <code>ollama_</code>.</li>
       <li><strong>Anthropic Claude</strong> &mdash; get a key at
         <a href="https://console.anthropic.com" target="_blank" rel="noopener">console.anthropic.com</a>.
         Starts with <code>sk-ant-</code>.</li>
@@ -28,26 +30,6 @@
         <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">platform.openai.com/api-keys</a>.
         Starts with <code>sk-</code>.</li>
     </ul>
-  </article>
-
-  <article id="composio">
-    <h2>Composio</h2>
-    <p>
-      Composio is what gives SafeClaw OAuth access to your Gmail, Calendar,
-      Drive, and Notion without storing tokens on this VPS.
-    </p>
-    <ol>
-      <li>Sign up at <a href="https://app.composio.dev" target="_blank" rel="noopener">app.composio.dev</a>.</li>
-      <li>Create an API key &mdash; starts with <code>ak_</code>.</li>
-      <li>Connect Gmail (and any other accounts you want SafeClaw to read). Note the user_id Composio assigns.</li>
-      <li>Create two MCP servers:
-        <ul>
-          <li><strong>Reader</strong> &mdash; allow only <code>GMAIL_FETCH_*</code>, <code>GOOGLECALENDAR_FETCH_*</code> etc. Read-only actions.</li>
-          <li><strong>Actor</strong> &mdash; allow <code>GMAIL_CREATE_DRAFT</code>, <code>GMAIL_SEND_*</code>. Never include raw inbox reads.</li>
-        </ul>
-      </li>
-      <li>Copy each MCP URL. They end with <code>/mcp?user_id=&lt;your-user-id&gt;</code>.</li>
-    </ol>
   </article>
 
   <article id="slack">
@@ -79,14 +61,15 @@
 
   <article id="troubleshooting">
     <h2>Troubleshooting</h2>
-    <h3>"Composio rejected the API key"</h3>
-    <p>Double-check you copied the full <code>ak_</code> key. Composio expires unused keys after 30 days &mdash; if yours is older, regenerate.</p>
+    <h3>"Composio credentials not preloaded"</h3>
+    <p>This means the operator who provisioned your VPS forgot to set up
+    Composio before sending you the URL. Email them &mdash; the fix is for
+    them to re-run <code>provision-vps.sh</code> with the four
+    <code>COMPOSIO_*</code> env vars set. There's nothing you can do from
+    the form to recover.</p>
 
     <h3>"Slack rejected the bot token"</h3>
     <p>Re-run the install-to-workspace step. The bot token only becomes valid AFTER the install. The first <code>xoxb-...</code> Slack shows you in the OAuth page is a draft until you click install.</p>
-
-    <h3>"Reader MCP returned no tools"</h3>
-    <p>You created the MCP server but didn't add tools to it, or your Composio user_id is wrong. Open the MCP in Composio's dashboard and confirm the tool list is non-empty.</p>
 
     <h3>The progress bar is stuck on "Bootstrapping brain"</h3>
     <p>This step pulls the last 90 days of email through the Reader MCP and embeds every message. On a busy inbox it can take 5-10 minutes. Check <code>docker compose logs embedder</code> to see live progress.</p>

@@ -180,6 +180,12 @@ services:
     restart: unless-stopped
     networks:
       - safeclaw_net
+    # Linux Docker doesn't resolve host.docker.internal by default. The
+    # extra_hosts shim maps it to the host gateway so Hermes can reach the
+    # Ollama daemon installed by scripts/provision-vps.sh on :11434.
+    # OrbStack on macOS handles this natively, but the entry is harmless there.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     # Same env_file approach as hermes-actor — bypass shell env override.
     env_file:
       - .env
@@ -217,6 +223,10 @@ services:
     restart: unless-stopped
     networks:
       - safeclaw_net
+    # See note on hermes-reader. Required for Linux Docker so the actor
+    # can reach the host's Ollama daemon at host.docker.internal:11434.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     # env_file loads ALL .env values directly into the container, bypassing
     # docker-compose's `${VAR}` interpolation which prefers shell env over
     # .env file (and operator shells often carry stale values for some keys).

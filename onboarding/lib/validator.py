@@ -8,10 +8,18 @@ secret value.
 We accept that this adds 5-10 seconds to /api/provision before we kick off
 docker compose, but it surfaces wrong tokens BEFORE booting containers, which
 is a much better UX than failing inside the stack 90 seconds later.
+
+Composio note:
+    Customers no longer enter Composio creds via the form. The operator
+    pre-loads them into .env via scripts/provision-vps.sh BEFORE the
+    customer ever sees /setup. validate_composio_preload() is the
+    in-webapp check that those four keys are present and look right.
 """
 from __future__ import annotations
 
 import json
+import re
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -79,100 +87,100 @@ def validate_llm(provider: str, base_url: str, api_key: str, model: str) -> tupl
     return True, ""
 
 
-# ── Composio ─────────────────────────────────────────────────────────────────
-def validate_composio_api_key(api_key: str) -> tuple[bool, str]:
-    if not api_key:
-        return False, "Composio API key is required"
+def validate_ollama(api_key: str, base_url: str, model: str) -> tuple[bool, str]:
+    """Convenience wrapper for the Ollama Cloud provider."""
+    return validate_llm("ollama-cloud", base_url, api_key, model)
+
+
+def validate_anthropic(api_key: str, base_url: str, model: str) -> tuple[bool, str]:
+    return validate_llm("anthropic", base_url, api_key, model)
+
+
+def validate_openai(api_key: str, base_url: str, model: str) -> tuple[bool, str]:
+    return validate_llm("openai", base_url, api_key, model)
+
+
+# ── Composio preload check ──────────────────────────────────────────────────
+# The four Composio keys are written to .env by the operator BEFORE the
+# webapp boots. We never collect them from the customer. This check just
+# confirms they are present, non-empty, and format-valid.
+COMPOSIO_PRELOAD_KEYS = (
+    "COMPOSIO_API_KEY",
+    "COMPOSIO_USER_ID",
+    "COMPOSIO_READER_MCP_URL",
+    "COMPOSIO_ACTOR_MCP_URL",
+)
+
+_ENV_LINE_RE = re.compile(r"^([A-Z_][A-Z0-9_]*)=(.*)$")
+_PLACEHOLDER_VALUES = {"", "__FILL_IN__", "__GENERATE__"}
+
+
+def _read_env_file(env_path: Path) -> dict[str, str]:
+    """Parse a .env file into a dict. Values may be quoted with double-quotes;
+    strip those if present. Comment lines (#...) and blank lines are skipped.
+    """
+    out: dict[str, str] = {}
+    if not env_path.is_file():
+        return out
+    for raw in env_path.read_text(encoding="utf-8").splitlines():
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        match = _ENV_LINE_RE.match(stripped)
+        if not match:
+            continue
+        key, value = match.group(1), match.group(2)
+        # Unquote if surrounded by matching double quotes.
+        if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
+            value = value[1:-1]
+        out[key] = value
+    return out
+
+
+def validate_composio_preload(env_path: str | Path) -> tuple[bool, str]:
+    """Confirm the operator preloaded all four COMPOSIO_* keys into .env.
+
+    Format checks:
+      - COMPOSIO_API_KEY must start with 'ak_'
+      - COMPOSIO_READER_MCP_URL and _ACTOR_MCP_URL must end with
+        '/mcp?user_id=...' (i.e. contain '/mcp' and 'user_id=' in the query)
+      - COMPOSIO_USER_ID must be non-empty
+
+    Returns (ok, message). On failure, message is the operator-facing
+    explanation of which key is wrong.
+    """
+    env_path = Path(env_path)
+    if not env_path.is_file():
+        return False, f".env not found at {env_path}"
+
+    values = _read_env_file(env_path)
+
+    missing: list[str] = []
+    for key in COMPOSIO_PRELOAD_KEYS:
+        value = values.get(key, "").strip()
+        if value in _PLACEHOLDER_VALUES:
+            missing.append(key)
+
+    if missing:
+        return False, f"missing or unset: {', '.join(missing)}"
+
+    api_key = values["COMPOSIO_API_KEY"].strip()
     if not api_key.startswith("ak_"):
-        return False, "Composio API key must start with 'ak_'"
+        return False, "COMPOSIO_API_KEY must start with 'ak_'"
 
-    try:
-        resp = requests.get(
-            "https://backend.composio.dev/api/v3/toolkits",
-            params={"limit": 1},
-            headers={"x-api-key": api_key},
-            timeout=TIMEOUT,
-        )
-    except requests.RequestException as exc:
-        return False, f"could not reach Composio: {_safe_msg(exc)}"
+    user_id = values["COMPOSIO_USER_ID"].strip()
+    if not user_id:
+        return False, "COMPOSIO_USER_ID is empty"
 
-    if resp.status_code == 401 or resp.status_code == 403:
-        return False, "Composio rejected the API key"
-    if resp.status_code >= 400:
-        return False, f"Composio returned HTTP {resp.status_code}"
-
-    try:
-        body = resp.json()
-    except ValueError:
-        return False, "Composio returned non-JSON response"
-
-    if "items" not in body:
-        return False, "Composio response missing 'items' field"
+    for url_key in ("COMPOSIO_READER_MCP_URL", "COMPOSIO_ACTOR_MCP_URL"):
+        url = values[url_key].strip()
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return False, f"{url_key} must be http(s)"
+        if "/mcp" not in parsed.path or "user_id=" not in (parsed.query or ""):
+            return False, f"{url_key} must end with /mcp?user_id=..."
 
     return True, ""
-
-
-def validate_composio_mcp(url: str, label: str) -> tuple[bool, str]:
-    if not url:
-        return False, f"{label} URL is required"
-    parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https"):
-        return False, f"{label} URL must be http(s)"
-    if "/mcp" not in parsed.path or "user_id=" not in (parsed.query or ""):
-        return False, f"{label} URL must end with /mcp?user_id=..."
-
-    payload = {
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "tools/list",
-        "params": {},
-    }
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json, text/event-stream",
-    }
-
-    try:
-        resp = requests.post(url, json=payload, headers=headers, timeout=TIMEOUT)
-    except requests.RequestException as exc:
-        return False, f"could not reach {label}: {_safe_msg(exc)}"
-
-    if resp.status_code >= 400:
-        return False, f"{label} returned HTTP {resp.status_code}"
-
-    body = _parse_mcp_response(resp)
-    if body is None:
-        return False, f"{label} returned non-JSON response"
-
-    tools = body.get("result", {}).get("tools")
-    if not isinstance(tools, list) or len(tools) == 0:
-        return False, f"{label} returned no tools — is the user authorized?"
-
-    return True, ""
-
-
-def _parse_mcp_response(resp: requests.Response) -> dict | None:
-    """Composio MCP returns either application/json or text/event-stream."""
-    ctype = resp.headers.get("Content-Type", "")
-    if "application/json" in ctype:
-        try:
-            return resp.json()
-        except ValueError:
-            return None
-    if "text/event-stream" in ctype:
-        # SSE: find the first `data: {...}` line.
-        for line in resp.text.splitlines():
-            if line.startswith("data:"):
-                try:
-                    return json.loads(line[5:].strip())
-                except ValueError:
-                    continue
-        return None
-    # Fall back to attempting JSON parse anyway.
-    try:
-        return resp.json()
-    except ValueError:
-        return None
 
 
 # ── Slack ───────────────────────────────────────────────────────────────────
@@ -216,6 +224,32 @@ def validate_slack_app_token(token: str) -> tuple[bool, str]:
     return True, ""
 
 
+def validate_slack(form: dict[str, Any]) -> dict[str, str]:
+    """Aggregate Slack-field validation. Returns {field_name: error}."""
+    errors: dict[str, str] = {}
+
+    ok, msg = validate_slack_bot(form.get("SLACK_BOT_TOKEN", ""))
+    if not ok:
+        errors["SLACK_BOT_TOKEN"] = msg
+
+    ok, msg = validate_slack_app_token(form.get("SLACK_APP_TOKEN", ""))
+    if not ok:
+        errors["SLACK_APP_TOKEN"] = msg
+
+    workspace = form.get("SLACK_WORKSPACE_ID", "").strip()
+    if not workspace.startswith("T"):
+        errors["SLACK_WORKSPACE_ID"] = "Workspace ID must start with 'T'"
+
+    admin = form.get("SLACK_BOT_ADMIN_USER_ID", "").strip()
+    if not admin.startswith("U"):
+        errors["SLACK_BOT_ADMIN_USER_ID"] = "Admin user ID must start with 'U'"
+
+    if not form.get("SLACK_PUBLIC_CHANNELS", "").strip():
+        errors["SLACK_PUBLIC_CHANNELS"] = "At least one channel ID is required"
+
+    return errors
+
+
 # ── Telegram ────────────────────────────────────────────────────────────────
 def validate_telegram_bot(token: str) -> tuple[bool, str]:
     if not token:
@@ -243,10 +277,31 @@ def validate_telegram_bot(token: str) -> tuple[bool, str]:
     return True, ""
 
 
+def validate_telegram(form: dict[str, Any]) -> dict[str, str]:
+    """Aggregate Telegram-field validation. Only runs if telegram_enabled is
+    truthy. Returns {field_name: error}."""
+    errors: dict[str, str] = {}
+    if not form.get("telegram_enabled"):
+        return errors
+
+    ok, msg = validate_telegram_bot(form.get("TELEGRAM_BOT_TOKEN", ""))
+    if not ok:
+        errors["TELEGRAM_BOT_TOKEN"] = msg
+
+    if not form.get("TELEGRAM_ALLOWED_USERS", "").strip():
+        errors["TELEGRAM_ALLOWED_USERS"] = "At least one allowed user ID is required"
+
+    return errors
+
+
 # ── Aggregator ──────────────────────────────────────────────────────────────
 def validate_all(form: dict[str, Any]) -> dict[str, str]:
-    """Run every applicable validator. Returns a dict of {field_name: error}.
-    Empty dict == all good."""
+    """Run every applicable validator on the form payload. Returns a dict of
+    {field_name: error}. Empty dict == all good.
+
+    Composio preload is NOT checked here — the provisioner verifies that
+    in its own dedicated phase, before any form-level work.
+    """
     errors: dict[str, str] = {}
 
     # LLM
@@ -262,47 +317,10 @@ def validate_all(form: dict[str, Any]) -> dict[str, str]:
     if not ok:
         errors["llm"] = msg
 
-    # Composio
-    ok, msg = validate_composio_api_key(form.get("COMPOSIO_API_KEY", ""))
-    if not ok:
-        errors["COMPOSIO_API_KEY"] = msg
-    if not form.get("COMPOSIO_USER_ID", "").strip():
-        errors["COMPOSIO_USER_ID"] = "Composio user ID is required"
-
-    ok, msg = validate_composio_mcp(form.get("COMPOSIO_READER_MCP_URL", ""), "Reader MCP")
-    if not ok:
-        errors["COMPOSIO_READER_MCP_URL"] = msg
-
-    ok, msg = validate_composio_mcp(form.get("COMPOSIO_ACTOR_MCP_URL", ""), "Actor MCP")
-    if not ok:
-        errors["COMPOSIO_ACTOR_MCP_URL"] = msg
-
     # Slack (required)
-    ok, msg = validate_slack_bot(form.get("SLACK_BOT_TOKEN", ""))
-    if not ok:
-        errors["SLACK_BOT_TOKEN"] = msg
-
-    ok, msg = validate_slack_app_token(form.get("SLACK_APP_TOKEN", ""))
-    if not ok:
-        errors["SLACK_APP_TOKEN"] = msg
-
-    workspace = form.get("SLACK_WORKSPACE_ID", "").strip()
-    if not workspace.startswith("T"):
-        errors["SLACK_WORKSPACE_ID"] = "Workspace ID must start with 'T'"
-
-    admin = form.get("SLACK_BOT_ADMIN_USER_ID", "").strip()
-    if not admin.startswith("U"):
-        errors["SLACK_BOT_ADMIN_USER_ID"] = "Admin user ID must start with 'U'"
-
-    if not form.get("SLACK_PUBLIC_CHANNELS", "").strip():
-        errors["SLACK_PUBLIC_CHANNELS"] = "At least one channel ID is required"
+    errors.update(validate_slack(form))
 
     # Telegram (optional)
-    if form.get("telegram_enabled"):
-        ok, msg = validate_telegram_bot(form.get("TELEGRAM_BOT_TOKEN", ""))
-        if not ok:
-            errors["TELEGRAM_BOT_TOKEN"] = msg
-        if not form.get("TELEGRAM_ALLOWED_USERS", "").strip():
-            errors["TELEGRAM_ALLOWED_USERS"] = "At least one allowed user ID is required"
+    errors.update(validate_telegram(form))
 
     return errors

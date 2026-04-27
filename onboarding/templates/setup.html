@@ -5,12 +5,11 @@
 <section class="setup">
   <header class="setup-header">
     <h1>Setup</h1>
-    <p>Four short steps. Nothing leaves this VPS.</p>
+    <p>Three short steps. Nothing leaves this VPS.</p>
     <ol class="stepper" id="stepper">
       <li class="step active" data-step="1"><span>1</span> LLM</li>
-      <li class="step" data-step="2"><span>2</span> Composio</li>
-      <li class="step" data-step="3"><span>3</span> Slack</li>
-      <li class="step" data-step="4"><span>4</span> Telegram</li>
+      <li class="step" data-step="2"><span>2</span> Slack</li>
+      <li class="step" data-step="3"><span>3</span> Telegram</li>
     </ol>
   </header>
 
@@ -18,7 +17,7 @@
 
     <!-- ── Step 1: LLM ──────────────────────────────────────────────── -->
     <fieldset class="step-panel" data-step="1">
-      <legend>1 / 4 &middot; Which model should drive your assistant?</legend>
+      <legend>1 / 3 &middot; Which model should drive your assistant?</legend>
 
       <div class="field">
         <label>
@@ -45,12 +44,12 @@
 
       <div class="field">
         <label for="LLM_API_KEY">
-          API key
+          <span class="api-key-label-text">Ollama API key</span>
           <a class="help-link" href="/help#llm" target="_blank">where do I get this?</a>
         </label>
         <input type="password" id="LLM_API_KEY" name="LLM_API_KEY" autocomplete="new-password"
-               placeholder="paste key here">
-        <p class="hint" data-when="llm_provider=ollama-cloud">For local Ollama, leave blank or use <code>ollama-local</code>.</p>
+               placeholder="ollama_...">
+        <p class="hint" data-when="llm_provider=ollama-cloud">Get from <a href="https://ollama.com/settings/keys" target="_blank" rel="noopener">https://ollama.com/settings/keys</a> &mdash; starts with <code>ollama_</code>.</p>
         <p class="hint" data-when="llm_provider=anthropic">Starts with <code>sk-ant-</code>.</p>
         <p class="hint" data-when="llm_provider=openai">Starts with <code>sk-</code>.</p>
       </div>
@@ -63,52 +62,13 @@
       </div>
 
       <div class="step-actions">
-        <button type="button" class="btn-next" data-goto="2">Next: Composio</button>
+        <button type="button" class="btn-next" data-goto="2">Next: Slack</button>
       </div>
     </fieldset>
 
-    <!-- ── Step 2: Composio ─────────────────────────────────────────── -->
+    <!-- ── Step 2: Slack ────────────────────────────────────────────── -->
     <fieldset class="step-panel hidden" data-step="2">
-      <legend>2 / 4 &middot; Connect Composio (Gmail, Calendar, Drive)</legend>
-
-      <div class="field">
-        <label for="COMPOSIO_API_KEY">
-          Composio API key
-          <a class="help-link" href="/help#composio" target="_blank">where?</a>
-        </label>
-        <input type="password" id="COMPOSIO_API_KEY" name="COMPOSIO_API_KEY"
-               autocomplete="new-password" placeholder="ak_...">
-        <p class="hint">Starts with <code>ak_</code>.</p>
-      </div>
-
-      <div class="field">
-        <label for="COMPOSIO_USER_ID">Composio user ID</label>
-        <input type="text" id="COMPOSIO_USER_ID" name="COMPOSIO_USER_ID"
-               placeholder="usually your email or a UUID">
-      </div>
-
-      <div class="field">
-        <label for="COMPOSIO_READER_MCP_URL">Reader MCP URL</label>
-        <input type="url" id="COMPOSIO_READER_MCP_URL" name="COMPOSIO_READER_MCP_URL"
-               placeholder="https://...composio.dev/.../mcp?user_id=...">
-        <p class="hint">Must end with <code>/mcp?user_id=...</code></p>
-      </div>
-
-      <div class="field">
-        <label for="COMPOSIO_ACTOR_MCP_URL">Actor MCP URL</label>
-        <input type="url" id="COMPOSIO_ACTOR_MCP_URL" name="COMPOSIO_ACTOR_MCP_URL"
-               placeholder="https://...composio.dev/.../mcp?user_id=...">
-      </div>
-
-      <div class="step-actions">
-        <button type="button" class="btn-prev" data-goto="1">Back</button>
-        <button type="button" class="btn-next" data-goto="3">Next: Slack</button>
-      </div>
-    </fieldset>
-
-    <!-- ── Step 3: Slack ────────────────────────────────────────────── -->
-    <fieldset class="step-panel hidden" data-step="3">
-      <legend>3 / 4 &middot; Slack — your assistant's chat surface</legend>
+      <legend>2 / 3 &middot; Slack — your assistant's chat surface</legend>
 
       <p class="step-intro">
         First time creating a Slack app? Follow the
@@ -149,14 +109,14 @@
       </div>
 
       <div class="step-actions">
-        <button type="button" class="btn-prev" data-goto="2">Back</button>
-        <button type="button" class="btn-next" data-goto="4">Next: Telegram</button>
+        <button type="button" class="btn-prev" data-goto="1">Back</button>
+        <button type="button" class="btn-next" data-goto="3">Next: Telegram</button>
       </div>
     </fieldset>
 
-    <!-- ── Step 4: Telegram (optional) ─────────────────────────────── -->
-    <fieldset class="step-panel hidden" data-step="4">
-      <legend>4 / 4 &middot; Telegram <span class="badge">optional</span></legend>
+    <!-- ── Step 3: Telegram (optional) ─────────────────────────────── -->
+    <fieldset class="step-panel hidden" data-step="3">
+      <legend>3 / 3 &middot; Telegram <span class="badge">optional</span></legend>
 
       <div class="field checkbox-field">
         <label>
@@ -181,7 +141,7 @@
       </div>
 
       <div class="step-actions">
-        <button type="button" class="btn-prev" data-goto="3">Back</button>
+        <button type="button" class="btn-prev" data-goto="2">Back</button>
         <button type="submit" class="btn-submit">Provision now</button>
       </div>
 

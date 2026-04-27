@@ -1,5 +1,4 @@
 """Smoke tests for the Flask app — routes return what we expect."""
-import json
 import sys
 from pathlib import Path
 
@@ -19,21 +18,24 @@ def test_landing_renders():
     assert b"SafeClaw" in r.data or b"SAFE" in r.data
 
 
-def test_setup_form_renders_with_all_steps():
+def test_setup_form_renders_with_three_steps():
     c = make_client()
     r = c.get("/setup")
     assert r.status_code == 200
     body = r.data.decode()
-    # Each of the 4 steps should be present
+    # Exactly 3 steps — Composio is gone.
     assert 'data-step="1"' in body
     assert 'data-step="2"' in body
     assert 'data-step="3"' in body
-    assert 'data-step="4"' in body
+    assert 'data-step="4"' not in body
     # Slack fields present
     assert "SLACK_BOT_TOKEN" in body
     assert "SLACK_APP_TOKEN" in body
-    # Composio fields present
-    assert "COMPOSIO_API_KEY" in body
+    # Composio fields are NOT customer-facing anymore.
+    assert "COMPOSIO_API_KEY" not in body
+    assert "COMPOSIO_USER_ID" not in body
+    assert "COMPOSIO_READER_MCP_URL" not in body
+    assert "COMPOSIO_ACTOR_MCP_URL" not in body
 
 
 def test_help_renders():
@@ -72,10 +74,6 @@ def test_provision_returns_validation_errors_for_bad_creds():
         "OLLAMA_BASE_URL": "https://api.openai.com/v1",
         "OPENAI_API_KEY": "sk-not-real",
         "HERMES_DEFAULT_MODEL": "gpt-4o",
-        "COMPOSIO_API_KEY": "wrong_format",
-        "COMPOSIO_USER_ID": "user@example.com",
-        "COMPOSIO_READER_MCP_URL": "not a url",
-        "COMPOSIO_ACTOR_MCP_URL": "still not a url",
         "SLACK_BOT_TOKEN": "wrong",
         "SLACK_APP_TOKEN": "wrong",
         "SLACK_WORKSPACE_ID": "x",
@@ -88,10 +86,12 @@ def test_provision_returns_validation_errors_for_bad_creds():
     assert body["success"] is False
     errs = body["errors"]
     # We should see distinct field-level errors for the bad inputs.
-    assert "COMPOSIO_API_KEY" in errs
     assert "SLACK_BOT_TOKEN" in errs
     assert "SLACK_APP_TOKEN" in errs
     assert "SLACK_WORKSPACE_ID" in errs
+    # Composio errors should NOT appear — those are operator-preloaded.
+    assert "COMPOSIO_API_KEY" not in errs
+    assert "COMPOSIO_READER_MCP_URL" not in errs
 
 
 def test_progress_404_for_unknown_install():
@@ -114,7 +114,7 @@ def test_install_id_pattern_rejects_path_traversal():
 
 if __name__ == "__main__":
     test_landing_renders()
-    test_setup_form_renders_with_all_steps()
+    test_setup_form_renders_with_three_steps()
     test_help_renders()
     test_healthz()
     test_provision_rejects_non_json()

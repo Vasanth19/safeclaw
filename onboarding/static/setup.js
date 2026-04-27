@@ -1,15 +1,21 @@
 /* SafeClaw setup wizard — vanilla JS, no framework.
  *
  * Responsibilities:
- *   - Step navigation (4 steps, hidden fieldsets)
+ *   - Step navigation (3 steps, hidden fieldsets)
  *   - Conditional field visibility (LLM provider, Telegram on/off)
  *   - Client-side format validation (cheap, gives instant feedback)
  *   - Submit -> POST /api/provision with the right payload shape
  *   - Surface server-side validation errors per-field
  *   - On success -> redirect to /progress/<id>
+ *
+ * Composio credentials are pre-loaded into .env by the operator-side
+ * provision-vps.sh script BEFORE the customer ever sees this form. They
+ * are intentionally not collected here.
  */
 (function () {
   "use strict";
+
+  const TOTAL_STEPS = 3;
 
   const form = document.getElementById("setup-form");
   if (!form) return;
@@ -55,21 +61,21 @@
       const shouldShow = cond[0] === "llm_provider" && cond[1] === provider;
       el.classList.toggle("show", shouldShow);
     });
-    // Adjust API key label
-    const label = document.querySelector('label[for="LLM_API_KEY"]');
+    // Adjust API key label / placeholder to match the chosen provider.
+    const labelText = document.querySelector(".api-key-label-text");
     const placeholders = {
-      "ollama-cloud": "blank, or 'ollama-local'",
+      "ollama-cloud": "ollama_...",
       "anthropic": "sk-ant-...",
       "openai": "sk-...",
     };
+    const labels = {
+      "ollama-cloud": "Ollama API key",
+      "anthropic": "Anthropic API key",
+      "openai": "OpenAI API key",
+    };
     const apiInput = document.getElementById("LLM_API_KEY");
     if (apiInput) apiInput.placeholder = placeholders[provider] || "paste key";
-    if (label) {
-      label.firstChild.textContent =
-        provider === "ollama-cloud" ? " Ollama API key (optional) "
-        : provider === "anthropic" ? " Anthropic API key "
-        : " OpenAI API key ";
-    }
+    if (labelText) labelText.textContent = labels[provider] || "API key";
   }
   form.querySelectorAll('input[name="llm_provider"]').forEach(function (r) {
     r.addEventListener("change", refreshLLMVisibility);
@@ -118,7 +124,13 @@
 
     if (step === 1) {
       const apiKey = (form.LLM_API_KEY.value || "").trim();
-      if (provider === "anthropic" && !apiKey.startsWith("sk-ant-")) {
+      if (!apiKey) {
+        setFieldError("LLM_API_KEY", "API key is required");
+        ok = false;
+      } else if (provider === "ollama-cloud" && !apiKey.startsWith("ollama_")) {
+        setFieldError("LLM_API_KEY", "Ollama Cloud keys start with ollama_");
+        ok = false;
+      } else if (provider === "anthropic" && !apiKey.startsWith("sk-ant-")) {
         setFieldError("LLM_API_KEY", "Anthropic keys start with sk-ant-");
         ok = false;
       } else if (provider === "openai" && !apiKey.startsWith("sk-")) {
@@ -130,25 +142,6 @@
     }
 
     if (step === 2) {
-      const k = (form.COMPOSIO_API_KEY.value || "").trim();
-      if (!k.startsWith("ak_")) {
-        setFieldError("COMPOSIO_API_KEY", "Must start with ak_");
-        ok = false;
-      }
-      if (!form.COMPOSIO_USER_ID.value.trim()) {
-        setFieldError("COMPOSIO_USER_ID", "Required");
-        ok = false;
-      }
-      ["COMPOSIO_READER_MCP_URL", "COMPOSIO_ACTOR_MCP_URL"].forEach(function (name) {
-        const v = (form[name].value || "").trim();
-        if (!v.includes("/mcp") || !v.includes("user_id=")) {
-          setFieldError(name, "Must look like https://...composio.dev/.../mcp?user_id=...");
-          ok = false;
-        }
-      });
-    }
-
-    if (step === 3) {
       if (!form.SLACK_BOT_TOKEN.value.startsWith("xoxb-")) {
         setFieldError("SLACK_BOT_TOKEN", "Must start with xoxb-");
         ok = false;
@@ -171,7 +164,7 @@
       }
     }
 
-    if (step === 4 && telegramToggle.checked) {
+    if (step === 3 && telegramToggle.checked) {
       const t = form.TELEGRAM_BOT_TOKEN.value.trim();
       if (!t.includes(":")) {
         setFieldError("TELEGRAM_BOT_TOKEN", "Looks like 123456:ABC-...");
@@ -196,10 +189,6 @@
       llm_provider: provider,
       HERMES_INFERENCE_PROVIDER: provider,
       HERMES_DEFAULT_MODEL: form.HERMES_DEFAULT_MODEL.value.trim(),
-      COMPOSIO_API_KEY: form.COMPOSIO_API_KEY.value.trim(),
-      COMPOSIO_USER_ID: form.COMPOSIO_USER_ID.value.trim(),
-      COMPOSIO_READER_MCP_URL: form.COMPOSIO_READER_MCP_URL.value.trim(),
-      COMPOSIO_ACTOR_MCP_URL: form.COMPOSIO_ACTOR_MCP_URL.value.trim(),
       SLACK_BOT_TOKEN: form.SLACK_BOT_TOKEN.value.trim(),
       SLACK_APP_TOKEN: form.SLACK_APP_TOKEN.value.trim(),
       SLACK_WORKSPACE_ID: form.SLACK_WORKSPACE_ID.value.trim(),
@@ -210,7 +199,7 @@
 
     if (provider === "ollama-cloud") {
       payload.OLLAMA_BASE_URL = baseUrl || "http://host.docker.internal:11434/v1";
-      payload.OLLAMA_API_KEY = apiKey || "ollama-local";
+      payload.OLLAMA_API_KEY = apiKey;
     } else if (provider === "anthropic") {
       payload.ANTHROPIC_API_KEY = apiKey;
       payload.OLLAMA_BASE_URL = "https://api.anthropic.com/v1";
@@ -230,11 +219,12 @@
   // ── Submit ───────────────────────────────────────────────────────────
   form.addEventListener("submit", async function (e) {
     e.preventDefault();
-    if (!validateStep(1) || !validateStep(2) || !validateStep(3) || !validateStep(4)) {
-      // jump to first invalid panel
-      for (let i = 1; i <= 4; i++) {
-        if (!validateStep(i)) { gotoStep(i); break; }
-      }
+    let firstBadStep = 0;
+    for (let i = 1; i <= TOTAL_STEPS; i++) {
+      if (!validateStep(i) && firstBadStep === 0) firstBadStep = i;
+    }
+    if (firstBadStep) {
+      gotoStep(firstBadStep);
       return;
     }
 
@@ -285,9 +275,8 @@
   function stepOf(field) {
     if (!field) return null;
     if (field === "llm" || field === "LLM_API_KEY" || field === "HERMES_DEFAULT_MODEL") return 1;
-    if (field.startsWith("COMPOSIO_")) return 2;
-    if (field.startsWith("SLACK_")) return 3;
-    if (field.startsWith("TELEGRAM_")) return 4;
+    if (field.startsWith("SLACK_")) return 2;
+    if (field.startsWith("TELEGRAM_")) return 3;
     return null;
   }
 })();

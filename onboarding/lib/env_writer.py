@@ -12,6 +12,11 @@ Rules:
     don't print them here).
   * Refuse to overwrite if any required key is missing from the input dict.
   * Always set 0600 perms after rename.
+
+Composio note:
+    The four COMPOSIO_* keys are NOT in ALLOWED_KEYS — they're preloaded
+    into .env by scripts/provision-vps.sh BEFORE the webapp ever runs. The
+    `preload_composio()` helper below performs that pre-write atomically.
 """
 from __future__ import annotations
 
@@ -23,6 +28,10 @@ from pathlib import Path
 # Whitelist of env keys the onboarding form is allowed to set. Anything not
 # in this set we ignore — defends against the form posting arbitrary
 # environment variables.
+#
+# COMPOSIO_* keys are intentionally excluded — they're preloaded by the
+# operator via scripts/provision-vps.sh and must not be writable from the
+# customer-facing form.
 ALLOWED_KEYS = {
     # LLM
     "HERMES_INFERENCE_PROVIDER",
@@ -31,11 +40,6 @@ ALLOWED_KEYS = {
     "HERMES_DEFAULT_MODEL",
     "ANTHROPIC_API_KEY",
     "OPENAI_API_KEY",
-    # Composio
-    "COMPOSIO_API_KEY",
-    "COMPOSIO_USER_ID",
-    "COMPOSIO_READER_MCP_URL",
-    "COMPOSIO_ACTOR_MCP_URL",
     # Slack (primary chat)
     "SLACK_BOT_TOKEN",
     "SLACK_APP_TOKEN",
@@ -49,6 +53,16 @@ ALLOWED_KEYS = {
     "BRAIN_USER_KEY",
     "BOOTSTRAP_DAYS",
 }
+
+# Operator-only keys that may be preloaded into .env BEFORE the webapp
+# touches it. These are accepted by preload_composio() but never by the
+# form-driven write_env() path.
+COMPOSIO_PRELOAD_KEYS = (
+    "COMPOSIO_API_KEY",
+    "COMPOSIO_USER_ID",
+    "COMPOSIO_READER_MCP_URL",
+    "COMPOSIO_ACTOR_MCP_URL",
+)
 
 # Values that must never be set to literal placeholder strings.
 PLACEHOLDERS = {"__FILL_IN__", "__GENERATE__", ""}
@@ -104,8 +118,8 @@ def merge_into_template(template_text: str, values: dict[str, str]) -> str:
         key, current = match.group(1), match.group(2)
 
         if key not in ALLOWED_KEYS:
-            # Pass through — likely a __GENERATE__ secret or a default we
-            # don't expose in the form (e.g. POSTGRES_OBS_USER).
+            # Pass through — likely a __GENERATE__ secret, an operator-only
+            # key (COMPOSIO_*), or a default we don't expose in the form.
             out_lines.append(raw)
             continue
 
@@ -158,8 +172,86 @@ def write_env(
             raise EnvWriteError(f"refusing to write placeholder for {key}")
 
     template_text = template_path.read_text(encoding="utf-8")
-    rendered = merge_into_template(template_text, values)
 
+    # If a Composio-preloaded .env already exists, start from it instead of
+    # the example template — otherwise we'd clobber the operator-supplied
+    # COMPOSIO_* values. Falls back to .env.example for fresh installs.
+    if target_path.is_file():
+        base_text = target_path.read_text(encoding="utf-8")
+    else:
+        base_text = template_text
+
+    rendered = merge_into_template(base_text, values)
+
+    _atomic_write(install_dir, target_path, rendered)
+    return target_path
+
+
+def preload_composio(
+    env_path: str | Path,
+    composio_dict: dict[str, str],
+    *,
+    template_name: str = ".env.example",
+) -> Path:
+    """Operator-side helper: write the four COMPOSIO_* values into .env
+    BEFORE the webapp ever runs.
+
+    If env_path doesn't exist yet, we copy from .env.example (in the same
+    directory) and substitute the Composio keys. If it does exist, we
+    update those four lines in-place. Atomic in either case.
+
+    Raises EnvWriteError if a key is missing, malformed, or the parent
+    directory has no .env.example to seed from.
+    """
+    env_path = Path(env_path)
+    install_dir = env_path.parent
+
+    # Validate inputs up-front — fail fast.
+    missing = [k for k in COMPOSIO_PRELOAD_KEYS if not composio_dict.get(k)]
+    if missing:
+        raise EnvWriteError(f"preload_composio missing keys: {', '.join(missing)}")
+    for key, value in composio_dict.items():
+        if value in PLACEHOLDERS:
+            raise EnvWriteError(f"refusing to preload placeholder for {key}")
+
+    if env_path.is_file():
+        base_text = env_path.read_text(encoding="utf-8")
+    else:
+        template_path = install_dir / template_name
+        if not template_path.is_file():
+            raise EnvWriteError(f"template not found: {template_path}")
+        base_text = template_path.read_text(encoding="utf-8")
+
+    out_lines: list[str] = []
+    seen: set[str] = set()
+    for raw in base_text.splitlines():
+        match = KEY_LINE_RE.match(raw)
+        if not match:
+            out_lines.append(raw)
+            continue
+        key = match.group(1)
+        if key in COMPOSIO_PRELOAD_KEYS and key in composio_dict:
+            new_value = _shell_quote(str(composio_dict[key]))
+            out_lines.append(f"{key}={new_value}")
+            seen.add(key)
+        else:
+            out_lines.append(raw)
+
+    # Any preload key not present in the template gets appended.
+    extras = [k for k in COMPOSIO_PRELOAD_KEYS if k not in seen]
+    if extras:
+        out_lines.append("")
+        out_lines.append("# ── Composio preload (operator-supplied) ──")
+        for key in extras:
+            out_lines.append(f"{key}={_shell_quote(str(composio_dict[key]))}")
+
+    rendered = "\n".join(out_lines) + "\n"
+    _atomic_write(install_dir, env_path, rendered)
+    return env_path
+
+
+def _atomic_write(install_dir: Path, target_path: Path, rendered: str) -> None:
+    """Write `rendered` to target_path atomically, leaving 0600 perms."""
     # tempfile in same dir so rename is atomic on the same filesystem.
     fd, tmp_name = tempfile.mkstemp(
         prefix=".env.tmp.", dir=str(install_dir)
@@ -175,5 +267,3 @@ def write_env(
         except FileNotFoundError:
             pass
         raise EnvWriteError(f"failed to write {target_path}: {exc}") from exc
-
-    return target_path

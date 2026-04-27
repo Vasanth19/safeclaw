@@ -194,6 +194,10 @@ services:
       OLLAMA_BASE_URL: http://host.docker.internal:11434/v1
       OLLAMA_API_KEY: ollama-local
       HERMES_DEFAULT_MODEL: glm-5.1:cloud
+      # Reader is a background ingest agent — it does NOT bind to Telegram.
+      # The Actor owns the user-facing chat, so we blank the bot token here
+      # to prevent the dual-poller getUpdates conflict.
+      TELEGRAM_BOT_TOKEN: ""
     volumes:
       # Mount the operator config as a READ-ONLY template at a separate path.
       # safeclaw-entrypoint.sh COPIES it into /opt/data/config.yaml on startup
@@ -240,13 +244,18 @@ services:
       HERMES_INFERENCE_PROVIDER: ollama-cloud
       OLLAMA_BASE_URL: http://host.docker.internal:11434/v1
       OLLAMA_API_KEY: ollama-local
-      HERMES_DEFAULT_MODEL: glm-5.1:cloud
+      # Kimi K2.5 — Moonshot's agentic model. Better at multi-step tool
+      # routing than glm-5.1; required for the brain-first memory protocol.
+      HERMES_DEFAULT_MODEL: kimi-k2.5:cloud
     volumes:
       # Operator config as read-only template; entrypoint copies it into
       # /opt/data/config.yaml so /sethome + `hermes config set` can rewrite.
       - ./config/actor-hermes.yaml:/safeclaw/config-template/config.yaml:ro
       - hermes_actor_data:/opt/data
-      # Brain mount deferred — see hermes-reader.
+      # Brain mount — read-only so the file skill can search People/, Companies/,
+      # and the rest of the Evolving Brain layout. RO avoids the chown issue
+      # (we only need to read; the Reader/embedder writes via DB, not files).
+      - ./brain:/opt/brain:ro
     # Gate: exit cleanly if ACTOR_ENABLED is not true; otherwise run gateway daemon.
     # Use full path to `hermes` (the CLI binary), not `hermes-agent` (broken legacy).
     command: >

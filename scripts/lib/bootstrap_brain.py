@@ -93,7 +93,7 @@ import psycopg
 DEFAULT_DAYS = 90
 
 # Page size for GMAIL_FETCH_EMAILS. 100 is the typical Gmail API limit.
-PAGE_SIZE = 100
+PAGE_SIZE = 25  # Composio MCP returns 0 messages when max_results=100. 25 works reliably.
 
 # Hard cap on pages per category to keep runaway runs bounded.
 MAX_PAGES_PER_CATEGORY = 200
@@ -274,27 +274,60 @@ def _http_post_json(url: str, headers: dict[str, str], body: dict[str, Any]) -> 
 def _parse_sse_payload(raw: str) -> dict[str, Any]:
     """Pull the JSON body out of a Server-Sent-Events response.
 
-    Composio's MCP servers respond with a sequence of ``data: {...}`` lines
-    even for one-shot ``tools/call`` requests. We only care about the last
-    ``data:`` payload — that's the final result.
+    SSE spec: events are blank-line-separated. Within an event, multiple
+    ``data:`` lines are concatenated with ``\\n`` to form the event's data.
+    Composio's MCP usually emits one event with one ``data:`` line, but
+    very large payloads (e.g. 25-message Gmail batches) can wrap across
+    many lines — we MUST join ``data:`` lines per event before parsing
+    or json.loads() fails on the truncated chunk.
     """
-    last_data_json: dict[str, Any] = {}
-    for line in raw.splitlines():
-        line = line.strip()
-        if not line.startswith("data:"):
+    events: list[str] = []
+    current_data: list[str] = []
+    # IMPORTANT: split on '\n' only, NOT str.splitlines(). Emails routed via
+    # Composio Reader contain Unicode line separators (U+2028 LSEP and friends)
+    # inside JSON string bodies; splitlines() treats those as line breaks and
+    # shreds the JSON across multiple "lines", which then fail to parse.
+    for line in raw.replace("\r\n", "\n").split("\n"):
+        if line == "":
+            # Blank line ends an event.
+            if current_data:
+                events.append("\n".join(current_data))
+                current_data = []
             continue
-        chunk = line[len("data:"):].strip()
-        if not chunk or chunk == "[DONE]":
+        if line.startswith("data:"):
+            current_data.append(line[len("data:"):].lstrip())
+        # Other SSE fields (event:, id:, retry:) are ignored.
+    if current_data:
+        events.append("\n".join(current_data))
+
+    last_data_json: dict[str, Any] = {}
+    last_decode_err: Exception | None = None
+    for body in events:
+        body = body.strip()
+        if not body or body == "[DONE]":
             continue
         try:
-            parsed = json.loads(chunk)
-        except json.JSONDecodeError:
+            parsed = json.loads(body)
+        except json.JSONDecodeError as exc:
+            last_decode_err = exc
             continue
         if isinstance(parsed, dict):
             last_data_json = parsed
+
     if not last_data_json:
+        # Dump the raw to disk for forensic inspection (only on failure).
+        dump_path = "/repo/composio_raw_debug.txt"
+        try:
+            with open(dump_path, "w", encoding="utf-8") as f:
+                f.write(raw)
+        except OSError:
+            dump_path = "(could not write dump)"
+        head = raw[:300].replace("\n", "\\n")
+        tail = raw[-300:].replace("\n", "\\n")
         raise ComposioMCPError(
-            f"Composio MCP returned an SSE response with no parseable data lines: {raw[:200]!r}"
+            "Composio MCP returned an SSE response with no parseable data lines "
+            f"(raw_len={len(raw)}, events={len(events)}, decode_err={last_decode_err}, "
+            f"dump={dump_path}). head={head!r}, tail={tail!r}"
         )
     return last_data_json
 

@@ -131,10 +131,43 @@ def _phase_validate(install: Install, install_dir: Path, form: dict) -> None:
 def _phase_env(install: Install, install_dir: Path, form: dict) -> None:
     _emit(install, "env_writing", "start", "Writing configuration to .env...")
 
+    # Server-side: derive base_url + model from the customer's provider radio
+    # selection. Customer never sees these — they're infrastructure detail.
+    provider = (form.get("llm_provider") or "ollama-cloud").strip()
+    LLM_PRESETS = {
+        "ollama-cloud": {
+            "HERMES_INFERENCE_PROVIDER": "ollama-cloud",
+            "OLLAMA_BASE_URL": "http://host.docker.internal:11434/v1",
+            "HERMES_DEFAULT_MODEL": "glm-5.1:cloud",
+        },
+        "anthropic": {
+            "HERMES_INFERENCE_PROVIDER": "anthropic",
+            "OLLAMA_BASE_URL": "https://api.anthropic.com/v1",
+            "HERMES_DEFAULT_MODEL": "claude-sonnet-4-6",
+        },
+        "openai": {
+            "HERMES_INFERENCE_PROVIDER": "openai",
+            "OLLAMA_BASE_URL": "https://api.openai.com/v1",
+            "HERMES_DEFAULT_MODEL": "gpt-4o",
+        },
+    }
+    preset = LLM_PRESETS.get(provider, LLM_PRESETS["ollama-cloud"])
+
     # Whitelist-driven mapping: only keys env_writer.ALLOWED_KEYS will land
     # in .env. Anything else the form posted is ignored. Composio keys are
     # NOT in ALLOWED_KEYS — they're preloaded by the operator-side script.
     values = {k: v for k, v in form.items() if k in env_writer.ALLOWED_KEYS}
+
+    # Move customer's API key from form's `LLM_API_KEY` into the right env var.
+    # All three providers use OLLAMA_API_KEY downstream (env name is legacy;
+    # actually any OpenAI-compatible endpoint reads from this slot).
+    api_key = form.get("LLM_API_KEY", "").strip()
+    if api_key:
+        values["OLLAMA_API_KEY"] = api_key
+
+    # Layer the provider preset on top — these always win over form input
+    # so a customer can't accidentally point at the wrong endpoint.
+    values.update(preset)
 
     try:
         env_writer.write_env(install_dir, values)

@@ -34,14 +34,6 @@
         </label>
       </div>
 
-      <div class="field" data-show-when="llm_provider=ollama-cloud">
-        <label for="OLLAMA_BASE_URL">Ollama base URL</label>
-        <input type="url" id="OLLAMA_BASE_URL" name="OLLAMA_BASE_URL"
-               value="http://host.docker.internal:11434/v1"
-               placeholder="http://host.docker.internal:11434/v1">
-        <p class="hint">Leave the default unless you know what you're doing.</p>
-      </div>
-
       <div class="field">
         <label for="LLM_API_KEY">
           <span class="api-key-label-text">Ollama API key</span>
@@ -50,15 +42,8 @@
         <input type="password" id="LLM_API_KEY" name="LLM_API_KEY" autocomplete="new-password"
                placeholder="ollama_...">
         <p class="hint" data-when="llm_provider=ollama-cloud">Get from <a href="https://ollama.com/settings/keys" target="_blank" rel="noopener">https://ollama.com/settings/keys</a> &mdash; starts with <code>ollama_</code>.</p>
-        <p class="hint" data-when="llm_provider=anthropic">Starts with <code>sk-ant-</code>.</p>
-        <p class="hint" data-when="llm_provider=openai">Starts with <code>sk-</code>.</p>
-      </div>
-
-      <div class="field">
-        <label for="HERMES_DEFAULT_MODEL">Model</label>
-        <input type="text" id="HERMES_DEFAULT_MODEL" name="HERMES_DEFAULT_MODEL"
-               value="glm-5.1:cloud"
-               placeholder="e.g. glm-5.1:cloud, claude-sonnet-4, gpt-4o">
+        <p class="hint" data-when="llm_provider=anthropic">Starts with <code>sk-ant-</code>. Get from <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Anthropic Console</a>.</p>
+        <p class="hint" data-when="llm_provider=openai">Starts with <code>sk-</code>. Get from <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">OpenAI dashboard</a>.</p>
       </div>
 
       <div class="step-actions">

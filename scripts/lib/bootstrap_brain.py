@@ -190,6 +190,21 @@ def epoch_ms_to_utc(ms: int | str | None) -> dt.datetime:
         return utcnow()
 
 
+def _iso_to_utc(iso: str | None) -> dt.datetime | None:
+    """Parse Composio's ISO8601 messageTimestamp to UTC datetime."""
+    if not iso:
+        return None
+    try:
+        # Python 3.11+ handles trailing 'Z' natively in fromisoformat.
+        s = str(iso).replace("Z", "+00:00")
+        d = dt.datetime.fromisoformat(s)
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=dt.timezone.utc)
+        return d.astimezone(dt.timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
 def safe_filename(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]", "-", name).strip("-") or "unknown"
 
@@ -212,6 +227,9 @@ def _http_post_json(url: str, headers: dict[str, str], body: dict[str, Any]) -> 
     req.add_header("Content-Type", "application/json")
     # Composio MCP servers reject requests that don't accept both JSON and SSE.
     req.add_header("Accept", "application/json, text/event-stream")
+    # Cloudflare in front of Composio blocks `Python-urllib/x.x` UA with 1010.
+    # Identify ourselves as a normal client.
+    req.add_header("User-Agent", "safeclaw-bootstrap/1.0 (+https://github.com/Vasanth19/safeclaw)")
     for k, v in headers.items():
         req.add_header(k, v)
 
@@ -409,7 +427,12 @@ def _normalize_message(raw: dict[str, Any]) -> GmailMessage | None:
     if not message_id:
         return None
 
-    # Headers can show up in two places depending on Composio's version.
+    # Composio MCP normalizes the message and returns these as top-level fields:
+    #   sender = "Display Name <email@host>"
+    #   to     = comma-separated recipients
+    #   subject, messageText, messageTimestamp (ISO8601), labelIds
+    # Older Gmail-API-shaped responses use payload.headers + bodyText/snippet.
+    # We probe both.
     headers_list = (
         raw.get("payload", {}).get("headers")
         or raw.get("headers")
@@ -422,16 +445,23 @@ def _normalize_message(raw: dict[str, Any]) -> GmailMessage | None:
         if name:
             header_map[name] = value
 
-    sender_name, sender_email = parse_address_header(header_map.get("from", ""))
+    # Composio top-level fields take precedence when present.
+    from_str = raw.get("sender") or header_map.get("from", "")
+    to_str = raw.get("to") or header_map.get("to", "")
+    cc_str = raw.get("cc") or header_map.get("cc", "")
+
+    sender_name, sender_email = parse_address_header(from_str)
     recipients: list[str] = []
-    for header in ("to", "cc"):
-        for chunk in (header_map.get(header, "") or "").split(","):
-            _, email = parse_address_header(chunk)
-            if email:
-                recipients.append(email.lower())
+    for chunk in (str(to_str) + "," + str(cc_str)).split(","):
+        _, email = parse_address_header(chunk)
+        if email:
+            recipients.append(email.lower())
+
+    subject = raw.get("subject") or header_map.get("subject", "") or ""
 
     body_text = (
-        raw.get("bodyText")
+        raw.get("messageText")          # Composio MCP top-level (most common today)
+        or raw.get("bodyText")
         or raw.get("body_text")
         or raw.get("snippet")
         or raw.get("body", {}).get("text")
@@ -440,7 +470,11 @@ def _normalize_message(raw: dict[str, Any]) -> GmailMessage | None:
     if isinstance(body_text, dict):
         body_text = body_text.get("data") or ""
 
-    received_at = epoch_ms_to_utc(raw.get("internalDate") or raw.get("internal_date"))
+    # Composio returns ISO timestamps; older shape uses epoch ms.
+    received_at = (
+        _iso_to_utc(raw.get("messageTimestamp"))
+        or epoch_ms_to_utc(raw.get("internalDate") or raw.get("internal_date"))
+    )
 
     label_ids = raw.get("labelIds") or raw.get("label_ids") or raw.get("labels") or []
     labels = [str(x).upper() for x in label_ids if x]
@@ -455,7 +489,7 @@ def _normalize_message(raw: dict[str, Any]) -> GmailMessage | None:
         sender_email=sender_email.lower() if sender_email else "",
         sender_name=sender_name or "",
         recipient_emails=recipients,
-        subject=header_map.get("subject", "") or "",
+        subject=subject,
         body_text=str(body_text),
         received_at=received_at,
         labels=labels,
@@ -764,7 +798,9 @@ def run(
 
     # ── Phase A: inbound (everyone who's emailed me) ──────────────────────
     print("Phase A — fetching inbound mail...")
-    inbound_query = f"{base_query} -in:sent -in:chats"
+    # `in:inbox` is more reliable than `-in:sent -in:chats` exclusions —
+    # Composio MCP appears to choke on negated label filters in the query.
+    inbound_query = f"{base_query} in:inbox"
     seen_message_ids: set[str] = set()
 
     for msg in fetch_messages(reader, query=inbound_query, label="inbound"):

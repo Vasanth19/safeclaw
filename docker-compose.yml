@@ -201,6 +201,9 @@ services:
       # tripping the bind-mount "Device or resource busy" rename failure.
       - ./config/reader-hermes.yaml:/safeclaw/config-template/config.yaml:ro
       - hermes_reader_data:/opt/data
+      # Brain mount is deferred — needs HERMES_UID/GID alignment to avoid
+      # chown failure on bind-mount permissions. Agent reads brain via the
+      # brain-api-mcp → postgres-obs path until we land the UID work.
     # Run as the long-lived daemon (gateway). The SafeClaw entrypoint handles
     # config-copy + privilege drop + skill sync, then hands off to hermes.
     command: ["gateway", "run", "--accept-hooks"]
@@ -243,6 +246,7 @@ services:
       # /opt/data/config.yaml so /sethome + `hermes config set` can rewrite.
       - ./config/actor-hermes.yaml:/safeclaw/config-template/config.yaml:ro
       - hermes_actor_data:/opt/data
+      # Brain mount deferred — see hermes-reader.
     # Gate: exit cleanly if ACTOR_ENABLED is not true; otherwise run gateway daemon.
     # Use full path to `hermes` (the CLI binary), not `hermes-agent` (broken legacy).
     command: >

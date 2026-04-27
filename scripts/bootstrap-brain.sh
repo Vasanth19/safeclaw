@@ -134,4 +134,4 @@ docker compose run --rm \
   -e BRAIN_STATE_DIR=/repo/brain \
   -v "${REPO_ROOT}:/repo:rw" \
   embedder \
-  python /repo/scripts/lib/bootstrap_brain.py "${PY_ARGS[@]}"
+  python /repo/scripts/lib/bootstrap_brain.py ${PY_ARGS[@]+"${PY_ARGS[@]}"}

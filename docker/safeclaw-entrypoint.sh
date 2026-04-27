@@ -71,6 +71,12 @@ if [ -n "${SOURCE_TEMPLATE}" ]; then
         mv "${tmp}" "${TARGET_CONFIG}"
     fi
     chmod 640 "${TARGET_CONFIG}" || true
+    # Chown to hermes:hermes so upstream entrypoint (which runs as hermes
+    # user after the privilege drop) can re-chmod / re-chown without
+    # "Operation not permitted". Only attempt if we're root.
+    if [ "$(id -u)" = "0" ]; then
+        chown hermes:hermes "${TARGET_CONFIG}" 2>/dev/null || true
+    fi
 else
     log "WARNING: no config template found — Hermes upstream will seed defaults"
 fi

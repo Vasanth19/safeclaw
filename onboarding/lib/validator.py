@@ -10,16 +10,15 @@ docker compose, but it surfaces wrong tokens BEFORE booting containers, which
 is a much better UX than failing inside the stack 90 seconds later.
 
 Composio note:
-    Customers no longer enter Composio creds via the form. The operator
-    pre-loads them into .env via scripts/provision-vps.sh BEFORE the
-    customer ever sees /setup. validate_composio_preload() is the
-    in-webapp check that those four keys are present and look right.
+    Customers provide their own Composio creds in Step 2 of the form —
+    Composio is where they did the OAuth dance for Gmail / Drive / Slack,
+    so the four COMPOSIO_* values come from them, not from the operator.
+    validate_composio_api_key() and validate_composio_mcp_url() hit
+    Composio's real endpoints to confirm the key and each MCP URL work.
 """
 from __future__ import annotations
 
 import json
-import re
-from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -100,87 +99,153 @@ def validate_openai(api_key: str, base_url: str, model: str) -> tuple[bool, str]
     return validate_llm("openai", base_url, api_key, model)
 
 
-# ── Composio preload check ──────────────────────────────────────────────────
-# The four Composio keys are written to .env by the operator BEFORE the
-# webapp boots. We never collect them from the customer. This check just
-# confirms they are present, non-empty, and format-valid.
-COMPOSIO_PRELOAD_KEYS = (
-    "COMPOSIO_API_KEY",
-    "COMPOSIO_USER_ID",
-    "COMPOSIO_READER_MCP_URL",
-    "COMPOSIO_ACTOR_MCP_URL",
-)
+# ── Composio ─────────────────────────────────────────────────────────────────
+def validate_composio_api_key(api_key: str) -> tuple[bool, str]:
+    """Confirm the customer's Composio API key works.
 
-_ENV_LINE_RE = re.compile(r"^([A-Z_][A-Z0-9_]*)=(.*)$")
-_PLACEHOLDER_VALUES = {"", "__FILL_IN__", "__GENERATE__"}
-
-
-def _read_env_file(env_path: Path) -> dict[str, str]:
-    """Parse a .env file into a dict. Values may be quoted with double-quotes;
-    strip those if present. Comment lines (#...) and blank lines are skipped.
+    One cheap call to /api/v3/toolkits?limit=1 — Composio rejects
+    bad keys with 401/403 and returns a JSON body with an `items`
+    array on success.
     """
-    out: dict[str, str] = {}
-    if not env_path.is_file():
-        return out
-    for raw in env_path.read_text(encoding="utf-8").splitlines():
-        stripped = raw.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        match = _ENV_LINE_RE.match(stripped)
-        if not match:
-            continue
-        key, value = match.group(1), match.group(2)
-        # Unquote if surrounded by matching double quotes.
-        if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
-            value = value[1:-1]
-        out[key] = value
-    return out
-
-
-def validate_composio_preload(env_path: str | Path) -> tuple[bool, str]:
-    """Confirm the operator preloaded all four COMPOSIO_* keys into .env.
-
-    Format checks:
-      - COMPOSIO_API_KEY must start with 'ak_'
-      - COMPOSIO_READER_MCP_URL and _ACTOR_MCP_URL must end with
-        '/mcp?user_id=...' (i.e. contain '/mcp' and 'user_id=' in the query)
-      - COMPOSIO_USER_ID must be non-empty
-
-    Returns (ok, message). On failure, message is the operator-facing
-    explanation of which key is wrong.
-    """
-    env_path = Path(env_path)
-    if not env_path.is_file():
-        return False, f".env not found at {env_path}"
-
-    values = _read_env_file(env_path)
-
-    missing: list[str] = []
-    for key in COMPOSIO_PRELOAD_KEYS:
-        value = values.get(key, "").strip()
-        if value in _PLACEHOLDER_VALUES:
-            missing.append(key)
-
-    if missing:
-        return False, f"missing or unset: {', '.join(missing)}"
-
-    api_key = values["COMPOSIO_API_KEY"].strip()
+    if not api_key:
+        return False, "Composio API key is required"
     if not api_key.startswith("ak_"):
-        return False, "COMPOSIO_API_KEY must start with 'ak_'"
+        return False, "Composio API key must start with 'ak_'"
 
-    user_id = values["COMPOSIO_USER_ID"].strip()
-    if not user_id:
-        return False, "COMPOSIO_USER_ID is empty"
+    try:
+        resp = requests.get(
+            "https://backend.composio.dev/api/v3/toolkits",
+            params={"limit": 1},
+            headers={"x-api-key": api_key},
+            timeout=TIMEOUT,
+        )
+    except requests.RequestException as exc:
+        return False, f"could not reach Composio: {_safe_msg(exc)}"
 
-    for url_key in ("COMPOSIO_READER_MCP_URL", "COMPOSIO_ACTOR_MCP_URL"):
-        url = values[url_key].strip()
-        parsed = urlparse(url)
-        if parsed.scheme not in ("http", "https"):
-            return False, f"{url_key} must be http(s)"
-        if "/mcp" not in parsed.path or "user_id=" not in (parsed.query or ""):
-            return False, f"{url_key} must end with /mcp?user_id=..."
+    if resp.status_code == 401 or resp.status_code == 403:
+        return False, "Composio rejected the API key"
+    if resp.status_code >= 400:
+        return False, f"Composio returned HTTP {resp.status_code}"
+
+    try:
+        body = resp.json()
+    except ValueError:
+        return False, "Composio returned non-JSON response"
+
+    if "items" not in body:
+        return False, "Composio response missing 'items' field"
 
     return True, ""
+
+
+def validate_composio_mcp_url(url: str, api_key: str = "", *, label: str = "MCP") -> tuple[bool, str]:
+    """Confirm a Composio MCP URL responds to a `tools/list` JSON-RPC call
+    with a non-empty tools array.
+
+    Format checks first (cheap, no network):
+      - http(s) scheme
+      - path contains '/mcp'
+      - query string contains 'user_id='
+
+    Then we POST tools/list. A non-empty `result.tools` array means the URL
+    + user_id are wired to a real MCP server with real authorized tools.
+
+    The api_key arg is optional — Composio MCP URLs already embed
+    authentication in the URL itself, but if Composio later requires an
+    `x-api-key` header we'll add it here.
+    """
+    if not url:
+        return False, f"{label} URL is required"
+
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        return False, f"{label} URL must be http(s)"
+    if "/mcp" not in parsed.path or "user_id=" not in (parsed.query or ""):
+        return False, f"{label} URL must end with /mcp?user_id=..."
+
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/list",
+        "params": {},
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
+    if api_key:
+        headers["x-api-key"] = api_key
+
+    try:
+        resp = requests.post(url, json=payload, headers=headers, timeout=TIMEOUT)
+    except requests.RequestException as exc:
+        return False, f"could not reach {label}: {_safe_msg(exc)}"
+
+    if resp.status_code >= 400:
+        return False, f"{label} returned HTTP {resp.status_code}"
+
+    body = _parse_mcp_response(resp)
+    if body is None:
+        return False, f"{label} returned non-JSON response"
+
+    tools = body.get("result", {}).get("tools")
+    if not isinstance(tools, list) or len(tools) == 0:
+        return False, f"{label} returned no tools — is the user authorized?"
+
+    return True, ""
+
+
+def _parse_mcp_response(resp: requests.Response) -> dict | None:
+    """Composio MCP returns either application/json or text/event-stream."""
+    ctype = resp.headers.get("Content-Type", "")
+    if "application/json" in ctype:
+        try:
+            return resp.json()
+        except ValueError:
+            return None
+    if "text/event-stream" in ctype:
+        # SSE: find the first `data: {...}` line.
+        for line in resp.text.splitlines():
+            if line.startswith("data:"):
+                try:
+                    return json.loads(line[5:].strip())
+                except ValueError:
+                    continue
+        return None
+    # Fall back to attempting JSON parse anyway.
+    try:
+        return resp.json()
+    except ValueError:
+        return None
+
+
+def validate_composio(form: dict[str, Any]) -> dict[str, str]:
+    """Aggregate Composio-field validation. Returns {field_name: error}."""
+    errors: dict[str, str] = {}
+
+    api_key = (form.get("COMPOSIO_API_KEY") or "").strip()
+    ok, msg = validate_composio_api_key(api_key)
+    if not ok:
+        errors["COMPOSIO_API_KEY"] = msg
+
+    user_id = (form.get("COMPOSIO_USER_ID") or "").strip()
+    if not user_id:
+        errors["COMPOSIO_USER_ID"] = "Composio user ID is required"
+
+    # Only do the live MCP check if the API key passed format validation —
+    # the MCP endpoints are slow and 5xx if Composio is unhealthy, no point
+    # piling on errors when the customer's first problem is the API key.
+    reader_url = (form.get("COMPOSIO_READER_MCP_URL") or "").strip()
+    ok, msg = validate_composio_mcp_url(reader_url, api_key, label="Reader MCP")
+    if not ok:
+        errors["COMPOSIO_READER_MCP_URL"] = msg
+
+    actor_url = (form.get("COMPOSIO_ACTOR_MCP_URL") or "").strip()
+    ok, msg = validate_composio_mcp_url(actor_url, api_key, label="Actor MCP")
+    if not ok:
+        errors["COMPOSIO_ACTOR_MCP_URL"] = msg
+
+    return errors
 
 
 # ── Slack ───────────────────────────────────────────────────────────────────
@@ -295,27 +360,51 @@ def validate_telegram(form: dict[str, Any]) -> dict[str, str]:
 
 
 # ── Aggregator ──────────────────────────────────────────────────────────────
+# LLM provider preset — duplicated from provisioner so validate_all() knows
+# which base_url + model to test the API key against. Keep these in sync;
+# provisioner.LLM_PRESETS is the source of truth at write time.
+_LLM_DEFAULTS = {
+    "ollama-cloud": (
+        "http://host.docker.internal:11434/v1",
+        "glm-5.1:cloud",
+    ),
+    "anthropic": (
+        "https://api.anthropic.com/v1",
+        "claude-sonnet-4-6",
+    ),
+    "openai": (
+        "https://api.openai.com/v1",
+        "gpt-4o",
+    ),
+}
+
+
 def validate_all(form: dict[str, Any]) -> dict[str, str]:
     """Run every applicable validator on the form payload. Returns a dict of
     {field_name: error}. Empty dict == all good.
-
-    Composio preload is NOT checked here — the provisioner verifies that
-    in its own dedicated phase, before any form-level work.
     """
     errors: dict[str, str] = {}
 
     # LLM
-    provider = form.get("llm_provider", "")
-    base_url = form.get("OLLAMA_BASE_URL") or form.get("LLM_BASE_URL", "")
-    model = form.get("HERMES_DEFAULT_MODEL", "")
+    provider = (form.get("llm_provider") or "").strip()
+    base_url, default_model = _LLM_DEFAULTS.get(
+        provider, (form.get("OLLAMA_BASE_URL", ""), "")
+    )
+    # Form sends a single LLM_API_KEY; legacy paths still allow the
+    # provider-specific names for backwards compat with older clients.
     api_key = (
-        form.get("OLLAMA_API_KEY")
+        form.get("LLM_API_KEY")
+        or form.get("OLLAMA_API_KEY")
         or form.get("ANTHROPIC_API_KEY")
         or form.get("OPENAI_API_KEY", "")
-    )
+    ).strip()
+    model = (form.get("HERMES_DEFAULT_MODEL") or default_model).strip()
     ok, msg = validate_llm(provider, base_url, api_key, model)
     if not ok:
         errors["llm"] = msg
+
+    # Composio (required, customer-supplied)
+    errors.update(validate_composio(form))
 
     # Slack (required)
     errors.update(validate_slack(form))

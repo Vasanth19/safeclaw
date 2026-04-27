@@ -1,4 +1,4 @@
-"""Tests for env_writer — atomic .env writer + Composio preload helper."""
+"""Tests for env_writer — atomic .env writer with whitelist enforcement."""
 import os
 import sys
 import tempfile
@@ -30,6 +30,16 @@ def make_tempdir() -> Path:
     return d
 
 
+# ── ALLOWED_KEYS expectations ───────────────────────────────────────────────
+def test_composio_keys_in_allowed_keys():
+    """Customer enters Composio creds via the form, so these MUST be in
+    ALLOWED_KEYS."""
+    assert "COMPOSIO_API_KEY" in env_writer.ALLOWED_KEYS
+    assert "COMPOSIO_USER_ID" in env_writer.ALLOWED_KEYS
+    assert "COMPOSIO_READER_MCP_URL" in env_writer.ALLOWED_KEYS
+    assert "COMPOSIO_ACTOR_MCP_URL" in env_writer.ALLOWED_KEYS
+
+
 # ── write_env (form-driven) ─────────────────────────────────────────────────
 def test_writes_atomic_file_with_mode_600():
     d = make_tempdir()
@@ -52,6 +62,23 @@ def test_substitutes_only_provided_keys():
     assert "POSTGRES_OBS_PASSWORD=__GENERATE__" in text
     # Comments preserved
     assert "# Header comment" in text
+
+
+def test_writes_composio_values_through_form():
+    """Composio is now form-driven — write_env should substitute the four
+    values when the form provides them."""
+    d = make_tempdir()
+    env_writer.write_env(d, {
+        "COMPOSIO_API_KEY": "ak_real",
+        "COMPOSIO_USER_ID": "user_real",
+        "COMPOSIO_READER_MCP_URL": "https://x.dev/r/mcp?user_id=u",
+        "COMPOSIO_ACTOR_MCP_URL": "https://x.dev/a/mcp?user_id=u",
+    })
+    text = (d / ".env").read_text()
+    assert "COMPOSIO_API_KEY=ak_real" in text
+    assert "COMPOSIO_USER_ID=user_real" in text
+    assert 'COMPOSIO_READER_MCP_URL="https://x.dev/r/mcp?user_id=u"' in text
+    assert 'COMPOSIO_ACTOR_MCP_URL="https://x.dev/a/mcp?user_id=u"' in text
 
 
 def test_rejects_placeholder_input():
@@ -94,40 +121,6 @@ def test_unknown_keys_are_dropped():
     assert "SOMETHING_EVIL" not in text
 
 
-def test_composio_keys_not_in_allowed_keys():
-    """Form must NOT be able to overwrite preloaded COMPOSIO_* values."""
-    assert "COMPOSIO_API_KEY" not in env_writer.ALLOWED_KEYS
-    assert "COMPOSIO_USER_ID" not in env_writer.ALLOWED_KEYS
-    assert "COMPOSIO_READER_MCP_URL" not in env_writer.ALLOWED_KEYS
-    assert "COMPOSIO_ACTOR_MCP_URL" not in env_writer.ALLOWED_KEYS
-
-
-def test_form_cannot_overwrite_composio_preload():
-    """A form payload that maliciously includes COMPOSIO_* must be ignored,
-    and the preloaded values in .env must be preserved."""
-    d = make_tempdir()
-    # Operator preloaded these into .env.
-    env_writer.preload_composio(d / ".env", {
-        "COMPOSIO_API_KEY": "ak_real",
-        "COMPOSIO_USER_ID": "user_real",
-        "COMPOSIO_READER_MCP_URL": "https://x.dev/r/mcp?user_id=u",
-        "COMPOSIO_ACTOR_MCP_URL": "https://x.dev/a/mcp?user_id=u",
-    })
-    # Now a form-driven write tries to overwrite them.
-    env_writer.write_env(d, {
-        "SLACK_BOT_TOKEN": "xoxb-test",
-        "COMPOSIO_API_KEY": "ak_evil",          # ignored — not in ALLOWED_KEYS
-        "COMPOSIO_USER_ID": "user_evil",        # ignored
-        "COMPOSIO_READER_MCP_URL": "https://evil/mcp?user_id=evil",
-        "COMPOSIO_ACTOR_MCP_URL": "https://evil/mcp?user_id=evil",
-    })
-    text = (d / ".env").read_text()
-    assert "COMPOSIO_API_KEY=ak_real" in text
-    assert "COMPOSIO_USER_ID=user_real" in text
-    assert "ak_evil" not in text
-    assert "user_evil" not in text
-
-
 def test_atomic_no_partial_write_on_missing_template():
     d = Path(tempfile.mkdtemp(prefix="safeclaw_test_"))
     # No .env.example present
@@ -140,63 +133,31 @@ def test_atomic_no_partial_write_on_missing_template():
     assert not (d / ".env").exists()
 
 
-# ── preload_composio (operator-driven) ──────────────────────────────────────
-def test_preload_composio_writes_all_four_keys():
+def test_existing_env_preserves_non_form_keys():
+    """If .env already exists with extra keys (e.g. JWT_SECRET written by
+    init-secrets), write_env should preserve them."""
     d = make_tempdir()
-    env_writer.preload_composio(d / ".env", {
-        "COMPOSIO_API_KEY": "ak_op",
-        "COMPOSIO_USER_ID": "user_op",
-        "COMPOSIO_READER_MCP_URL": "https://x.dev/r/mcp?user_id=u",
-        "COMPOSIO_ACTOR_MCP_URL": "https://x.dev/a/mcp?user_id=u",
-    })
+    # Pretend init-secrets ran first.
+    (d / ".env").write_text(
+        SAMPLE_TEMPLATE.replace("POSTGRES_OBS_PASSWORD=__GENERATE__",
+                                "POSTGRES_OBS_PASSWORD=secret123"),
+        encoding="utf-8",
+    )
+    env_writer.write_env(d, {"SLACK_BOT_TOKEN": "xoxb-test"})
     text = (d / ".env").read_text()
-    assert "COMPOSIO_API_KEY=ak_op" in text
-    assert "COMPOSIO_USER_ID=user_op" in text
-    # URLs containing '?' get shell-quoted to keep them safe in .env.
-    assert 'COMPOSIO_READER_MCP_URL="https://x.dev/r/mcp?user_id=u"' in text
-    assert 'COMPOSIO_ACTOR_MCP_URL="https://x.dev/a/mcp?user_id=u"' in text
-    assert oct((d / ".env").stat().st_mode)[-3:] == "600"
-
-
-def test_preload_composio_rejects_missing_key():
-    d = make_tempdir()
-    try:
-        env_writer.preload_composio(d / ".env", {
-            "COMPOSIO_API_KEY": "ak_op",
-            # missing the other three
-        })
-    except env_writer.EnvWriteError as exc:
-        assert "missing" in str(exc).lower()
-    else:
-        raise AssertionError("expected EnvWriteError")
-
-
-def test_preload_composio_rejects_placeholders():
-    d = make_tempdir()
-    try:
-        env_writer.preload_composio(d / ".env", {
-            "COMPOSIO_API_KEY": "__FILL_IN__",
-            "COMPOSIO_USER_ID": "user_op",
-            "COMPOSIO_READER_MCP_URL": "https://x/mcp?user_id=u",
-            "COMPOSIO_ACTOR_MCP_URL": "https://x/mcp?user_id=u",
-        })
-    except env_writer.EnvWriteError as exc:
-        assert "placeholder" in str(exc).lower()
-    else:
-        raise AssertionError("expected EnvWriteError")
+    assert "POSTGRES_OBS_PASSWORD=secret123" in text
+    assert "SLACK_BOT_TOKEN=xoxb-test" in text
 
 
 if __name__ == "__main__":
+    test_composio_keys_in_allowed_keys()
     test_writes_atomic_file_with_mode_600()
     test_substitutes_only_provided_keys()
+    test_writes_composio_values_through_form()
     test_rejects_placeholder_input()
     test_quotes_values_with_special_chars()
     test_appends_keys_not_in_template()
     test_unknown_keys_are_dropped()
-    test_composio_keys_not_in_allowed_keys()
-    test_form_cannot_overwrite_composio_preload()
     test_atomic_no_partial_write_on_missing_template()
-    test_preload_composio_writes_all_four_keys()
-    test_preload_composio_rejects_missing_key()
-    test_preload_composio_rejects_placeholders()
+    test_existing_env_preserves_non_form_keys()
     print("env_writer: all tests passed")

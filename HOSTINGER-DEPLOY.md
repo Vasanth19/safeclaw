@@ -65,24 +65,27 @@ continent as the customer.
 
 ## 2. Provisioning a customer end-to-end
 
-The full flow from "they paid" to "their bot says hello in Slack" is seven
-steps. Budget 25 minutes total — most of it waiting on DNS propagation and
-the customer filling in the form. The new wrinkle versus older versions of
-this runbook: **you set up Composio for the customer BEFORE pointing them
-at the URL**. Customers no longer see Composio anywhere in the form.
+The full flow from "they paid" to "their bot says hello in Slack" is four
+operator steps. Budget 15 minutes of operator time total — most of it
+waiting on DNS propagation and `apt upgrade`. The customer handles
+Composio setup themselves through Step 2 of the onboarding form, so the
+operator never touches Composio per customer.
+
+> **Composio setup is customer-side.** The customer signs up at
+> `app.composio.dev`, connects their own Gmail / Drive / Slack via OAuth,
+> creates their own Reader and Actor MCP servers, and pastes the four
+> resulting values (`COMPOSIO_API_KEY`, `COMPOSIO_USER_ID`,
+> `COMPOSIO_READER_MCP_URL`, `COMPOSIO_ACTOR_MCP_URL`) into Step 2 of the
+> setup form. The form's help link walks them through the 5-minute
+> dashboard tour. The operator does not need to do any Composio prep on
+> the VPS side.
 
 ### Per-customer flow at a glance
 
 1. Buy a Hostinger VPS for the customer.
 2. Point `<customer>.safeclaw.com` at the VPS (DNS A record).
-3. On YOUR machine: run `composio dev init` in a per-customer directory.
-4. In the Composio dashboard, create two MCP servers for this customer
-   (Reader + Actor — see [`docs/COMPOSIO-MCP-SETUP.md`](./docs/COMPOSIO-MCP-SETUP.md)
-   for the exact tool slugs).
-5. Capture the four values: `COMPOSIO_API_KEY`, `COMPOSIO_USER_ID`,
-   `COMPOSIO_READER_MCP_URL`, `COMPOSIO_ACTOR_MCP_URL`.
-6. SSH to the VPS and run `provision-vps.sh` with those values exported.
-7. Email the customer the URL: `https://<domain>/setup`.
+3. SSH to the VPS and run `bash scripts/provision-vps.sh <domain> <admin-email>`.
+4. Email the customer the URL: `https://<domain>/setup`.
 
 ### 2.1. Spin up the VPS
 
@@ -115,29 +118,7 @@ dig +short customer1.safeclaw.com
 
 See section 3 for full DNS guidance.
 
-### 2.3. Composio per-customer setup (do this BEFORE step 2.4)
-
-Customers no longer enter Composio creds — you set them up on their behalf,
-on your machine, and pass them as env vars when you SSH to the VPS.
-
-The five-minute walkthrough lives in
-[`docs/COMPOSIO-MCP-SETUP.md`](./docs/COMPOSIO-MCP-SETUP.md). The short
-version:
-
-1. On your laptop, `cd` into a per-customer directory.
-2. `composio dev init` and create the customer's user_id.
-3. Create two MCP servers in the Composio dashboard:
-   - **Reader** — read-only Gmail/Drive/Slack/Calendar tools.
-   - **Actor** — draft/send Gmail + chat:write Slack tools.
-4. Copy the four values out of the dashboard:
-   - `COMPOSIO_API_KEY` (starts with `ak_`)
-   - `COMPOSIO_USER_ID`
-   - `COMPOSIO_READER_MCP_URL` (ends with `/mcp?user_id=...`)
-   - `COMPOSIO_ACTOR_MCP_URL`  (ends with `/mcp?user_id=...`)
-
-Save them somewhere you can paste from in step 2.4.
-
-### 2.4. SSH in and run `provision-vps.sh`
+### 2.3. SSH in and run `provision-vps.sh`
 
 ```bash
 ssh root@customer1.safeclaw.com
@@ -147,20 +128,13 @@ ssh root@customer1.safeclaw.com
 curl -fsSL https://raw.githubusercontent.com/Vasanth19/safeclaw/main/scripts/provision-vps.sh \
   -o /tmp/provision-vps.sh
 
-# Pass the four COMPOSIO_* values as env vars. The script preloads them
-# into /opt/safeclaw/.env BEFORE the customer's onboarding webapp boots,
-# so the customer's form never asks for them.
-COMPOSIO_API_KEY='ak_...' \
-COMPOSIO_USER_ID='usr_...' \
-COMPOSIO_READER_MCP_URL='https://backend.composio.dev/v3/mcp/<id>/mcp?user_id=<uid>' \
-COMPOSIO_ACTOR_MCP_URL='https://backend.composio.dev/v3/mcp/<id>/mcp?user_id=<uid>' \
+# No env vars needed — the customer enters their own Composio creds via
+# the onboarding form.
 bash /tmp/provision-vps.sh customer1.safeclaw.com hello@safeclaw.com
 ```
 
 The script is idempotent — if anything fails partway, fix the cause and
-re-run with the same arguments. If you forget the COMPOSIO_* vars, the
-webapp will refuse to provision and tell you exactly which variable was
-missing; just re-run with all four set.
+re-run with the same arguments.
 
 Total runtime on a fresh KVM-2: ~6–8 minutes. Most of it is `apt upgrade`,
 `docker compose pull`, and the Ollama daemon install.
@@ -177,7 +151,7 @@ When it finishes you'll see:
   ...
 ```
 
-### 2.5. Email the customer
+### 2.4. Email the customer
 
 Send the customer the setup URL and a link to
 [`CUSTOMER-ONBOARDING.md`](./CUSTOMER-ONBOARDING.md). A canned template:
@@ -188,35 +162,37 @@ Subject: Your SafeClaw assistant is ready for setup
 Hi <name>,
 
 Your dedicated VPS is provisioned and waiting. Click the link below and walk
-through the 3-step setup form. It takes 10–15 minutes if you have your
-Slack tokens and an Ollama Cloud key handy.
+through the 4-step setup form. It takes 15–20 minutes if you have your
+Slack tokens, an Ollama Cloud key, and a Composio account ready.
 
   https://customer1.safeclaw.com/setup
 
 Step-by-step guide:
   https://docs.safeclaw.com/onboarding (mirrors CUSTOMER-ONBOARDING.md)
 
-Need a hand creating the Slack app? The walkthrough is at:
-  https://docs.safeclaw.com/slack-app (mirrors docs/SLACK-APP-WALKTHROUGH.md)
+Don't have a Composio account yet? The form's Help page has a 5-minute
+walkthrough:
+  https://customer1.safeclaw.com/help#composio
+
+Need a hand creating the Slack app?
+  https://customer1.safeclaw.com/help#slack
 
 Reply to this email if anything's unclear.
 
 — Operator
 ```
 
-### 2.6. Watch the customer submit
+### 2.5. Watch the customer submit
 
 When the customer clicks Submit on the form, the onboarding webapp:
 
-1. Verifies the four `COMPOSIO_*` keys you preloaded in step 2.4 are
-   present in `.env`. If they're missing, the run aborts with an
-   operator-facing message — re-run `provision-vps.sh` with them set.
-2. Validates the customer's credentials (Slack tokens valid, LLM
-   responds).
-3. Writes the populated `.env` and runs `scripts/init-secrets.sh`.
-4. Boots the rest of the stack via `docker compose up -d`.
-5. Runs `scripts/bootstrap-brain.sh` (90-day Gmail backfill — ~5 min).
-6. Posts a welcome message to the customer's Slack DM.
+1. Validates the customer's credentials — LLM key responds, Composio API
+   key works, both MCP URLs return tools, Slack tokens valid.
+2. Writes the populated `.env` (including the four customer-supplied
+   `COMPOSIO_*` values) and runs `scripts/init-secrets.sh`.
+3. Boots the rest of the stack via `docker compose up -d`.
+4. Runs `scripts/bootstrap-brain.sh` (90-day Gmail backfill — ~5 min).
+5. Posts a welcome message to the customer's Slack DM.
 
 You can tail their session in real time:
 
@@ -226,7 +202,7 @@ cd /opt/safeclaw
 docker compose logs -f onboarding
 ```
 
-### 2.7. Confirm green and close the loop
+### 2.6. Confirm green and close the loop
 
 ```bash
 cd /opt/safeclaw
@@ -314,17 +290,20 @@ scp -r root@customer1.safeclaw.com:/tmp/customer1-final-backup \
 Encrypt the archive at rest (`age` or `gpg`) — the brain contains private
 emails.
 
-### 4.2. Disconnect Composio integrations
+### 4.2. Disconnect Composio integrations (customer self-service)
 
-In the Composio dashboard for the customer's user-id:
+Composio is the customer's own account, so the customer (not the operator)
+revokes access. Email them with this checklist:
 
-1. Revoke the Gmail, Drive, Slack, and any other OAuth connections.
-2. Delete the Reader and Actor MCP servers.
-3. Delete the user record itself if no other product uses it.
+1. Sign in at <https://app.composio.dev>.
+2. Revoke the Gmail, Drive, Slack, and any other OAuth connections under
+   the user_id they used at setup.
+3. Delete the Reader and Actor MCP servers they created for SafeClaw.
 
-This severs Composio's access to the customer's mailbox immediately. Do this
-**before** killing the VPS — once the VPS is gone, you can't roll back if the
-revoke hits a snag.
+This severs Composio's access to the customer's mailbox immediately. If
+the customer wants you to do it on their behalf, they can grant you access
+to their dashboard temporarily — but the default and right answer is
+self-service.
 
 ### 4.3. Revoke Slack tokens
 
@@ -590,8 +569,9 @@ sometimes leaks slowly. Long-term fix: pin the model to a smaller dim.
 
 - [`CUSTOMER-ONBOARDING.md`](./CUSTOMER-ONBOARDING.md) — what we send the
   customer.
-- [`docs/COMPOSIO-MCP-SETUP.md`](./docs/COMPOSIO-MCP-SETUP.md) — operator
-  five-minute Composio setup per customer (creates the two MCP servers).
+- [`docs/COMPOSIO-MCP-SETUP.md`](./docs/COMPOSIO-MCP-SETUP.md) — the
+  customer-facing five-minute Composio setup walkthrough (also linked
+  from the in-form `/help#composio` page).
 - [`docs/SLACK-APP-WALKTHROUGH.md`](./docs/SLACK-APP-WALKTHROUGH.md) — what
   the customer follows when creating their Slack app.
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md) — how the security tenets actually

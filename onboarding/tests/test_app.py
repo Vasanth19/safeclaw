@@ -18,31 +18,37 @@ def test_landing_renders():
     assert b"SafeClaw" in r.data or b"SAFE" in r.data
 
 
-def test_setup_form_renders_with_three_steps():
+def test_setup_form_renders_with_four_steps():
     c = make_client()
     r = c.get("/setup")
     assert r.status_code == 200
     body = r.data.decode()
-    # Exactly 3 steps — Composio is gone.
+    # Exactly 4 steps — Composio is back as Step 2.
     assert 'data-step="1"' in body
     assert 'data-step="2"' in body
     assert 'data-step="3"' in body
-    assert 'data-step="4"' not in body
-    # Slack fields present
+    assert 'data-step="4"' in body
+    assert 'data-step="5"' not in body
+    # All four Composio fields are present, customer-facing.
+    assert "COMPOSIO_API_KEY" in body
+    assert "COMPOSIO_USER_ID" in body
+    assert "COMPOSIO_READER_MCP_URL" in body
+    assert "COMPOSIO_ACTOR_MCP_URL" in body
+    # Slack fields still present
     assert "SLACK_BOT_TOKEN" in body
     assert "SLACK_APP_TOKEN" in body
-    # Composio fields are NOT customer-facing anymore.
-    assert "COMPOSIO_API_KEY" not in body
-    assert "COMPOSIO_USER_ID" not in body
-    assert "COMPOSIO_READER_MCP_URL" not in body
-    assert "COMPOSIO_ACTOR_MCP_URL" not in body
 
 
-def test_help_renders():
+def test_help_renders_with_composio_section():
     c = make_client()
     r = c.get("/help")
     assert r.status_code == 200
-    assert b"Slack" in r.data
+    body = r.data.decode()
+    assert "Slack" in body
+    # Composio walkthrough section + anchor must be present.
+    assert 'id="composio"' in body
+    assert "GMAIL_FETCH_EMAILS" in body
+    assert "GMAIL_CREATE_EMAIL_DRAFT" in body
 
 
 def test_healthz():
@@ -67,13 +73,44 @@ def test_provision_rejects_empty_object():
     assert "errors" in body
 
 
+def test_provision_rejects_missing_composio_fields():
+    """A form submission missing Composio fields must surface per-field
+    errors before booting anything."""
+    c = make_client()
+    payload = {
+        "llm_provider": "openai",
+        "LLM_API_KEY": "sk-not-real",
+        "SLACK_BOT_TOKEN": "wrong",
+        "SLACK_APP_TOKEN": "wrong",
+        "SLACK_WORKSPACE_ID": "x",
+        "SLACK_BOT_ADMIN_USER_ID": "x",
+        "SLACK_PUBLIC_CHANNELS": "",
+        # No COMPOSIO_* fields at all.
+    }
+    r = c.post("/api/provision", json=payload)
+    assert r.status_code == 400
+    body = r.get_json()
+    assert body["success"] is False
+    errs = body["errors"]
+    # All four Composio errors must be reported.
+    assert "COMPOSIO_API_KEY" in errs
+    assert "COMPOSIO_USER_ID" in errs
+    assert "COMPOSIO_READER_MCP_URL" in errs
+    assert "COMPOSIO_ACTOR_MCP_URL" in errs
+    # Slack errors should also be reported in the same response.
+    assert "SLACK_BOT_TOKEN" in errs
+
+
 def test_provision_returns_validation_errors_for_bad_creds():
     c = make_client()
     payload = {
         "llm_provider": "openai",
-        "OLLAMA_BASE_URL": "https://api.openai.com/v1",
-        "OPENAI_API_KEY": "sk-not-real",
-        "HERMES_DEFAULT_MODEL": "gpt-4o",
+        "LLM_API_KEY": "sk-not-real",
+        # Composio fields present but bad — we should still see Slack errors.
+        "COMPOSIO_API_KEY": "sk-wrong-prefix",
+        "COMPOSIO_USER_ID": "",
+        "COMPOSIO_READER_MCP_URL": "not-a-url",
+        "COMPOSIO_ACTOR_MCP_URL": "not-a-url",
         "SLACK_BOT_TOKEN": "wrong",
         "SLACK_APP_TOKEN": "wrong",
         "SLACK_WORKSPACE_ID": "x",
@@ -85,13 +122,13 @@ def test_provision_returns_validation_errors_for_bad_creds():
     body = r.get_json()
     assert body["success"] is False
     errs = body["errors"]
-    # We should see distinct field-level errors for the bad inputs.
+    # Distinct field-level errors for bad inputs.
     assert "SLACK_BOT_TOKEN" in errs
     assert "SLACK_APP_TOKEN" in errs
     assert "SLACK_WORKSPACE_ID" in errs
-    # Composio errors should NOT appear — those are operator-preloaded.
-    assert "COMPOSIO_API_KEY" not in errs
-    assert "COMPOSIO_READER_MCP_URL" not in errs
+    assert "COMPOSIO_API_KEY" in errs
+    assert "COMPOSIO_USER_ID" in errs
+    assert "COMPOSIO_READER_MCP_URL" in errs
 
 
 def test_progress_404_for_unknown_install():
@@ -114,11 +151,12 @@ def test_install_id_pattern_rejects_path_traversal():
 
 if __name__ == "__main__":
     test_landing_renders()
-    test_setup_form_renders_with_three_steps()
-    test_help_renders()
+    test_setup_form_renders_with_four_steps()
+    test_help_renders_with_composio_section()
     test_healthz()
     test_provision_rejects_non_json()
     test_provision_rejects_empty_object()
+    test_provision_rejects_missing_composio_fields()
     test_provision_returns_validation_errors_for_bad_creds()
     test_progress_404_for_unknown_install()
     test_status_404_for_unknown_install()

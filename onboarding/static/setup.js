@@ -1,21 +1,22 @@
 /* SafeClaw setup wizard — vanilla JS, no framework.
  *
  * Responsibilities:
- *   - Step navigation (3 steps, hidden fieldsets)
+ *   - Step navigation (4 steps, hidden fieldsets)
  *   - Conditional field visibility (LLM provider, Telegram on/off)
  *   - Client-side format validation (cheap, gives instant feedback)
  *   - Submit -> POST /api/provision with the right payload shape
  *   - Surface server-side validation errors per-field
  *   - On success -> redirect to /progress/<id>
  *
- * Composio credentials are pre-loaded into .env by the operator-side
- * provision-vps.sh script BEFORE the customer ever sees this form. They
- * are intentionally not collected here.
+ * Composio credentials are collected from the customer in Step 2. They
+ * own the Composio account (that's where they did their OAuth for Gmail /
+ * Drive / Slack), so the four COMPOSIO_* values come from them, not from
+ * the operator.
  */
 (function () {
   "use strict";
 
-  const TOTAL_STEPS = 3;
+  const TOTAL_STEPS = 4;
 
   const form = document.getElementById("setup-form");
   if (!form) return;
@@ -117,6 +118,16 @@
     }
   }
 
+  function looksLikeMcpUrl(url) {
+    // Must be http(s) and end with /mcp...?user_id=<something>.
+    if (!/^https?:\/\//i.test(url)) return false;
+    if (url.indexOf("/mcp") === -1) return false;
+    if (url.indexOf("user_id=") === -1) return false;
+    // Make sure user_id has a non-empty value.
+    const m = url.match(/user_id=([^&\s]+)/);
+    return !!(m && m[1]);
+  }
+
   function validateStep(step) {
     clearErrors();
     let ok = true;
@@ -137,11 +148,44 @@
         setFieldError("LLM_API_KEY", "OpenAI keys start with sk-");
         ok = false;
       }
-      const model = (form.HERMES_DEFAULT_MODEL.value || "").trim();
-      if (!model) { setFieldError("HERMES_DEFAULT_MODEL", "Required"); ok = false; }
     }
 
     if (step === 2) {
+      const apiKey = (form.COMPOSIO_API_KEY.value || "").trim();
+      if (!apiKey) {
+        setFieldError("COMPOSIO_API_KEY", "Composio API key is required");
+        ok = false;
+      } else if (!apiKey.startsWith("ak_")) {
+        setFieldError("COMPOSIO_API_KEY", "Composio API key must start with ak_");
+        ok = false;
+      }
+
+      const userId = (form.COMPOSIO_USER_ID.value || "").trim();
+      if (!userId) {
+        setFieldError("COMPOSIO_USER_ID", "Composio user ID is required");
+        ok = false;
+      }
+
+      const reader = (form.COMPOSIO_READER_MCP_URL.value || "").trim();
+      if (!reader) {
+        setFieldError("COMPOSIO_READER_MCP_URL", "Reader MCP URL is required");
+        ok = false;
+      } else if (!looksLikeMcpUrl(reader)) {
+        setFieldError("COMPOSIO_READER_MCP_URL", "Must end with /mcp?user_id=<your_user_id>");
+        ok = false;
+      }
+
+      const actor = (form.COMPOSIO_ACTOR_MCP_URL.value || "").trim();
+      if (!actor) {
+        setFieldError("COMPOSIO_ACTOR_MCP_URL", "Actor MCP URL is required");
+        ok = false;
+      } else if (!looksLikeMcpUrl(actor)) {
+        setFieldError("COMPOSIO_ACTOR_MCP_URL", "Must end with /mcp?user_id=<your_user_id>");
+        ok = false;
+      }
+    }
+
+    if (step === 3) {
       if (!form.SLACK_BOT_TOKEN.value.startsWith("xoxb-")) {
         setFieldError("SLACK_BOT_TOKEN", "Must start with xoxb-");
         ok = false;
@@ -164,7 +208,7 @@
       }
     }
 
-    if (step === 3 && telegramToggle.checked) {
+    if (step === 4 && telegramToggle.checked) {
       const t = form.TELEGRAM_BOT_TOKEN.value.trim();
       if (!t.includes(":")) {
         setFieldError("TELEGRAM_BOT_TOKEN", "Looks like 123456:ABC-...");
@@ -183,30 +227,27 @@
   function buildPayload() {
     const provider = form.querySelector('input[name="llm_provider"]:checked').value;
     const apiKey = (form.LLM_API_KEY.value || "").trim();
-    const baseUrl = (form.OLLAMA_BASE_URL.value || "").trim();
 
     const payload = {
       llm_provider: provider,
       HERMES_INFERENCE_PROVIDER: provider,
-      HERMES_DEFAULT_MODEL: form.HERMES_DEFAULT_MODEL.value.trim(),
+      // Composio (customer-supplied)
+      COMPOSIO_API_KEY: form.COMPOSIO_API_KEY.value.trim(),
+      COMPOSIO_USER_ID: form.COMPOSIO_USER_ID.value.trim(),
+      COMPOSIO_READER_MCP_URL: form.COMPOSIO_READER_MCP_URL.value.trim(),
+      COMPOSIO_ACTOR_MCP_URL: form.COMPOSIO_ACTOR_MCP_URL.value.trim(),
+      // Slack
       SLACK_BOT_TOKEN: form.SLACK_BOT_TOKEN.value.trim(),
       SLACK_APP_TOKEN: form.SLACK_APP_TOKEN.value.trim(),
       SLACK_WORKSPACE_ID: form.SLACK_WORKSPACE_ID.value.trim(),
       SLACK_BOT_ADMIN_USER_ID: form.SLACK_BOT_ADMIN_USER_ID.value.trim(),
       SLACK_PUBLIC_CHANNELS: form.SLACK_PUBLIC_CHANNELS.value.trim(),
       telegram_enabled: telegramToggle.checked,
+      // The single LLM_API_KEY field — the provisioner routes it to the
+      // right env var (OLLAMA_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY)
+      // server-side based on the provider radio.
+      LLM_API_KEY: apiKey,
     };
-
-    if (provider === "ollama-cloud") {
-      payload.OLLAMA_BASE_URL = baseUrl || "http://host.docker.internal:11434/v1";
-      payload.OLLAMA_API_KEY = apiKey;
-    } else if (provider === "anthropic") {
-      payload.ANTHROPIC_API_KEY = apiKey;
-      payload.OLLAMA_BASE_URL = "https://api.anthropic.com/v1";
-    } else if (provider === "openai") {
-      payload.OPENAI_API_KEY = apiKey;
-      payload.OLLAMA_BASE_URL = "https://api.openai.com/v1";
-    }
 
     if (telegramToggle.checked) {
       payload.TELEGRAM_BOT_TOKEN = form.TELEGRAM_BOT_TOKEN.value.trim();
@@ -274,9 +315,10 @@
 
   function stepOf(field) {
     if (!field) return null;
-    if (field === "llm" || field === "LLM_API_KEY" || field === "HERMES_DEFAULT_MODEL") return 1;
-    if (field.startsWith("SLACK_")) return 2;
-    if (field.startsWith("TELEGRAM_")) return 3;
+    if (field === "llm" || field === "LLM_API_KEY") return 1;
+    if (field.startsWith("COMPOSIO_")) return 2;
+    if (field.startsWith("SLACK_")) return 3;
+    if (field.startsWith("TELEGRAM_")) return 4;
     return null;
   }
 })();

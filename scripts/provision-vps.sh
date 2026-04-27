@@ -6,37 +6,31 @@
 # detected and skipped.
 #
 # What it does (in order):
-#   1.  apt update + base packages (curl, git, gnupg, ufw, caddy, ...)
-#   2.  Install Docker Engine + Compose plugin from get.docker.com
-#   3.  Lock down firewall to ports 22, 80, 443
-#   4.  Clone the SafeClaw repo to /opt/safeclaw (or fast-forward if present)
-#   5.  Preload Composio credentials into .env (if env vars are set)
-#   6.  Pull pre-built images from GHCR (docker compose pull)
-#   7.  Write /etc/caddy/Caddyfile that reverse-proxies the chosen domain
-#       to localhost:8080 and lets Caddy fetch a Let's Encrypt cert
-#   8.  Install the Ollama daemon on the host (so containers can route
-#       :cloud models through host.docker.internal:11434)
-#   9.  Start ONLY the onboarding webapp (other services boot when the
-#       customer submits the setup form — they need customer credentials)
-#   10. Print the URL to send to the customer + an SSH cheat-sheet
-#   11. Health-check https://<DOMAIN>/health
+#   1. apt update + base packages (curl, git, gnupg, ufw, caddy, ...)
+#   2. Install Docker Engine + Compose plugin from get.docker.com
+#   3. Lock down firewall to ports 22, 80, 443
+#   4. Clone the SafeClaw repo to /opt/safeclaw (or fast-forward if present)
+#   5. Pull pre-built images from GHCR (docker compose pull)
+#   6. Write /etc/caddy/Caddyfile that reverse-proxies the chosen domain
+#      to localhost:8080 and lets Caddy fetch a Let's Encrypt cert
+#   7. Install the Ollama daemon on the host (so containers can route
+#      :cloud models through host.docker.internal:11434)
+#   8. Start ONLY the onboarding webapp (other services boot when the
+#      customer submits the setup form — they need customer credentials)
+#   9. Print the URL to send to the customer + an SSH cheat-sheet
+#  10. Health-check https://<DOMAIN>/health
+#
+# The customer brings their own Composio API key, user_id, and the two
+# MCP server URLs through the onboarding form (Step 2). Composio is the
+# customer's account — they connected Gmail / Drive / Slack to it.
+# The operator does NOT preload Composio creds anymore.
 #
 # Usage:
-#   COMPOSIO_API_KEY=ak_... \
-#   COMPOSIO_USER_ID=usr_... \
-#   COMPOSIO_READER_MCP_URL='https://backend.composio.dev/v3/mcp/<id>/mcp?user_id=<uid>' \
-#   COMPOSIO_ACTOR_MCP_URL='https://backend.composio.dev/v3/mcp/<id>/mcp?user_id=<uid>' \
 #   bash scripts/provision-vps.sh customer1.safeclaw.com hello@example.com
 #
 # Args:
 #   $1  Domain name. A record must already point at this VPS.
 #   $2  Admin email — used as the ACME contact for Let's Encrypt.
-#
-# Required env vars (preloaded by the operator BEFORE running this script):
-#   COMPOSIO_API_KEY            from app.composio.dev/settings/api-keys (starts with ak_)
-#   COMPOSIO_USER_ID            user_id assigned by Composio for this customer
-#   COMPOSIO_READER_MCP_URL     Reader MCP server URL (ends with /mcp?user_id=...)
-#   COMPOSIO_ACTOR_MCP_URL      Actor MCP server URL  (ends with /mcp?user_id=...)
 #
 # Run as root (this is the standard Hostinger SSH context).
 
@@ -49,31 +43,18 @@ ADMIN_EMAIL="${2:-}"
 usage() {
   cat <<USAGE >&2
 Usage:
-  COMPOSIO_API_KEY=ak_... \\
-  COMPOSIO_USER_ID=usr_... \\
-  COMPOSIO_READER_MCP_URL='https://...composio.dev/.../mcp?user_id=...' \\
-  COMPOSIO_ACTOR_MCP_URL='https://...composio.dev/.../mcp?user_id=...' \\
   bash scripts/provision-vps.sh <domain> <admin-email>
 
 Example:
-  COMPOSIO_API_KEY=ak_test \\
-  COMPOSIO_USER_ID=usr_abc \\
-  COMPOSIO_READER_MCP_URL='https://backend.composio.dev/v3/mcp/abc/mcp?user_id=u1' \\
-  COMPOSIO_ACTOR_MCP_URL='https://backend.composio.dev/v3/mcp/def/mcp?user_id=u1' \\
   bash scripts/provision-vps.sh customer1.safeclaw.com hello@example.com
 
 Required positional args:
   <domain>       fully qualified domain (A record must already point at this VPS)
   <admin-email>  ACME contact for Let's Encrypt
 
-Required env vars:
-  COMPOSIO_API_KEY            starts with 'ak_'
-  COMPOSIO_USER_ID            opaque user ID from Composio
-  COMPOSIO_READER_MCP_URL     ends with /mcp?user_id=...
-  COMPOSIO_ACTOR_MCP_URL      ends with /mcp?user_id=...
-
-If the COMPOSIO_* env vars are missing, the webapp will refuse to provision and
-print a recovery message — re-run this script with them set.
+Composio setup is customer-side: the customer enters their own
+COMPOSIO_API_KEY, COMPOSIO_USER_ID, and the two MCP URLs via Step 2 of
+the /setup form. The operator does not need to preload anything.
 USAGE
 }
 
@@ -94,7 +75,7 @@ fi
 
 REPO_URL="https://github.com/Vasanth19/safeclaw.git"
 INSTALL_DIR="/opt/safeclaw"
-TOTAL_STEPS=11
+TOTAL_STEPS=10
 STEP=0
 
 step() {
@@ -208,114 +189,13 @@ fi
 
 cd "${INSTALL_DIR}"
 
-# ─── 5. Preload Composio credentials into .env ─────────────────────────────
-step "Preloading Composio credentials into .env (operator-supplied)"
-if [[ -n "${COMPOSIO_API_KEY:-}" \
-   && -n "${COMPOSIO_USER_ID:-}" \
-   && -n "${COMPOSIO_READER_MCP_URL:-}" \
-   && -n "${COMPOSIO_ACTOR_MCP_URL:-}" ]]; then
-
-  # Seed .env from .env.example if it doesn't exist yet.
-  if [[ ! -f "${INSTALL_DIR}/.env" ]]; then
-    cp "${INSTALL_DIR}/.env.example" "${INSTALL_DIR}/.env"
-  fi
-
-  # Generate secrets first (so JWT_SECRET / DB passwords exist) — idempotent.
-  bash "${INSTALL_DIR}/scripts/init-secrets.sh" \
-    || fail "init-secrets.sh failed during preload." \
-            "Inspect 'bash scripts/init-secrets.sh' output."
-
-  # Write the four COMPOSIO_* values atomically. Python is small, in apt,
-  # and avoids any sed-quoting hazards with URLs containing ?, &, etc.
-  python3 - <<'PY' \
-    || fail "Failed to preload Composio credentials into .env." \
-            "Check the COMPOSIO_* env vars are set and well-formed."
-import os, re, sys, tempfile
-
-env_path = '/opt/safeclaw/.env'
-keys = {
-    'COMPOSIO_API_KEY':         os.environ['COMPOSIO_API_KEY'],
-    'COMPOSIO_USER_ID':         os.environ['COMPOSIO_USER_ID'],
-    'COMPOSIO_READER_MCP_URL':  os.environ['COMPOSIO_READER_MCP_URL'],
-    'COMPOSIO_ACTOR_MCP_URL':   os.environ['COMPOSIO_ACTOR_MCP_URL'],
-}
-# Format-validate before writing.
-if not keys['COMPOSIO_API_KEY'].startswith('ak_'):
-    sys.exit("COMPOSIO_API_KEY must start with 'ak_'")
-for url_key in ('COMPOSIO_READER_MCP_URL', 'COMPOSIO_ACTOR_MCP_URL'):
-    v = keys[url_key]
-    if '/mcp' not in v or 'user_id=' not in v:
-        sys.exit(f"{url_key} must end with /mcp?user_id=...")
-
-# Quote any value containing chars beyond [A-Za-z0-9_./:@,+-].
-SAFE = re.compile(r'^[A-Za-z0-9_./:@,+\-]+$')
-def quote(v):
-    if v == '':
-        return '""'
-    if SAFE.match(v):
-        return v
-    esc = v.replace('\\', '\\\\').replace('"', '\\"').replace('$', '\\$').replace('`', '\\`')
-    return f'"{esc}"'
-
-with open(env_path, 'r', encoding='utf-8') as f:
-    lines = f.read().splitlines()
-
-seen = set()
-out = []
-for line in lines:
-    m = re.match(r'^([A-Z_][A-Z0-9_]*)=(.*)$', line)
-    if m and m.group(1) in keys:
-        k = m.group(1)
-        out.append(f"{k}={quote(keys[k])}")
-        seen.add(k)
-    else:
-        out.append(line)
-
-# Append any preload key not in the template.
-extras = [k for k in keys if k not in seen]
-if extras:
-    out.append('')
-    out.append('# ── Composio preload (operator-supplied) ──')
-    for k in extras:
-        out.append(f"{k}={quote(keys[k])}")
-
-# Atomic rename — same dir so it's on the same fs.
-fd, tmp = tempfile.mkstemp(prefix='.env.tmp.', dir=os.path.dirname(env_path))
-try:
-    with os.fdopen(fd, 'w', encoding='utf-8') as f:
-        f.write('\n'.join(out) + '\n')
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, env_path)
-except Exception:
-    try: os.unlink(tmp)
-    except FileNotFoundError: pass
-    raise
-PY
-
-  chmod 600 "${INSTALL_DIR}/.env"
-  echo "  ✓ .env preloaded with Composio credentials (mode 600)"
-else
-  cat <<NOENV
-  ⚠ COMPOSIO_* env vars not set — webapp will refuse to provision.
-    The first phase of the setup form will fail with:
-
-      Composio credentials not preloaded.
-
-    To fix: re-run this script with all four env vars set:
-      COMPOSIO_API_KEY, COMPOSIO_USER_ID,
-      COMPOSIO_READER_MCP_URL, COMPOSIO_ACTOR_MCP_URL
-
-    See docs/COMPOSIO-MCP-SETUP.md for where to get them.
-NOENV
-fi
-
-# ─── 6. Pull pre-built images ──────────────────────────────────────────────
+# ─── 5. Pull pre-built images ──────────────────────────────────────────────
 step "Pulling pre-built container images from GHCR"
 docker compose pull \
   || fail "docker compose pull failed." \
           "Check the image tags in docker-compose.yml exist on GHCR and that this VPS has network access."
 
-# ─── 7. Caddy configuration ────────────────────────────────────────────────
+# ─── 6. Caddy configuration ────────────────────────────────────────────────
 step "Writing /etc/caddy/Caddyfile and reloading Caddy"
 mkdir -p /var/log/caddy
 chown -R caddy:caddy /var/log/caddy
@@ -346,7 +226,7 @@ systemctl reload caddy 2>/dev/null \
   || systemctl restart caddy \
   || fail "Caddy reload/restart failed." "Run 'journalctl -u caddy -n 50' to see why."
 
-# ─── 8. Install Ollama daemon on host ──────────────────────────────────────
+# ─── 7. Install Ollama daemon on host ──────────────────────────────────────
 # Hermes containers route :cloud models through a host-side Ollama daemon
 # at host.docker.internal:11434. On Linux Docker that resolves via the
 # extra_hosts shim in docker-compose.yml; this step makes sure the daemon
@@ -372,7 +252,7 @@ curl -fsS http://localhost:11434/api/tags >/dev/null \
   || fail "Ollama daemon not responding on :11434." \
           "Check 'systemctl status ollama' and 'journalctl -u ollama -n 100'."
 
-# ─── 9. Boot the onboarding webapp ─────────────────────────────────────────
+# ─── 8. Boot the onboarding webapp ─────────────────────────────────────────
 step "Starting the onboarding webapp (other services boot at customer Submit)"
 docker compose up -d onboarding \
   || fail "docker compose up -d onboarding failed." \
@@ -391,7 +271,7 @@ until curl -fsS http://localhost:8080/health >/dev/null 2>&1; do
 done
 echo "Onboarding webapp is up."
 
-# ─── 10. Customer URL + cheat sheet ────────────────────────────────────────
+# ─── 9. Customer URL + cheat sheet ─────────────────────────────────────────
 step "Printing customer URL"
 cat <<BANNER
 
@@ -411,7 +291,7 @@ cat <<BANNER
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 BANNER
 
-# ─── 11. Public health check ───────────────────────────────────────────────
+# ─── 10. Public health check ───────────────────────────────────────────────
 step "Health-checking https://${DOMAIN}/health"
 
 # Caddy needs a beat to negotiate the cert on first request.

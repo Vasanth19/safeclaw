@@ -5,11 +5,12 @@
 <section class="setup">
   <header class="setup-header">
     <h1>Setup</h1>
-    <p>Three short steps. Nothing leaves this VPS.</p>
+    <p>Four short steps. Nothing leaves this VPS.</p>
     <ol class="stepper" id="stepper">
       <li class="step active" data-step="1"><span>1</span> LLM</li>
-      <li class="step" data-step="2"><span>2</span> Slack</li>
-      <li class="step" data-step="3"><span>3</span> Telegram</li>
+      <li class="step" data-step="2"><span>2</span> Composio</li>
+      <li class="step" data-step="3"><span>3</span> Slack</li>
+      <li class="step" data-step="4"><span>4</span> Telegram</li>
     </ol>
   </header>
 
@@ -17,7 +18,7 @@
 
     <!-- ── Step 1: LLM ──────────────────────────────────────────────── -->
     <fieldset class="step-panel" data-step="1">
-      <legend>1 / 3 &middot; Which model should drive your assistant?</legend>
+      <legend>1 / 4 &middot; Which model should drive your assistant?</legend>
 
       <div class="field">
         <label>
@@ -47,13 +48,61 @@
       </div>
 
       <div class="step-actions">
-        <button type="button" class="btn-next" data-goto="2">Next: Slack</button>
+        <button type="button" class="btn-next" data-goto="2">Next: Composio</button>
       </div>
     </fieldset>
 
-    <!-- ── Step 2: Slack ────────────────────────────────────────────── -->
+    <!-- ── Step 2: Composio ─────────────────────────────────────────── -->
     <fieldset class="step-panel hidden" data-step="2">
-      <legend>2 / 3 &middot; Slack — your assistant's chat surface</legend>
+      <legend>2 / 4 &middot; Composio &mdash; OAuth + MCP integrations</legend>
+
+      <p class="step-intro">
+        Composio holds your Gmail / Drive / Slack OAuth tokens so SafeClaw
+        never has to. First time? Follow the
+        <a href="/help#composio" target="_blank">5-minute Composio walkthrough</a>
+        in another tab, then come back with the four values below.
+      </p>
+
+      <div class="field">
+        <label for="COMPOSIO_API_KEY">
+          Composio API key
+          <a class="help-link" href="/help#composio" target="_blank">where do I get this?</a>
+        </label>
+        <input type="password" id="COMPOSIO_API_KEY" name="COMPOSIO_API_KEY"
+               autocomplete="new-password" placeholder="ak_...">
+        <p class="hint">Starts with <code>ak_</code>. Get from <a href="https://app.composio.dev/settings/api-keys" target="_blank" rel="noopener">app.composio.dev/settings/api-keys</a>.</p>
+      </div>
+
+      <div class="field">
+        <label for="COMPOSIO_USER_ID">Composio user ID</label>
+        <input type="text" id="COMPOSIO_USER_ID" name="COMPOSIO_USER_ID"
+               placeholder="pg-test-...">
+        <p class="hint">The user ID you connected Gmail / Drive / Slack under in the Composio dashboard.</p>
+      </div>
+
+      <div class="field">
+        <label for="COMPOSIO_READER_MCP_URL">Reader MCP URL</label>
+        <input type="text" id="COMPOSIO_READER_MCP_URL" name="COMPOSIO_READER_MCP_URL"
+               placeholder="https://backend.composio.dev/v3/mcp/.../mcp?user_id=...">
+        <p class="hint">Read-only MCP server URL. Must end with <code>/mcp?user_id=&lt;your_user_id&gt;</code>.</p>
+      </div>
+
+      <div class="field">
+        <label for="COMPOSIO_ACTOR_MCP_URL">Actor MCP URL</label>
+        <input type="text" id="COMPOSIO_ACTOR_MCP_URL" name="COMPOSIO_ACTOR_MCP_URL"
+               placeholder="https://backend.composio.dev/v3/mcp/.../mcp?user_id=...">
+        <p class="hint">Draft / send MCP server URL. Must end with <code>/mcp?user_id=&lt;your_user_id&gt;</code>.</p>
+      </div>
+
+      <div class="step-actions">
+        <button type="button" class="btn-prev" data-goto="1">Back</button>
+        <button type="button" class="btn-next" data-goto="3">Next: Slack</button>
+      </div>
+    </fieldset>
+
+    <!-- ── Step 3: Slack ────────────────────────────────────────────── -->
+    <fieldset class="step-panel hidden" data-step="3">
+      <legend>3 / 4 &middot; Slack — your assistant's chat surface</legend>
 
       <p class="step-intro">
         First time creating a Slack app? Follow the
@@ -94,14 +143,14 @@
       </div>
 
       <div class="step-actions">
-        <button type="button" class="btn-prev" data-goto="1">Back</button>
-        <button type="button" class="btn-next" data-goto="3">Next: Telegram</button>
+        <button type="button" class="btn-prev" data-goto="2">Back</button>
+        <button type="button" class="btn-next" data-goto="4">Next: Telegram</button>
       </div>
     </fieldset>
 
-    <!-- ── Step 3: Telegram (optional) ─────────────────────────────── -->
-    <fieldset class="step-panel hidden" data-step="3">
-      <legend>3 / 3 &middot; Telegram <span class="badge">optional</span></legend>
+    <!-- ── Step 4: Telegram (optional) ─────────────────────────────── -->
+    <fieldset class="step-panel hidden" data-step="4">
+      <legend>4 / 4 &middot; Telegram <span class="badge">optional</span></legend>
 
       <div class="field checkbox-field">
         <label>
@@ -126,7 +175,7 @@
       </div>
 
       <div class="step-actions">
-        <button type="button" class="btn-prev" data-goto="2">Back</button>
+        <button type="button" class="btn-prev" data-goto="3">Back</button>
         <button type="submit" class="btn-submit">Provision now</button>
       </div>
 

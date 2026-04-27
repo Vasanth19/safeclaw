@@ -29,14 +29,8 @@ A few things it is, and a few things it is not:
 
 ## 2. What you'll need before clicking Setup
 
-Block out 10–15 minutes of focused time. You'll want a second browser tab
+Block out 15–20 minutes of focused time. You'll want a second browser tab
 open in each of these places:
-
-> **What about Gmail / Drive / Calendar tokens?** You don't need to think
-> about them — the Composio integration that handles those was set up by
-> our operator on your behalf, before we sent you the URL. Composio's
-> OAuth tokens live in Composio's vault, never on this VPS or anywhere
-> else. If you're curious about the mechanics, see section 7.
 
 ### 2.1. An Ollama Cloud API key (recommended default)
 
@@ -63,7 +57,27 @@ adapt the field labels.
 You can change provider later by editing `/opt/safeclaw/.env` on the VPS,
 but let's not worry about that today.
 
-### 2.2. A Slack app
+### 2.2. A Composio account + two MCP servers
+
+Composio is the OAuth + integration layer SafeClaw uses to reach your
+Gmail, Drive, and Slack workspace. SafeClaw never sees your Google or
+Slack OAuth tokens — Composio holds them, we call Composio to act.
+
+You'll do the Composio setup on your machine (5 minutes) and bring four
+values back to Step 2 of the form:
+
+- **Composio API key** — starts with `ak_`
+- **Composio user_id** — the user ID you connected Gmail / Drive / Slack
+  under
+- **Reader MCP URL** — read-only MCP server (ends with `/mcp?user_id=...`)
+- **Actor MCP URL** — draft / send MCP server (same URL shape)
+
+The full walkthrough is built into the setup form's Help page at
+`https://yourname.safeclaw.com/help#composio` — it's also mirrored in
+[`docs/COMPOSIO-MCP-SETUP.md`](./docs/COMPOSIO-MCP-SETUP.md). Have that
+open in a tab when you start.
+
+### 2.3. A Slack app
 
 You'll create a brand-new Slack app for SafeClaw. The walkthrough is in
 [`docs/SLACK-APP-WALKTHROUGH.md`](./docs/SLACK-APP-WALKTHROUGH.md) — it
@@ -79,37 +93,52 @@ You'll come back from that doc with:
 - A list of channel IDs you want the bot to listen in (each starts with
   `C`).
 
-### 2.3. (Optional) A Telegram bot
+### 2.4. (Optional) A Telegram bot
 
 Skip this if you only want Slack. If you want a Telegram pocket
 assistant, ping `@BotFather` on Telegram with `/newbot`, follow the
 prompts, and capture the bot token + your numeric user ID (DM
 `@userinfobot` to get yours). The form has a checkbox to enable this on
-Step 3 — it's off by default.
+Step 4 — it's off by default.
 
 ---
 
-## 3. Walking through the 3-step form
+## 3. Walking through the 4-step form
 
 Open the URL we sent you (it looks like `https://yourname.safeclaw.com/setup`).
-You'll see a three-step form. Here's what each step asks for.
+You'll see a four-step form. Here's what each step asks for.
 
 ### Step 1 — LLM provider
 
-Pick a provider (Ollama Cloud is selected by default), paste the API key,
-and confirm the model. The default model `glm-5.1:cloud` on Ollama is the
-cheapest setup that still produces solid drafts.
-
-If you stay with Ollama Cloud, leave the **Ollama base URL** as
-`http://host.docker.internal:11434/v1` — that's how Hermes containers
-reach the local Ollama daemon installed on your VPS.
+Pick a provider (Ollama Cloud is selected by default), paste the API key.
+The form picks the right model and endpoint for you under the hood — the
+default `glm-5.1:cloud` on Ollama Cloud is the cheapest setup that still
+produces solid drafts.
 
 [screenshot: llm-step.png]
 
 When you click Next, the webapp runs a tiny test prompt against your
 provider — "ping" — to confirm the key works.
 
-### Step 2 — Slack
+### Step 2 — Composio
+
+Four fields, all required. If you haven't done the Composio dashboard
+setup yet, click the **where do I get this?** link next to the API key
+field — it opens the 5-minute walkthrough at `/help#composio`.
+
+- Composio API key (`ak_...`)
+- Composio user ID (the one you connected Gmail / Drive / Slack under)
+- Reader MCP URL (must end with `/mcp?user_id=<your_user_id>`)
+- Actor MCP URL (must end with `/mcp?user_id=<your_user_id>`)
+
+When you click Next, the webapp validates the API key against Composio's
+backend AND POSTs `tools/list` to each MCP URL to make sure they return
+real tools. If anything's wrong, you'll see a per-field error before the
+install starts.
+
+[screenshot: composio-step.png]
+
+### Step 3 — Slack
 
 Four required fields plus the channel list:
 
@@ -130,7 +159,7 @@ these?** link on the form. It opens
 
 [screenshot: slack-step.png]
 
-### Step 3 — Telegram (optional)
+### Step 4 — Telegram (optional)
 
 A single checkbox: **I want a Telegram bot too**. Tick it to reveal the
 bot-token and user-ID fields; leave it untouched to skip Telegram.
@@ -147,8 +176,7 @@ means and why it takes the time it does.
 
 | Step                             | Time   | What's actually happening                                     |
 | -------------------------------- | ------ | -------------------------------------------------------------- |
-| Verifying preload                | <1s    | The webapp confirms the operator preloaded the four Composio values into `.env`. If you're seeing this fail, our operator forgot a step — email us. |
-| Validating credentials           | ~10s   | One real API call against Slack and your LLM. (Composio was already validated when the operator set you up.) |
+| Validating credentials           | ~15s   | Real API calls against Slack, your LLM, and Composio (API key + both MCP URLs). If anything's wrong you'll see per-field errors and nothing gets booted. |
 | Writing secrets                  | ~5s    | Your form values get written to `/opt/safeclaw/.env`. Auto-generated DB passwords + JWTs are added by `scripts/init-secrets.sh`. |
 | Pulling container images         | ~60s   | Docker downloads ~1 GB of pre-built images from GHCR.          |
 | Booting the stack                | ~90s   | Postgres starts, schemas get applied, PostgREST handshakes the JWT, Hermes-reader and Hermes-actor come up, the embedder loads its model into memory. |

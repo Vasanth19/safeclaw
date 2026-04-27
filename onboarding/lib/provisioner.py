@@ -1,5 +1,5 @@
-"""Orchestrates the SafeClaw install: verify preload -> validate form ->
-write env -> secrets -> docker compose -> bootstrap brain -> welcome.
+"""Orchestrates the SafeClaw install: validate form -> write env -> secrets
+-> docker compose -> bootstrap brain -> welcome.
 
 Each phase emits SSE events via the Install instance from progress.py.
 
@@ -9,11 +9,11 @@ ends with a valid `done` close. The HTTP layer never sees an exception
 from a background thread.
 
 Composio note:
-    The four COMPOSIO_* keys are NOT supplied by the customer form. The
-    operator pre-loads them into .env via scripts/provision-vps.sh BEFORE
-    the webapp ever runs. The very first phase, `verify_preload`, just
-    confirms they're present and well-formed; if not, we abort with a
-    clear operator-facing message.
+    The four COMPOSIO_* keys are supplied by the customer in Step 2 of the
+    onboarding form (Composio is their account, where they did the OAuth
+    dance for Gmail / Drive / Slack). They're validated alongside the LLM
+    and Slack creds in the `validating` phase, then written to .env in
+    `env_writing`.
 """
 from __future__ import annotations
 
@@ -32,7 +32,6 @@ log = logging.getLogger("safeclaw.provisioner")
 
 # Phase identifiers — kept stable so the frontend can keymap them to icons.
 PHASES = [
-    "verify_preload",
     "validating",
     "env_writing",
     "secrets",
@@ -93,27 +92,6 @@ def _tail_output(proc: subprocess.CompletedProcess, max_chars: int = 800) -> str
 # ── Phase implementations ─────────────────────────────────────────────────
 
 
-def _phase_verify_preload(install: Install, install_dir: Path, form: dict) -> None:
-    _emit(
-        install, "verify_preload", "start",
-        "Confirming Composio credentials were preloaded by the operator...",
-    )
-    env_path = install_dir / ".env"
-    ok, msg = validator.validate_composio_preload(env_path)
-    if not ok:
-        raise ProvisionError(
-            "verify_preload",
-            "Composio credentials not preloaded.",
-            hint=(
-                "This SafeClaw install hasn't been provisioned yet.\n"
-                "Operator: re-run scripts/provision-vps.sh with COMPOSIO_API_KEY, "
-                "COMPOSIO_USER_ID, COMPOSIO_READER_MCP_URL, COMPOSIO_ACTOR_MCP_URL set.\n"
-                f"Detail: {msg}"
-            ),
-        )
-    _emit(install, "verify_preload", "ok", "Composio credentials are preloaded.")
-
-
 def _phase_validate(install: Install, install_dir: Path, form: dict) -> None:
     _emit(install, "validating", "start", "Checking your credentials...")
     errors = validator.validate_all(form)
@@ -154,8 +132,7 @@ def _phase_env(install: Install, install_dir: Path, form: dict) -> None:
     preset = LLM_PRESETS.get(provider, LLM_PRESETS["ollama-cloud"])
 
     # Whitelist-driven mapping: only keys env_writer.ALLOWED_KEYS will land
-    # in .env. Anything else the form posted is ignored. Composio keys are
-    # NOT in ALLOWED_KEYS — they're preloaded by the operator-side script.
+    # in .env. Anything else the form posted is ignored.
     values = {k: v for k, v in form.items() if k in env_writer.ALLOWED_KEYS}
 
     # Move customer's API key from form's `LLM_API_KEY` into the right env var.
@@ -343,7 +320,6 @@ def _welcome_text(channels: str) -> str:
 # ── Public entry point ────────────────────────────────────────────────────
 
 PHASE_FUNCS = [
-    ("verify_preload", _phase_verify_preload),
     ("validating", _phase_validate),
     ("env_writing", _phase_env),
     ("secrets", _phase_secrets),
@@ -362,7 +338,7 @@ def run(install: Install, form: dict, install_dir: str | Path) -> None:
 
     if not install_dir.is_dir():
         _emit(
-            install, "verify_preload", "error",
+            install, "validating", "error",
             f"install directory not found: {install_dir}",
         )
         install.close()

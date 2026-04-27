@@ -1,40 +1,38 @@
-# Composio MCP setup — per customer (operator runbook)
+# Composio MCP setup — 5-minute walkthrough
 
-Audience: the operator provisioning a new SafeClaw customer. The customer
-never touches this — you do all of it on their behalf, on your machine,
-*before* you SSH to the VPS.
+Audience: **you, the SafeClaw customer**, getting ready to fill in Step 2
+of the setup form. This is the same content as the in-form
+`/help#composio` page; keep this open in a tab while you run through the
+form.
 
 Time budget: ~5 minutes once you've done it once.
 
-The output of this whole exercise is **four strings**, which you paste into
-the `COMPOSIO_*` env vars when you run `scripts/provision-vps.sh`:
+The output of this whole exercise is **four strings** which you paste
+into Step 2 of the SafeClaw setup form:
 
-| Var | Looks like |
-|-----|------------|
+| Field | Looks like |
+|-------|-----------|
 | `COMPOSIO_API_KEY`         | `ak_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx` |
-| `COMPOSIO_USER_ID`         | `usr_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx` (or an opaque ID) |
+| `COMPOSIO_USER_ID`         | the user_id you connected Gmail / Drive / Slack under |
 | `COMPOSIO_READER_MCP_URL`  | `https://backend.composio.dev/v3/mcp/<id>/mcp?user_id=<uid>` |
 | `COMPOSIO_ACTOR_MCP_URL`   | `https://backend.composio.dev/v3/mcp/<id>/mcp?user_id=<uid>` |
 
-Save them somewhere you can paste from. A `.env`-style scratch file in a
-per-customer directory is the cleanest approach — see step 1.
+Why Composio? It holds your Gmail / Drive / Slack OAuth tokens so SafeClaw
+never has to. You sign in to Composio with your Google account once,
+Composio refreshes the tokens for you, and SafeClaw just calls Composio's
+MCP servers when it needs to read mail or send drafts. The OAuth tokens
+never touch your VPS.
 
 ---
 
-## 1. Create a per-customer scratch dir
+## 1. Sign up at Composio
 
-```bash
-mkdir -p ~/safeclaw-customers/<customer-slug>
-cd       ~/safeclaw-customers/<customer-slug>
-```
-
-Everything in this section runs from that directory. Treat it like a
-notebook — keep the four output values in `composio.env` (or whatever) so
-you can re-paste later if you re-provision.
+Open <https://app.composio.dev> and sign up. The free tier is plenty for
+getting started.
 
 ---
 
-## 2. `composio dev init`
+## 2. (Optional) `composio dev init` for the API key
 
 Install the Composio CLI if you haven't already:
 
@@ -43,48 +41,42 @@ npm i -g composio-cli@latest
 composio --version
 ```
 
-Initialize the per-customer dev context:
+In any local directory on your machine, run:
 
 ```bash
 composio dev init
 ```
 
-This prompts you for a few things and writes `.composio/` in the current
-directory. The most important output is your **API key** — it's also
+This writes `.env.local` with your `ak_` API key. The same key is also
 visible at <https://app.composio.dev/settings/api-keys>.
 
-Capture the values:
+Save it as your **`COMPOSIO_API_KEY`** — starts with `ak_`.
 
-```bash
-COMPOSIO_API_KEY=$(grep -E '^COMPOSIO_API_KEY=' .composio/.env | cut -d= -f2-)
-COMPOSIO_USER_ID=$(grep -E '^COMPOSIO_USER_ID=' .composio/.env | cut -d= -f2-)
-echo "$COMPOSIO_API_KEY"
-echo "$COMPOSIO_USER_ID"
-```
-
-If `composio dev init` doesn't write a `COMPOSIO_USER_ID` directly,
-generate or claim one in the dashboard:
-
-1. <https://app.composio.dev> → **Users** → **Add user**.
-2. Pick a stable identifier — the customer's email or a UUID. Whatever you
-   use here, **save it as `COMPOSIO_USER_ID`** — it embeds into both MCP
-   URLs below and into `.env` on the VPS.
+> If you skip the CLI, just grab the key from the dashboard at
+> `app.composio.dev/settings/api-keys`. Either path lands on the same
+> string.
 
 ---
 
-## 3. Connect the customer's third-party accounts
+## 3. Connect Gmail, Drive, and Slack
 
-In <https://app.composio.dev>, with the customer's `user_id` selected:
+In <https://app.composio.dev>:
 
-1. **Tools → Gmail → Connect** — sign in with the customer's Google account.
-2. **Tools → Google Calendar → Connect** — same Google account.
-3. **Tools → Google Drive → Connect** — same Google account.
-4. **Tools → Slack → Connect** — install in their workspace (skip if
-   you're using a separately-installed Slack bot via xoxb token, which is
-   what the SafeClaw form expects).
+1. **Tools → Gmail → + Add Connection** — sign in with your Google
+   account, complete the OAuth flow.
+2. **Tools → Google Drive → + Add Connection** — same Google account.
+3. **Tools → Slack → + Add Connection** — install in your workspace.
+   (You can skip this if you only want the Slack `xoxb-` token route, but
+   most customers connect both.)
 
-Each connection is a one-shot OAuth flow on Composio's side. Composio
-holds the tokens and refreshes them. SafeClaw never sees them.
+When you connect the first one, Composio either uses an existing
+`user_id` or creates a new one. Whatever it shows you in the dashboard,
+**save it as your `COMPOSIO_USER_ID`** — and use the SAME `user_id` for
+all three connections so a single MCP server can reach all of them.
+
+> If `composio dev init` wrote a `COMPOSIO_USER_ID` for you, use that
+> one. Otherwise pick a stable identifier (your email or a UUID) and use
+> it consistently.
 
 ---
 
@@ -94,21 +86,28 @@ This is the read-only boundary. The reader Hermes agent can ONLY do these
 things — no drafts, no sends, no writes anywhere.
 
 1. Composio dashboard → **MCP Servers** → **Create new**.
-2. Name: `safeclaw-reader-<customer-slug>`.
-3. User: pick the user_id from step 2.
-4. Allowed tools — exactly these four:
+2. Name: `safeclaw-reader`.
+3. User: pick your `user_id` from step 3.
+4. Allowed tools — exactly these three:
    - `GMAIL_FETCH_EMAILS`
-   - `GMAIL_FETCH_MESSAGE_BY_THREAD_ID`
-   - `GOOGLECALENDAR_FIND_EVENT`
-   - `GOOGLEDRIVE_FIND_FILE`
-5. Save. Copy the URL — it ends with `/mcp?user_id=<your-user-id>`.
+   - `GMAIL_LIST_THREADS`
+   - `GMAIL_GET_PROFILE`
+5. Save. Copy the URL Composio shows you.
 
-Save it as `COMPOSIO_READER_MCP_URL`.
+**Critical:** Composio's dashboard shows the BASE URL only. You have to
+append `/mcp?user_id=<your_user_id>` yourself before pasting it into the
+SafeClaw form. The final URL looks like:
 
-> Why exactly these four? They're the minimum set that lets the reader
-> agent do its job (intake + recall) while keeping the read/write boundary
-> clean. Adding more read-only tools is fine; adding any *write* tool here
-> defeats the boundary. Don't.
+```
+https://backend.composio.dev/v3/mcp/<mcp-id>/mcp?user_id=<your-user-id>
+```
+
+Save it as **`COMPOSIO_READER_MCP_URL`**.
+
+> Why exactly these three tools? They're the minimum set the reader agent
+> needs to do its job (intake + recall) while keeping the read/write
+> boundary clean. Adding more read-only tools later is fine; adding any
+> *write* tool here defeats the boundary. Don't.
 
 ---
 
@@ -119,91 +118,56 @@ these — but it explicitly cannot read raw inboxes (that's the reader's
 job).
 
 1. Composio dashboard → **MCP Servers** → **Create new**.
-2. Name: `safeclaw-actor-<customer-slug>`.
-3. User: same user_id as the reader.
-4. Allowed tools — exactly these ten:
-   - `GMAIL_CREATE_DRAFT`
-   - `GMAIL_SEND_DRAFT`
+2. Name: `safeclaw-actor`.
+3. User: same `user_id` as the reader.
+4. Allowed tools — exactly these seven:
+   - `GMAIL_CREATE_EMAIL_DRAFT`
    - `GMAIL_REPLY_TO_THREAD`
-   - `GMAIL_MODIFY_LABELS`
-   - `GMAIL_CREATE_LABEL`
-   - `GOOGLECALENDAR_CREATE_EVENT`
-   - `GOOGLECALENDAR_UPDATE_EVENT`
-   - `GOOGLECALENDAR_DELETE_EVENT`
-   - `GOOGLEDRIVE_CREATE_FILE`
-   - `GOOGLEDRIVE_UPDATE_FILE`
+   - `SLACK_SEND_MESSAGE`
+   - `GOOGLEDRIVE_FIND_FILE`
+   - `GOOGLEDRIVE_MOVE_FILE`
+   - `GOOGLEDRIVE_UPLOAD_FILE`
+   - `GOOGLEDRIVE_CREATE_FOLDER`
 5. Save. Copy the URL.
 
-Save it as `COMPOSIO_ACTOR_MCP_URL`.
+Same rule as before: append `/mcp?user_id=<your_user_id>` to the base URL
+before pasting.
 
-> The split between Reader and Actor is the security boundary that lets us
-> say "a bug in the actor agent cannot exfiltrate the inbox" with a
-> straight face. Keep it disciplined.
+Save it as **`COMPOSIO_ACTOR_MCP_URL`**.
 
----
-
-## 6. Write the four values to a per-customer scratch file
-
-```bash
-cat > ~/safeclaw-customers/<customer-slug>/composio.env <<EOF
-COMPOSIO_API_KEY=${COMPOSIO_API_KEY}
-COMPOSIO_USER_ID=${COMPOSIO_USER_ID}
-COMPOSIO_READER_MCP_URL='<paste reader URL from step 4>'
-COMPOSIO_ACTOR_MCP_URL='<paste actor URL from step 5>'
-EOF
-
-chmod 600 ~/safeclaw-customers/<customer-slug>/composio.env
-```
-
-These four values go straight into `provision-vps.sh` next.
+> The split between Reader and Actor is the security boundary that lets
+> SafeClaw say "a bug in the actor agent cannot exfiltrate the inbox"
+> with a straight face. Keep it disciplined.
 
 ---
 
-## 7. Hand off to `provision-vps.sh`
+## 6. Paste the four values into Step 2 of the setup form
 
-SSH to the customer's VPS and source the scratch file before running the
-provisioner:
+Open the SafeClaw setup URL (something like
+`https://yourname.safeclaw.com/setup`), navigate to **Step 2**, and
+paste:
 
-```bash
-# On the VPS, after curl-ing provision-vps.sh into /tmp:
-set -a
-. ./composio.env  # or paste values directly into the env-prefix below
-set +a
+| Form field                  | What you saved             |
+|-----------------------------|----------------------------|
+| Composio API key            | `COMPOSIO_API_KEY` (step 2) |
+| Composio user ID            | `COMPOSIO_USER_ID` (step 3) |
+| Reader MCP URL              | `COMPOSIO_READER_MCP_URL` (step 4) |
+| Actor MCP URL               | `COMPOSIO_ACTOR_MCP_URL` (step 5) |
 
-bash /tmp/provision-vps.sh customer1.safeclaw.com hello@safeclaw.com
-```
+Click Next. The webapp validates:
 
-The script will print:
+- The API key with one cheap call to `backend.composio.dev/api/v3/toolkits`.
+- Each MCP URL by POSTing a `tools/list` JSON-RPC request and checking the
+  response has a non-empty tools array.
 
-```
-[5/11] Preloading Composio credentials into .env (operator-supplied)
-  ✓ .env preloaded with Composio credentials (mode 600)
-```
-
-If you forget any of the four, you'll see this instead:
-
-```
-  ⚠ COMPOSIO_* env vars not set — webapp will refuse to provision.
-```
-
-…in which case re-run with all four set. The webapp's first phase is a
-hard preload check; missing keys = an immediate user-facing error pointing
-at this doc.
+If something's off, you'll get a per-field error to fix before any
+containers boot — no wasted install time.
 
 ---
 
-## 8. Verify on the VPS
+## 7. (Optional) Verify on your own
 
-After `provision-vps.sh` finishes:
-
-```bash
-ssh root@<customer-domain>
-sudo grep '^COMPOSIO_' /opt/safeclaw/.env
-```
-
-You should see four lines, each non-empty, no `__FILL_IN__` placeholders.
-
-If you want to spot-check the MCP URLs work, from the VPS:
+Want to spot-check the URLs work before pasting? From any terminal:
 
 ```bash
 curl -fsS -X POST "$COMPOSIO_READER_MCP_URL" \
@@ -213,7 +177,7 @@ curl -fsS -X POST "$COMPOSIO_READER_MCP_URL" \
   | head -c 400
 ```
 
-A `result.tools` array of length 4 (Reader) or 10 (Actor) means the URL
+A `result.tools` array of length 3 (Reader) or 7 (Actor) means the URL
 + user_id are wired up right.
 
 ---
@@ -222,24 +186,29 @@ A `result.tools` array of length 4 (Reader) or 10 (Actor) means the URL
 
 - **`user_id` mismatch.** The user_id in the MCP URL must match the
   user_id you connected Gmail/Drive/Slack under. If they differ,
-  `tools/list` returns an empty array and SafeClaw's preload check passes
-  but every actual tool call returns "user not authorized."
-- **Adding tools after creation.** Composio doesn't always reload the
-  MCP server live — if you add a tool and Hermes can't see it, recreate
-  the MCP server, copy the new URL, and re-run `provision-vps.sh` (it
-  will overwrite the four values in `.env` idempotently).
+  `tools/list` returns an empty array and Step 2 will error with
+  "no tools — is the user authorized?".
+- **Forgot the `/mcp?user_id=` suffix.** The dashboard shows the base
+  URL only. Always append the suffix yourself.
 - **API key expiry.** Composio expires unused keys after ~30 days. If
-  the customer's been on a bench for a month and you're re-provisioning,
-  regenerate the key first.
+  you've been on the bench and the key stops working, regenerate it at
+  `app.composio.dev/settings/api-keys`.
 - **Reader gets a write tool by accident.** The whole point of the split
-  is that a reader-side bug cannot send mail. If you add `GMAIL_SEND_*`
-  to the Reader, you've just collapsed the boundary. Don't.
+  is that a reader-side bug cannot send mail. If you add a write tool
+  (e.g. `GMAIL_CREATE_EMAIL_DRAFT`) to the Reader, you've collapsed the
+  boundary. Don't.
+- **Tools added after MCP creation aren't visible.** Composio doesn't
+  always reload the MCP server live. If you add a tool and Hermes can't
+  see it, recreate the MCP server, copy the new URL, and re-submit Step
+  2 of the form.
 
 ---
 
 ## See also
 
-- [`HOSTINGER-DEPLOY.md`](../HOSTINGER-DEPLOY.md) — the full operator runbook.
-- [`ARCHITECTURE.md`](../ARCHITECTURE.md) — why the read/write split exists.
-- [`SLACK-APP-WALKTHROUGH.md`](./SLACK-APP-WALKTHROUGH.md) — the customer
-  side of the bot setup.
+- [`CUSTOMER-ONBOARDING.md`](../CUSTOMER-ONBOARDING.md) — the full
+  customer onboarding guide (you're partway through it).
+- [`SLACK-APP-WALKTHROUGH.md`](./SLACK-APP-WALKTHROUGH.md) — the Slack
+  app creation guide (next step after Composio).
+- [`ARCHITECTURE.md`](../ARCHITECTURE.md) — why the read/write split
+  exists, if you want the deeper rationale.

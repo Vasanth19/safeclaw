@@ -12,10 +12,13 @@ agent:
     Drafts only (no auto-send in v1). Slack posts approval cards to #safeclaw-review.
 
 model:
-  provider: openai_compatible
-  base_url: "${HERMES_LLM_BASE_URL}"
-  api_key: "${HERMES_LLM_API_KEY}"
-  name: "${HERMES_MODEL}"
+  # `custom` = generic OpenAI-compatible endpoint (per `hermes setup` hint).
+  # We point at local Ollama daemon which proxies :cloud models to ollama.com.
+  provider: custom
+  base_url: http://host.docker.internal:11434/v1
+  api_key: ollama-local
+  # Hermes uses `default:` (the default model), not `name:` — unlike most agent runtimes.
+  default: glm-5.1:cloud
   temperature: 0.2
 
 # ── MCP Servers ──────────────────────────────────────────────────────────────

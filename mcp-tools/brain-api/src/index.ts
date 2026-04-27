@@ -532,7 +532,7 @@ server.setRequestHandler(ListToolsRequestSchema, () => ({
       name: "brain_write",
       description:
         "Upsert an entity by (kind, name) and append a fact about it. " +
-        "Source must be non-empty (e.g. 'email:<message_id>', 'manual:vasanth').",
+        "Source must be non-empty (e.g. 'email:<message_id>', 'manual:<user>').",
       inputSchema: {
         type: "object",
         properties: {

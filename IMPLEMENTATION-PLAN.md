@@ -61,7 +61,7 @@ bash scripts/verify-stack.sh --phase 0
 
 ### Success Criteria
 
-- All 5 Phase 0 services running and healthy (postgres-obs, postgres-tasks, postgrest, nango, rclone-sync)
+- All Phase 0 services running and healthy (postgres-obs, postgres-tasks, postgrest, rclone-sync)
 - `verify-stack.sh --phase 0` reports 0 FAIL
 - hermes-reader CANNOT reach `https://example.com` (egress test)
 - hermes-reader CAN reach `https://www.googleapis.com`
@@ -88,16 +88,24 @@ docker compose down      # Stops containers, preserves volumes
 
 ### Steps
 
-**Step 1: Run OAuth setup**
-```bash
-bash scripts/setup-oauth.sh
-```
-Follow the interactive walkthrough to authorize all 5 connections:
-- `jake-rspur` (gmail-readonly + gmail-draft)
-- `jake-panhandle` (gmail-readonly + gmail-draft)
-- `jake-rockingspur` (gmail-readonly + gmail-draft)
-- `jake-drive` (google-drive-file)
-- `rspur-slack` (slack-bot)
+**Step 1: Configure Composio integrations**
+
+OAuth + per-toolkit MCP is delegated to Composio (off-box). For each toolkit
+the assistant should reach (Gmail, Drive, Slack, etc.):
+
+1. In the Composio dashboard, connect the underlying account to your
+   `COMPOSIO_USER_ID`.
+2. Add the toolkit to your **Reader** MCP server (read-only allowlist) and / or
+   your **Actor** MCP server (draft/send allowlist) as appropriate.
+3. Suggested connection IDs for a single-user install:
+   - `primary-inbox` (Gmail readonly + draft)
+   - `secondary-inbox` (optional second Gmail account)
+   - `tertiary-inbox` (optional third Gmail account)
+   - `primary-drive` (Drive file scope)
+   - `your-workspace` (Slack — v2 only)
+
+The two MCP server URLs and your API key go in `.env` as
+`COMPOSIO_READER_MCP_URL`, `COMPOSIO_ACTOR_MCP_URL`, and `COMPOSIO_API_KEY`.
 
 **Step 2: Run database migrations**
 ```bash
@@ -112,7 +120,7 @@ docker compose exec postgres-tasks psql \
 
 **Step 3: Create the #safeclaw-review Slack channel**
 
-In the Rocking Spur Homes Slack workspace:
+In your Slack workspace:
 1. Create channel `#safeclaw-review` (private is fine)
 2. Invite the SafeClaw bot: `/invite @SafeClaw`
 3. Copy the channel ID (right-click channel → Copy Link → extract the C... ID)
@@ -198,7 +206,7 @@ If not already done in Phase 1:
 1. Trigger actor via Slack: `@SafeClaw please draft a reply to the most recent email observation`
 2. Actor posts proposed draft to `#safeclaw-review`
 3. Approve the draft
-4. Verify a draft (NOT a sent email) appears in Jake's Gmail drafts folder
+4. Verify a draft (NOT a sent email) appears in the connected Gmail drafts folder
 
 **Step 6: Run Phase 2 verification**
 ```bash
@@ -274,16 +282,16 @@ then `docker compose restart hermes-actor`.
 
 ### Prerequisites (ALL required — no exceptions)
 
-- 30 rolling days with zero `proposed_send` rejections by Jake
+- 30 rolling days with zero `proposed_send` rejections by the operator
 - Zero prompt-injection incidents logged in the `observations` table (`category=security`)
-- Client (Jake McKinney) signs off explicitly: written confirmation required
+- Operator signs off explicitly: written confirmation required (email or chat-DM on record)
 - Security review: run `bash scripts/verify-stack.sh --phase 2` and confirm all PASS
 - Review the `auto_sent` and `proposed_send` tables — confirm send volumes are reasonable
 
 **Who does what:**
-- Vasanth (developer): runs the 30-day metrics query, prepares the sign-off document
-- Jake McKinney (client): reviews the metrics, signs off in writing
-- Vasanth: flips the flag after signed approval is on file
+- Installer / maintainer: runs the 30-day metrics query, prepares the sign-off document
+- Operator (the human whose inbox is being acted on): reviews the metrics, signs off in writing
+- Installer: flips the flag after signed approval is on file
 
 ### Steps
 
@@ -302,7 +310,7 @@ All three counts must be 0 (rejections), N > 0 (approvals), 0 (injections).
 
 **Step 2: Client sign-off**
 
-Share the metrics report with Jake. Get written approval (email or Slack DM on record).
+Share the metrics report with the operator. Get written approval (email or chat-DM on record).
 
 **Step 3: Enable auto-send**
 ```bash
@@ -330,7 +338,7 @@ docker compose exec postgres-obs psql -U "$POSTGRES_OBS_USER" -d safeclaw_obs \
 ```bash
 # Edit .env: AUTO_SEND_ENABLED=false
 docker compose restart hermes-actor
-# Immediately notify Jake if any unexpected email was sent
+# Immediately notify the operator if any unexpected email was sent
 ```
 
 ---
@@ -345,11 +353,11 @@ docker compose restart hermes-actor
 1. The problem: why LLM personal assistants are inherently risky
 2. The lethal trifecta: private data + untrusted input + exfiltration capability
 3. SafeClaw's architectural solution: the reader/actor split
-4. Credential vault pattern with Nango
+4. Per-toolkit MCP allowlists as the load-bearing trust boundary (Composio)
 5. Network-layer egress vs. prompt-layer egress: why prompts aren't enough
 6. The approval gate and the 30-day clean-run prerequisite for auto-send
 7. What we'd do differently (lessons learned)
 
-**Target:** Vasanth's technical blog or a relevant publication (HN, LessWrong, substack).
+**Target:** A relevant AI-safety / personal-AI publication (HN, LessWrong, substack, etc.).
 
-**Who:** Vasanth authors; Jake reviews for any business-sensitive details before publishing.
+**Who:** Installer authors; operator reviews for any business-sensitive details before publishing.

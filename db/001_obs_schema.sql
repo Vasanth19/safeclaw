@@ -13,7 +13,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 -- One row per email message or Slack event processed.
 CREATE TABLE IF NOT EXISTS observations (
     id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    inbox           TEXT        NOT NULL,                     -- e.g. 'jake@rspur.com', 'jake@panhandlehomebuyer.com'
+    inbox           TEXT        NOT NULL,                     -- e.g. 'you@yourdomain.com'
     message_id      TEXT        NOT NULL UNIQUE,             -- Gmail message ID or Slack event ts
     received_at     TIMESTAMPTZ NOT NULL,                    -- original message timestamp
     is_critical     BOOLEAN     NOT NULL DEFAULT FALSE,

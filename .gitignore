@@ -6,16 +6,18 @@
 # Vendored third-party repos (cloned at build time).
 vendor/
 
+# Composio CLI scaffolding (per-install secrets/state).
+composio/
+.composio/
+
 # Node
 node_modules/
 dist/
 *.tsbuildinfo
 
-# rclone-mirrored drive contents (ephemeral, regenerated on host).
-drive-mirror/
-
-# Personal Soul file — template is committed, populated file is not.
-brain/user.soul.md
+# Brain folder is cloned from upstream template at install time.
+# Per-user populated content stays local — never commit.
+brain/
 
 # Python
 __pycache__/

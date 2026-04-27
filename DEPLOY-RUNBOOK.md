@@ -45,21 +45,20 @@ Open `.env` and fill in every value. The table below describes each variable.
 | `POSTGRES_TASKS_PASSWORD` | Yes | `openssl rand -base64 24` |
 | `POSTGRES_TASKS_DB` | Yes | Any string. Default: `safeclaw_tasks` |
 | `TASKS_AGENT_PASSWORD` | Yes | `openssl rand -base64 24` — for the DB user created by 002_task_schema.sql |
-| `TASKS_HUMAN_PASSWORD` | Yes | `openssl rand -base64 24` — for the human DB user |
-| `NANGO_ENCRYPTION_KEY` | Yes | `openssl rand -hex 32` — must be exactly 32 bytes hex |
-| `NANGO_SECRET_KEY` | Yes | Set any string now; update after first Nango login |
-| `JWT_SECRET` | Yes | `openssl rand -hex 32` — used to sign/verify PostgREST JWTs |
-| `TASKS_AGENT_JWT` | Yes | Sign a JWT: see §Generating TASKS_AGENT_JWT below |
-| `GOOGLE_CLIENT_ID` | Yes | Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Client |
-| `GOOGLE_CLIENT_SECRET` | Yes | Same as above |
-| `RCLONE_DRIVE_FOLDER_ID` | Yes | Google Drive folder URL → extract the long ID after `/folders/` |
-| `SLACK_BOT_TOKEN` | Phase 2 | Slack App Dashboard → OAuth & Permissions → Bot User OAuth Token (xoxb-...) |
-| `SLACK_APP_TOKEN` | Phase 2 | Slack App Dashboard → Basic Information → App-Level Tokens (xapp-...) |
-| `SLACK_REVIEW_CHANNEL_ID` | Phase 2 | Slack channel URL or right-click → Copy Link → extract C... ID |
-| `HERMES_LLM_API_KEY` | Yes | Your LLM provider API key (OpenAI or compatible) |
-| `HERMES_LLM_BASE_URL` | Yes | e.g. `https://api.openai.com/v1` |
-| `HERMES_MODEL` | Yes | e.g. `NousResearch/Hermes-3-Llama-3.1-8B` |
-| `ACTOR_ENABLED` | Yes | Default: `false`. Set `true` in Phase 2. |
+| `TASKS_HUMAN_PASSWORD` | Yes | `openssl rand -hex 16` — auto-set by `scripts/init-secrets.sh` |
+| `JWT_SECRET` | Yes | `openssl rand -hex 32` — auto-set by `scripts/init-secrets.sh` |
+| `TASKS_AGENT_JWT` | Yes | Auto-signed by `scripts/init-secrets.sh` (HS256, payload `{"role":"tasks_agent"}`) |
+| `COMPOSIO_API_KEY` | Yes | Composio dashboard → project API key (`ak_...`) |
+| `COMPOSIO_USER_ID` | Yes | Composio dashboard → connection actor (`pg-test-...` or your real user_id) |
+| `COMPOSIO_READER_MCP_URL` | Yes | Composio dashboard → Reader MCP server URL (read-only toolkit allowlist) |
+| `COMPOSIO_ACTOR_MCP_URL` | Yes | Composio dashboard → Actor MCP server URL (draft/send toolkit allowlist) |
+| `TELEGRAM_BOT_TOKEN` | Yes (v1) | `@BotFather` on Telegram → create bot → copy token |
+| `TELEGRAM_ALLOWED_USERS` | Yes (v1) | Comma-separated numeric Telegram user IDs (`@userinfobot`) |
+| `HERMES_INFERENCE_PROVIDER` | Yes | e.g. `ollama-cloud` |
+| `OLLAMA_BASE_URL` | Yes | e.g. `http://host.docker.internal:11434/v1` |
+| `OLLAMA_API_KEY` | Yes | `ollama-local` for the local daemon (cloud auth via `~/.ollama/id_ed25519`) |
+| `HERMES_DEFAULT_MODEL` | Yes | e.g. `glm-5.1:cloud` |
+| `ACTOR_ENABLED` | Yes | Default: `true` (v1 ships actor-on). |
 | `AUTO_SEND_ENABLED` | Yes | Default: `false`. Set `true` only after Phase 4 sign-off. |
 
 ### Generating TASKS_AGENT_JWT
@@ -93,8 +92,9 @@ Check service status:
 docker compose ps
 ```
 
-Wait for all services to be `healthy` (Postgres, PostgREST, Nango) or `running`
-(hermes-reader, rclone-sync). Allow up to 60 seconds for Postgres initialization.
+Wait for all services to be `healthy` (Postgres, PostgREST, embedder) or `running`
+(hermes-reader, hermes-actor, rclone-sync). Allow up to 60 seconds for Postgres
+initialization on the first `up`.
 
 Run foundation verification:
 ```bash
@@ -105,27 +105,34 @@ bash scripts/verify-stack.sh --phase 0
 
 ## 4. OAuth Setup
 
-After the stack is healthy, authorize all OAuth connections through Nango.
+OAuth + per-toolkit MCP is delegated to **Composio** (off-box). SafeClaw never
+holds a refresh token on disk.
 
-```bash
-bash scripts/setup-oauth.sh
-```
+1. Sign in at https://app.composio.dev.
+2. Connect the Gmail / Drive / Slack / etc. accounts the assistant should
+   reach. Each connection is bound to your `COMPOSIO_USER_ID`.
+3. Create **two MCP servers** for this install:
+   - **Reader** — read-only toolkit allowlist (e.g. `GMAIL_FETCH_EMAILS`,
+     `GMAIL_LIST_THREADS`). No draft / send / delete actions.
+   - **Actor** — draft / send / move toolkit allowlist (e.g.
+     `GMAIL_CREATE_DRAFT`, `GMAIL_SEND_EMAIL`, `TELEGRAM_SEND_MESSAGE`,
+     `GOOGLEDRIVE_MOVE_FILE`). No raw inbox reads.
+4. Copy the two MCP URLs and your project API key into `.env` as
+   `COMPOSIO_READER_MCP_URL`, `COMPOSIO_ACTOR_MCP_URL`, and
+   `COMPOSIO_API_KEY`.
 
-The script walks through each integration step-by-step. You will need:
-- Google Cloud OAuth credentials (Client ID + Secret) already in `.env`
-- Access to all three Jake McKinney Gmail accounts
-- Slack workspace admin access
+The toolkit allowlist on each MCP server is the load-bearing trust boundary —
+see ARCHITECTURE.md §5 for why.
 
-**Nango dashboard:** http://localhost:3003
+### Suggested connection ID conventions (single-user install)
 
-### OAuth integration summary
-
-| Integration ID | Provider | Scopes | Used by |
-|---------------|----------|--------|---------|
-| `gmail-readonly` | Google | `gmail.readonly`, `gmail.labels` | hermes-reader |
-| `gmail-draft` | Google | `gmail.compose` | hermes-actor |
-| `google-drive-file` | Google | `drive.file` | hermes-actor |
-| `slack-bot` | Slack | `channels:read`, `channels:history`, `chat:write`, `chat:write.public` | both |
+| Connection ID | Toolkit | Where it appears |
+|---------------|---------|------------------|
+| `primary-inbox` | Gmail | Reader + Actor |
+| `secondary-inbox` | Gmail (optional) | Reader + Actor |
+| `tertiary-inbox` | Gmail (optional) | Reader + Actor |
+| `primary-drive` | Google Drive | Actor |
+| `your-workspace` | Slack (v2 only) | Actor |
 
 ---
 
@@ -307,7 +314,7 @@ ranges. The iptables approach above is a defense-in-depth layer, not a sole cont
 
 | Symptom | Likely Cause | Fix |
 |---------|-------------|-----|
-| Nango shows "Token expired" for a Gmail connection | OAuth refresh token has been revoked or expired | Re-authorize the connection in Nango dashboard: Connections → select connection → Re-authorize |
+| Composio MCP returns "auth required" or "invalid connection" | OAuth refresh token has been revoked or expired | Re-authorize the connection in the Composio dashboard: Connections → select connection → Re-authenticate |
 | hermes-reader logs "watch expired" for Gmail Pub/Sub | Gmail watch() expires after 7 days | Trigger the `gmail_rearm` schedule manually: `docker compose exec hermes-actor hermes-agent trigger gmail_rearm` |
 | PostgREST returns 403 on all requests | JWT secret mismatch between `.env` and PostgREST config | Verify `JWT_SECRET` in `.env` matches the value PostgREST was started with. Restart postgrest after any change. |
 | hermes-actor tool call returns "Tool not available: gmail_send" | Actor is correctly refusing a send operation | Expected behavior. If this appears outside of a send attempt, check for prompt injection in the observation being processed. |

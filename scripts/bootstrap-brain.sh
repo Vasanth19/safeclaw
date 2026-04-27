@@ -1,58 +1,137 @@
 #!/usr/bin/env bash
-# SafeClaw — bootstrap brain
+# SafeClaw — bootstrap the brain
 #
-# Seeds the Brain layer by scraping the last 90 days of sent mail, extracting
-# entities + style samples, and populating user_profile from brain/user.soul.md.
+# What this does:
+#   1. Clones the public Evolving Brain Template (MIT, by Samin Yasar) into
+#      ./brain/ if it isn't there yet. Strips the template's .git so the
+#      operator owns their own brain folder going forward.
+#   2. Execs scripts/lib/bootstrap_brain.py inside the embedder container
+#      (which already has Python + psycopg). The Python script pulls Gmail
+#      history through the Composio Reader MCP, populates People/, Companies/,
+#      and the postgres-obs.style_samples table.
 #
-# PREREQ: Gmail OAuth (Phase H of DEPLOY-RUNBOOK) must be complete. This script
-# will fail fast if the OAuth credentials aren't present.
+# Idempotent: re-running clones nothing if brain/ exists, and the Python
+# script only fetches messages newer than the watermark in
+# brain/.bootstrap-state.json.
 #
 # Usage:
-#   scripts/bootstrap-brain.sh [--dry-run]
+#   bash scripts/bootstrap-brain.sh                # incremental
+#   bash scripts/bootstrap-brain.sh --dry-run      # parse + print, no DB writes
+#   bash scripts/bootstrap-brain.sh --reset        # clear watermark, full rerun
+#   bash scripts/bootstrap-brain.sh --days N       # override BOOTSTRAP_DAYS
+#   bash scripts/bootstrap-brain.sh --help
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+BRAIN_DIR="${REPO_ROOT}/brain"
+PY_SCRIPT="${SCRIPT_DIR}/lib/bootstrap_brain.py"
+TEMPLATE_REPO="https://github.com/Samin12/Evolving-Brain-Template"
 
 cd "${REPO_ROOT}"
 
-echo "SafeClaw Brain bootstrap"
-echo "========================"
-echo
-echo "This will:"
-echo "  1. Load brain/user.soul.md into user_profile.soul_md on postgres-obs."
-echo "  2. Scrape the last 90 days of sent mail from the configured Gmail account."
-echo "  3. Extract entities, facts, and style samples via the configured LLM."
-echo "  4. Let the embedder pick up new rows on its next poll cycle."
-echo
-echo "Prerequisites:"
-echo "  - docker compose stack is UP"
-echo "  - Nango Gmail OAuth is complete (Phase H of DEPLOY-RUNBOOK.md)"
-echo "  - brain/user.soul.md exists (copy from user.soul.md.template)"
-echo
+# ── Argument forwarding (we just pass everything to the Python script) ─────
+PY_ARGS=("$@")
+for arg in "$@"; do
+  if [[ "${arg}" == "--help" || "${arg}" == "-h" ]]; then
+    sed -n '2,23p' "${BASH_SOURCE[0]}"
+    exit 0
+  fi
+done
 
-# ── Guard: Gmail OAuth must be configured before running ─────────────────────
-if ! grep -qE '^GOOGLE_CLIENT_ID=[^_]' "${REPO_ROOT}/.env" 2>/dev/null; then
-  echo "ERROR: GOOGLE_CLIENT_ID in .env still looks like a placeholder."
-  echo "       Complete Phase H (OAuth setup) before running bootstrap."
-  exit 2
+# ── Sanity: required tooling ──────────────────────────────────────────────
+for cmd in docker git; do
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    echo "ERROR: required tool '$cmd' not found in PATH." >&2
+    exit 1
+  fi
+done
+
+# ── Sanity: required containers must be running ───────────────────────────
+require_running() {
+  local svc="$1"
+  if ! docker compose ps --status running --services 2>/dev/null | grep -qx "$svc"; then
+    echo "ERROR: container '$svc' is not running." >&2
+    echo "       Run 'docker compose up -d' first." >&2
+    exit 1
+  fi
+}
+
+require_running "postgres-obs"
+require_running "embedder"
+# hermes-actor isn't strictly required for the bootstrap (we call Composio
+# directly via HTTP), but if the operator turned it off we still want to know.
+if docker compose ps --services 2>/dev/null | grep -qx "hermes-actor"; then
+  if ! docker compose ps --status running --services 2>/dev/null | grep -qx "hermes-actor"; then
+    echo "WARN: hermes-actor is configured but not running." >&2
+  fi
 fi
 
-if [[ ! -f "${REPO_ROOT}/brain/user.soul.md" ]]; then
-  echo "ERROR: brain/user.soul.md not found."
-  echo "       cp brain/user.soul.md.template brain/user.soul.md   # then edit it"
-  exit 2
+# ── Sanity: .env values needed by the Python script ───────────────────────
+if [[ ! -f "${REPO_ROOT}/.env" ]]; then
+  echo "ERROR: .env not found at ${REPO_ROOT}/.env" >&2
+  exit 1
 fi
 
-# ── The actual bootstrap (Node script) ───────────────────────────────────────
-# TODO(bootstrap-brain.ts): implement Gmail sent-mail scrape + entity extraction.
-# Once implemented, invoke via:
-#   node "${REPO_ROOT}/scripts/bootstrap-brain.ts"
-# or equivalent tsx/ts-node invocation.
+set -o allexport
+# shellcheck disable=SC1091
+source "${REPO_ROOT}/.env"
+set +o allexport
 
-echo "NOTE: scripts/bootstrap-brain.ts is not yet implemented."
-echo "      This script has verified prerequisites are in place."
-echo "      Re-run after the Node implementation lands."
+required_env=(
+  COMPOSIO_API_KEY
+  COMPOSIO_READER_MCP_URL
+  POSTGRES_OBS_USER
+  POSTGRES_OBS_PASSWORD
+  POSTGRES_OBS_DB
+  BRAIN_USER_KEY
+)
+for v in "${required_env[@]}"; do
+  if [[ -z "${!v:-}" || "${!v}" == "__FILL_IN__" || "${!v}" == "__GENERATE__" ]]; then
+    echo "ERROR: ${v} is not set in .env (or still has a placeholder)." >&2
+    exit 1
+  fi
+done
+
+# ── Step 1: clone the Evolving Brain Template if missing ──────────────────
+if [[ ! -d "${BRAIN_DIR}" ]]; then
+  echo "Cloning Evolving Brain Template (MIT, by Samin Yasar)..."
+  echo "  source: ${TEMPLATE_REPO}"
+  git clone --depth 1 "${TEMPLATE_REPO}" "${BRAIN_DIR}"
+  # Strip upstream's .git so the operator's brain has no remote and is theirs.
+  rm -rf "${BRAIN_DIR}/.git"
+  echo "Brain template installed at ${BRAIN_DIR}"
+else
+  echo "brain/ already exists — skipping clone."
+fi
+
+# ── Step 2: run the Python script inside an ephemeral embedder container ──
+# The embedder image already has Python 3.12 + psycopg installed (see
+# services/embedder/requirements.txt), so we don't need a separate runtime.
+# We use `docker compose run --rm` (not `exec`) because we need to mount the
+# repo into the container — `exec` cannot add volumes to a running container.
+#
+# postgres-obs is reachable as 'postgres-obs' on the safeclaw_net bridge.
+# We override BRAIN_OBS_DATABASE_URL so the script doesn't depend on whatever
+# value the operator has in .env (which often says 'localhost' for the host).
+INTERNAL_DB_URL="postgresql://${POSTGRES_OBS_USER}:${POSTGRES_OBS_PASSWORD}@postgres-obs:5432/${POSTGRES_OBS_DB}"
+
+echo "Running bootstrap_brain.py inside an embedder container..."
 echo
-echo "Exiting 0 — prerequisites look good; nothing else to do yet."
-exit 0
+
+docker compose run --rm \
+  --no-deps \
+  --entrypoint "" \
+  -T \
+  -e BRAIN_OBS_DATABASE_URL="${INTERNAL_DB_URL}" \
+  -e COMPOSIO_API_KEY="${COMPOSIO_API_KEY}" \
+  -e COMPOSIO_USER_ID="${COMPOSIO_USER_ID:-}" \
+  -e COMPOSIO_READER_MCP_URL="${COMPOSIO_READER_MCP_URL}" \
+  -e BRAIN_USER_KEY="${BRAIN_USER_KEY}" \
+  -e BOOTSTRAP_DAYS="${BOOTSTRAP_DAYS:-90}" \
+  -e BRAIN_DIR=/repo/brain \
+  -e BRAIN_STATE_DIR=/repo/brain \
+  -v "${REPO_ROOT}:/repo:rw" \
+  embedder \
+  python /repo/scripts/lib/bootstrap_brain.py "${PY_ARGS[@]}"

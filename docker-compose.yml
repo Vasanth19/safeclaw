@@ -49,9 +49,10 @@ services:
       start_period: 20s
     # Do NOT expose port 5432 to the host. Internal traffic only.
 
-  # ─── Postgres: Task Database + Nango DB ────────────────────────────────────
-  # Nango shares the tasks Postgres container with an isolated 'nango' database.
-  # This keeps service count down while maintaining data separation.
+  # ─── Postgres: Task Database ───────────────────────────────────────────────
+  # Holds the task queue + review queue served by PostgREST. OAuth tokens are
+  # NOT in this cluster — they live off-box at Composio. Keeping the task DB
+  # as its own cluster preserves the "task-side bug cannot read brain" boundary.
   postgres-tasks:
     image: postgres:16-alpine
     container_name: safeclaw-postgres-tasks
@@ -101,8 +102,8 @@ services:
       retries: 3
       start_period: 10s
 
-  # ─── (Nango removed — replaced by Composio managed OAuth + MCP servers) ──
-  # OAuth tokens for Gmail/Drive/Slack now live in Composio's vault. Hermes
+  # ─── OAuth + per-toolkit MCP — handled off-box by Composio ────────────────
+  # OAuth tokens for Gmail/Drive/Slack/etc. live in Composio's vault. Hermes
   # reaches them by talking to the Composio MCP servers (HTTP transport).
   # See COMPOSIO_READER_MCP_URL and COMPOSIO_ACTOR_MCP_URL in .env.
 
@@ -119,7 +120,7 @@ services:
       RCLONE_DRIVE_FOLDER_ID: ${RCLONE_DRIVE_FOLDER_ID}
     volumes:
       - drive_mirror:/data/drive-mirror
-      # rclone config with Drive OAuth token — managed by Nango, mounted separately.
+      # rclone config with Drive OAuth token — managed by Composio, mounted separately.
       # Operator must create this file after OAuth setup (see DEPLOY-RUNBOOK.md).
       - ./config/rclone.conf:/config/rclone/rclone.conf:ro
     command: >
@@ -191,23 +192,24 @@ services:
     restart: unless-stopped
     networks:
       - safeclaw_net
+    # Same env_file approach as hermes-actor — bypass shell env override.
+    env_file:
+      - .env
     environment:
-      HERMES_LLM_API_KEY: ${HERMES_LLM_API_KEY}
-      HERMES_LLM_BASE_URL: ${HERMES_LLM_BASE_URL}
-      HERMES_MODEL: ${HERMES_MODEL}
-      # Composio replaces Nango — Hermes connects to a hosted MCP server
-      # for Gmail/Slack reads. Toolkit access is gated by allowed_tools at
-      # MCP server creation time (the broken-trifecta enforcement boundary).
-      COMPOSIO_API_KEY: ${COMPOSIO_API_KEY}
-      COMPOSIO_USER_ID: ${COMPOSIO_USER_ID}
-      COMPOSIO_READER_MCP_URL: ${COMPOSIO_READER_MCP_URL}
+      HERMES_INFERENCE_PROVIDER: ollama-cloud
+      OLLAMA_BASE_URL: http://host.docker.internal:11434/v1
+      OLLAMA_API_KEY: ollama-local
+      HERMES_DEFAULT_MODEL: glm-5.1:cloud
     volumes:
       # Mount our reader config to /opt/data/config.yaml — the path Hermes
       # actually reads from (~/.hermes/config.yaml inside the container).
       - ./config/reader-hermes.yaml:/opt/data/config.yaml
       - hermes_reader_data:/opt/data
-    # Run as the long-lived daemon (gateway), not the interactive REPL.
-    command: ["gateway", "run"]
+    # Run as the long-lived daemon (gateway). Default image entrypoint
+    # (/opt/hermes/docker/entrypoint.sh) handles privilege drop + skill sync,
+    # then exec's whatever command we pass. We call `hermes` (the CLI), NOT
+    # `hermes-agent` — that binary has a broken legacy demo path.
+    command: ["gateway", "run", "--accept-hooks"]
     depends_on:
       - postgres-obs
       # reader also calls brain_recall / brain_get_soul (read-only brain access).
@@ -223,26 +225,29 @@ services:
     restart: unless-stopped
     networks:
       - safeclaw_net
+    # env_file loads ALL .env values directly into the container, bypassing
+    # docker-compose's `${VAR}` interpolation which prefers shell env over
+    # .env file (and operator shells often carry stale values for some keys).
+    env_file:
+      - .env
     environment:
-      HERMES_LLM_API_KEY: ${HERMES_LLM_API_KEY}
-      HERMES_LLM_BASE_URL: ${HERMES_LLM_BASE_URL}
-      HERMES_MODEL: ${HERMES_MODEL}
-      COMPOSIO_API_KEY: ${COMPOSIO_API_KEY}
-      COMPOSIO_USER_ID: ${COMPOSIO_USER_ID}
-      COMPOSIO_ACTOR_MCP_URL: ${COMPOSIO_ACTOR_MCP_URL}
-      TASKS_AGENT_JWT: ${TASKS_AGENT_JWT}
-      AUTO_SEND_ENABLED: ${AUTO_SEND_ENABLED}
+      # Hermes inference provider override — these are static, not from .env.
+      HERMES_INFERENCE_PROVIDER: ollama-cloud
+      OLLAMA_BASE_URL: http://host.docker.internal:11434/v1
+      OLLAMA_API_KEY: ollama-local
+      HERMES_DEFAULT_MODEL: glm-5.1:cloud
     volumes:
       - ./config/actor-hermes.yaml:/opt/data/config.yaml
       - hermes_actor_data:/opt/data
     # Gate: exit cleanly if ACTOR_ENABLED is not true; otherwise run gateway daemon.
+    # Use full path to `hermes` (the CLI binary), not `hermes-agent` (broken legacy).
     command: >
       sh -c '
         if [ "${ACTOR_ENABLED:-false}" != "true" ]; then
           echo "hermes-actor is disabled (ACTOR_ENABLED=${ACTOR_ENABLED:-false}). Set ACTOR_ENABLED=true to enable.";
           exit 0;
         fi;
-        exec hermes-agent gateway run
+        exec /opt/hermes/.venv/bin/hermes gateway run --accept-hooks
       '
     depends_on:
       - postgrest

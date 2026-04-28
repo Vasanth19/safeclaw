@@ -110,6 +110,19 @@ MIN_STYLE_SAMPLE_WORDS = 8
 
 
 @dataclass
+class Attachment:
+    """One Gmail attachment — metadata + (optionally) Drive landing."""
+
+    attachment_id: str   # Gmail's attachmentId, used to fetch the bytes
+    filename: str
+    mime_type: str
+    size_bytes: int
+    drive_url: str = ""        # populated after Drive upload (empty if skipped/failed)
+    drive_file_id: str = ""    # Google Drive file ID (for re-find / move ops)
+    upload_error: str = ""     # populated if upload was attempted and failed
+
+
+@dataclass
 class GmailMessage:
     """A normalized subset of a Gmail message — only the fields we use."""
 
@@ -122,6 +135,7 @@ class GmailMessage:
     body_text: str
     received_at: dt.datetime  # UTC
     labels: list[str] = field(default_factory=list)
+    attachments: list[Attachment] = field(default_factory=list)
 
     @property
     def is_sent(self) -> bool:
@@ -135,6 +149,9 @@ class BootstrapStats:
     people_upserted: int = 0
     companies_upserted: int = 0
     style_samples_saved: int = 0
+    attachments_seen: int = 0
+    attachments_uploaded: int = 0
+    attachments_skipped: int = 0
     contact_frequency: dict[str, int] = field(default_factory=dict)
 
 
@@ -400,6 +417,233 @@ class ComposioReader:
             args["page_token"] = page_token
         return self.call_tool("GMAIL_FETCH_EMAILS", args)
 
+    def fetch_attachment(
+        self,
+        *,
+        message_id: str,
+        attachment_id: str,
+    ) -> bytes | None:
+        """Wraps ``GMAIL_FETCH_ATTACHMENT``. Returns raw bytes or None on miss.
+
+        Composio's GMAIL_FETCH_ATTACHMENT returns the attachment's content
+        as base64url-encoded text. We decode here so callers get bytes.
+        """
+        if not message_id or not attachment_id:
+            return None
+        try:
+            result = self.call_tool(
+                "GMAIL_FETCH_ATTACHMENT",
+                {"message_id": message_id, "attachment_id": attachment_id},
+            )
+        except ComposioMCPError:
+            return None
+        # Composio MCP returns isError=true with a "Tool ... not found" when
+        # GMAIL_FETCH_ATTACHMENT isn't in the toolkit allowlist. Detect that
+        # so callers can show a clear guidance message instead of mysterious
+        # "empty bytes" warnings.
+        if result.get("isError"):
+            content = result.get("content", [])
+            err_text = ""
+            if isinstance(content, list) and content:
+                first = content[0]
+                if isinstance(first, dict):
+                    err_text = first.get("text", "")
+            if "not found" in err_text.lower():
+                raise ComposioMCPError(
+                    "GMAIL_FETCH_ATTACHMENT not enabled in Composio MCP toolkit. "
+                    "Enable it in the Composio dashboard for the Reader (or Actor) MCP "
+                    "to allow attachment download + Drive upload."
+                )
+            raise ComposioMCPError(f"GMAIL_FETCH_ATTACHMENT failed: {err_text or result}")
+        # Same content-shape probing as fetch_emails: the payload may be in
+        # result.content[0].text (JSON-encoded) or result.data.
+        content = result.get("content")
+        payload: dict[str, Any] | None = None
+        if isinstance(content, list) and content:
+            first = content[0]
+            if isinstance(first, dict) and isinstance(first.get("text"), str):
+                try:
+                    parsed = json.loads(first["text"])
+                    if isinstance(parsed, dict):
+                        payload = parsed.get("data") or parsed
+                except json.JSONDecodeError:
+                    pass
+        if payload is None:
+            payload = result.get("data") or result
+        if not isinstance(payload, dict):
+            return None
+        b64 = (
+            payload.get("data")
+            or payload.get("attachment_data")
+            or payload.get("base64_data")
+            or ""
+        )
+        if not b64:
+            return None
+        # Gmail uses URL-safe base64. Pad and decode.
+        import base64
+        try:
+            padded = b64 + "=" * (-len(b64) % 4)
+            return base64.urlsafe_b64decode(padded.encode("ascii"))
+        except (ValueError, TypeError):
+            return None
+
+
+class ComposioActor:
+    """Tiny client for the Composio Actor MCP server (write side).
+
+    Owns Drive upload + folder creation. Kept separate from Reader so the
+    trust boundary stays explicit — a misconfigured COMPOSIO_ACTOR_MCP_URL
+    or missing Drive scope shows up as a clean error here, not as a silent
+    Reader privilege escalation.
+    """
+
+    def __init__(self, mcp_url: str, api_key: str, user_id: str | None = None):
+        self.mcp_url = mcp_url
+        self.headers = {
+            "x-api-key": api_key,
+            "User-Agent": "SafeClaw-Bootstrap/1.0",
+        }
+        if user_id:
+            self.headers["x-composio-user-id"] = user_id
+        self._rpc_id = 0
+
+    def _next_id(self) -> int:
+        self._rpc_id += 1
+        return self._rpc_id
+
+    def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        body = {
+            "jsonrpc": "2.0",
+            "id": self._next_id(),
+            "method": "tools/call",
+            "params": {"name": tool_name, "arguments": arguments},
+        }
+        resp = _http_post_json(self.mcp_url, self.headers, body)
+        if "error" in resp and resp["error"]:
+            raise ComposioMCPError(
+                f"Composio Actor MCP error for tool {tool_name}: {resp['error']}"
+            )
+        return resp.get("result", {}) or {}
+
+    @staticmethod
+    def _extract_payload(result: dict[str, Any]) -> dict[str, Any]:
+        """Probe the same content shapes the Reader uses."""
+        content = result.get("content")
+        if isinstance(content, list) and content:
+            first = content[0]
+            if isinstance(first, dict) and isinstance(first.get("text"), str):
+                try:
+                    parsed = json.loads(first["text"])
+                    if isinstance(parsed, dict):
+                        return parsed.get("data") or parsed
+                except json.JSONDecodeError:
+                    pass
+        data = result.get("data")
+        if isinstance(data, dict):
+            return data
+        return result if isinstance(result, dict) else {}
+
+    def find_or_create_folder(
+        self,
+        *,
+        folder_path: list[str],
+        folder_cache: dict[str, str],
+    ) -> str:
+        """Walk ``folder_path`` (top-down), creating any missing segment.
+
+        Returns the leaf folder's Drive ID. Cached per-process so a run
+        with 100 attachments to the same monthly folder makes 1 lookup,
+        not 100.
+        """
+        cache_key = "/".join(folder_path)
+        if cache_key in folder_cache:
+            return folder_cache[cache_key]
+
+        parent_id = "root"
+        running_path: list[str] = []
+        for segment in folder_path:
+            running_path.append(segment)
+            running_key = "/".join(running_path)
+            if running_key in folder_cache:
+                parent_id = folder_cache[running_key]
+                continue
+            # Create (or find existing). Composio's GOOGLEDRIVE_CREATE_FOLDER
+            # is idempotent on (name, parent) in our experience — but we still
+            # try-then-find as a defensive belt.
+            try:
+                result = self.call_tool(
+                    "GOOGLEDRIVE_CREATE_FOLDER",
+                    {
+                        "folder_name": segment,
+                        "parent_id": parent_id,
+                    },
+                )
+                payload = self._extract_payload(result)
+                new_id = (
+                    payload.get("id")
+                    or payload.get("folder_id")
+                    or payload.get("file_id")
+                    or ""
+                )
+            except ComposioMCPError:
+                new_id = ""
+            if not new_id:
+                # Fallback: GOOGLEDRIVE_FIND_FOLDER lookup by name+parent.
+                try:
+                    found = self.call_tool(
+                        "GOOGLEDRIVE_FIND_FOLDER",
+                        {"folder_name": segment, "parent_id": parent_id},
+                    )
+                    fpayload = self._extract_payload(found)
+                    new_id = (
+                        fpayload.get("id")
+                        or fpayload.get("folder_id")
+                        or ""
+                    )
+                except ComposioMCPError:
+                    new_id = ""
+            if not new_id:
+                raise ComposioMCPError(
+                    f"could not create or find Drive folder {segment!r} under {parent_id}"
+                )
+            folder_cache[running_key] = new_id
+            parent_id = new_id
+        return parent_id
+
+    def upload_file(
+        self,
+        *,
+        parent_folder_id: str,
+        filename: str,
+        content: bytes,
+        mime_type: str,
+    ) -> dict[str, str]:
+        """Upload bytes to Drive. Returns ``{file_id, web_view_link}``."""
+        import base64
+        b64 = base64.b64encode(content).decode("ascii")
+        result = self.call_tool(
+            "GOOGLEDRIVE_UPLOAD_FILE",
+            {
+                "file_name": filename,
+                "parent_id": parent_folder_id,
+                "mime_type": mime_type or "application/octet-stream",
+                "file_content_base64": b64,
+            },
+        )
+        payload = self._extract_payload(result)
+        return {
+            "file_id": str(
+                payload.get("id") or payload.get("file_id") or ""
+            ),
+            "web_view_link": str(
+                payload.get("webViewLink")
+                or payload.get("web_view_link")
+                or payload.get("url")
+                or ""
+            ),
+        }
+
 
 # ─── MCP response normalization ────────────────────────────────────────────
 
@@ -512,7 +756,40 @@ def _normalize_message(raw: dict[str, Any]) -> GmailMessage | None:
     label_ids = raw.get("labelIds") or raw.get("label_ids") or raw.get("labels") or []
     labels = [str(x).upper() for x in label_ids if x]
 
-    if not sender_email and not body_text:
+    # Attachments — Composio MCP returns these as ``attachmentList`` per
+    # message. Each entry has at minimum filename + mimeType + (sometimes)
+    # attachmentId + size. We capture metadata here; the byte payload is
+    # fetched lazily later (via GMAIL_FETCH_ATTACHMENT) only if Drive upload
+    # is enabled.
+    attachments: list[Attachment] = []
+    raw_atts = (
+        raw.get("attachmentList")
+        or raw.get("attachments")
+        or raw.get("attachment_list")
+        or []
+    )
+    if isinstance(raw_atts, list):
+        for a in raw_atts:
+            if not isinstance(a, dict):
+                continue
+            fname = (
+                a.get("filename") or a.get("file_name")
+                or a.get("name") or ""
+            )
+            if not fname:
+                continue
+            attachments.append(
+                Attachment(
+                    attachment_id=str(
+                        a.get("attachmentId") or a.get("attachment_id") or ""
+                    ),
+                    filename=str(fname),
+                    mime_type=str(a.get("mimeType") or a.get("mime_type") or ""),
+                    size_bytes=int(a.get("size") or a.get("sizeBytes") or 0),
+                )
+            )
+
+    if not sender_email and not body_text and not attachments:
         # Nothing to learn from this message.
         return None
 
@@ -526,6 +803,7 @@ def _normalize_message(raw: dict[str, Any]) -> GmailMessage | None:
         body_text=str(body_text),
         received_at=received_at,
         labels=labels,
+        attachments=attachments,
     )
 
 
@@ -551,6 +829,31 @@ def save_state(brain_dir: Path, state: dict[str, Any]) -> None:
     p.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
 
 
+def attachments_state_path(brain_dir: Path) -> Path:
+    """Sidecar for attachment idempotency: maps <message_id>:<attachment_id>
+    to {drive_file_id, drive_url, sender, filename, uploaded_at}.
+
+    Without this, re-running bootstrap would re-upload the same attachment
+    every time. With this, we skip anything already in Drive."""
+    return brain_dir / ".attachments-state.json"
+
+
+def load_attachments_state(brain_dir: Path) -> dict[str, dict[str, Any]]:
+    p = attachments_state_path(brain_dir)
+    if not p.exists():
+        return {}
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def save_attachments_state(brain_dir: Path, state: dict[str, dict[str, Any]]) -> None:
+    p = attachments_state_path(brain_dir)
+    p.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+
+
 # ─── Brain folder writers (People/, Companies/, Live Logs/) ───────────────
 
 
@@ -572,6 +875,9 @@ contact_frequency: {frequency}
 
 ## Recent activity
 - {last_contact}: last seen in inbox
+
+## Attachments received
+{attachments_block}
 
 ## Notes
 """
@@ -595,6 +901,34 @@ people_count: {people_count}
 """
 
 
+def _format_attachments_block(records: list[dict[str, Any]]) -> str:
+    """Render the 'Attachments received' bullet list for a person's .md.
+
+    ``records`` is a list of {date, filename, mime, size_bytes, drive_url, subject}
+    dicts (most recent first). If empty, we leave a placeholder so the file
+    layout stays predictable when attachments later arrive.
+    """
+    if not records:
+        return "- (none yet)"
+    lines: list[str] = []
+    for r in records[:30]:  # cap so this section doesn't run away
+        size_kb = max(1, int(r.get("size_bytes") or 0) // 1024)
+        date = r.get("date") or "?"
+        fname = r.get("filename") or "?"
+        subj = r.get("subject") or ""
+        drive = r.get("drive_url") or ""
+        # Format: - 2026-04-28: `pricing.pdf` (PDF, 245KB) — "Re: Q3 pricing"
+        #             [Drive](https://drive.google.com/...)
+        meta = f"({(r.get('mime') or 'file').split('/')[-1].upper()}, {size_kb}KB)"
+        head = f"- {date}: `{fname}` {meta}"
+        if subj:
+            head += f' — "{subj[:80]}"'
+        lines.append(head)
+        if drive:
+            lines.append(f"  - [Open in Drive]({drive})")
+    return "\n".join(lines)
+
+
 def upsert_person_file(
     *,
     people_dir: Path,
@@ -604,6 +938,7 @@ def upsert_person_file(
     first_seen: dt.datetime,
     last_contact: dt.datetime,
     frequency: int,
+    attachments: list[dict[str, Any]] | None,
     dry_run: bool,
 ) -> bool:
     """Idempotently write a People/<slug>.md file. Returns True if a file
@@ -619,6 +954,7 @@ def upsert_person_file(
         last_contact=last_contact.date().isoformat(),
         frequency=frequency,
         display_name=display,
+        attachments_block=_format_attachments_block(attachments or []),
     )
 
     if out_path.exists():
@@ -786,6 +1122,7 @@ def run(
     user_key: str,
     composio_api_key: str,
     composio_reader_url: str,
+    composio_actor_url: str | None,
     composio_user_id: str | None,
     days: int,
     dry_run: bool,
@@ -829,6 +1166,16 @@ def run(
 
     sent_samples: list[GmailMessage] = []
 
+    # Per-person attachment records, accumulated during Phase A and rendered
+    # into brain/People/<slug>.md during Phase C. Key: sender_email, value:
+    # list of dicts that match _format_attachments_block's expected shape.
+    person_attachments: dict[str, list[dict[str, Any]]] = {}
+
+    # Pending attachment uploads, deferred to Phase A.5 (Drive). We capture
+    # everything we'd want to upload during Phase A so the loop above stays
+    # fast (one Composio fetch_attachment call per attachment is slow).
+    pending_attachments: list[dict[str, Any]] = []
+
     # ── Phase A: inbound (everyone who's emailed me) ──────────────────────
     print("Phase A — fetching inbound mail...")
     # `in:inbox` is more reliable than `-in:sent -in:chats` exclusions —
@@ -862,11 +1209,133 @@ def run(
             if msg.received_at > domain_last_seen.get(d, dt.datetime.min.replace(tzinfo=dt.timezone.utc)):
                 domain_last_seen[d] = msg.received_at
 
+        # Capture attachment metadata + queue for Drive upload. We always
+        # record metadata in the brain (cheap); the upload itself happens
+        # in Phase A.5 only if the actor MCP is configured.
+        if msg.attachments:
+            for att in msg.attachments:
+                stats.attachments_seen += 1
+                record = {
+                    "date": msg.received_at.date().isoformat(),
+                    "filename": att.filename,
+                    "mime": att.mime_type,
+                    "size_bytes": att.size_bytes,
+                    "subject": msg.subject,
+                    "drive_url": "",   # filled by Phase A.5 if upload succeeds
+                    "message_id": msg.message_id,
+                    "attachment_id": att.attachment_id,
+                }
+                person_attachments.setdefault(sender, []).insert(0, record)
+                if att.attachment_id:
+                    pending_attachments.append({
+                        "record": record,
+                        "sender_domain": d,
+                        "sender_email": sender,
+                        "received_at": msg.received_at,
+                    })
+
         if stats.emails_processed % 200 == 0:
             print(f"  ...processed {stats.emails_processed} inbound messages")
 
     print(f"  done. {stats.emails_processed} inbound messages processed.")
+    if stats.attachments_seen:
+        print(f"  found {stats.attachments_seen} attachments across inbound messages.")
     print()
+
+    # ── Phase A.5: download & upload attachments to Drive ─────────────────
+    # Skipped silently if no actor URL configured — the metadata still
+    # lands in brain/People/<slug>.md, just without Drive links.
+    if pending_attachments and composio_actor_url and not dry_run:
+        print(f"Phase A.5 — uploading {len(pending_attachments)} attachments to Google Drive...")
+        att_state = load_attachments_state(brain_dir)
+        actor = ComposioActor(composio_actor_url, composio_api_key, composio_user_id)
+        folder_cache: dict[str, str] = {}
+        # Drive layout: SafeClaw Inbox / <YYYY-MM> / <sender-domain> / <filename>
+        DRIVE_ROOT = "SafeClaw Inbox"
+
+        # Quick precondition probe: if GMAIL_FETCH_ATTACHMENT isn't in the
+        # MCP toolkit, fail fast with a clear message instead of looping
+        # over every attachment producing identical "not found" errors.
+        toolkit_ok = True
+        for entry in pending_attachments:
+            record = entry["record"]
+            mid = record["message_id"]
+            aid = record["attachment_id"]
+            state_key = f"{mid}:{aid}"
+            # Idempotency: already uploaded in a prior run.
+            if state_key in att_state:
+                cached = att_state[state_key]
+                record["drive_url"] = cached.get("drive_url", "")
+                stats.attachments_skipped += 1
+                continue
+            if not toolkit_ok:
+                # Earlier iteration already proved the toolkit is missing the
+                # download tool — don't repeat the error for every file.
+                continue
+            # Download from Gmail.
+            try:
+                blob = reader.fetch_attachment(message_id=mid, attachment_id=aid)
+            except ComposioMCPError as exc:
+                if "not enabled" in str(exc):
+                    print(f"  [error] {exc}")
+                    print(f"  [error] Skipping Drive upload for remaining "
+                          f"{len(pending_attachments) - stats.attachments_skipped} attachments. "
+                          "Metadata is still recorded in brain/People/<slug>.md.")
+                    toolkit_ok = False
+                else:
+                    print(f"  [warn] download failed for {record['filename']}: {exc}")
+                continue
+            except Exception as exc:  # pragma: no cover — defensive
+                print(f"  [warn] download failed for {record['filename']}: {exc}")
+                blob = None
+            if not blob:
+                print(f"  [warn] empty/missing bytes for {record['filename']} — skipping")
+                continue
+            # Resolve target folder.
+            ym = entry["received_at"].strftime("%Y-%m")
+            sender_domain = entry["sender_domain"] or "unknown"
+            folder_path = [DRIVE_ROOT, ym, sender_domain]
+            try:
+                folder_id = actor.find_or_create_folder(
+                    folder_path=folder_path, folder_cache=folder_cache,
+                )
+            except ComposioMCPError as exc:
+                print(f"  [warn] folder resolve failed for {'/'.join(folder_path)}: {exc}")
+                continue
+            # Upload.
+            try:
+                up = actor.upload_file(
+                    parent_folder_id=folder_id,
+                    filename=record["filename"],
+                    content=blob,
+                    mime_type=record["mime"] or "application/octet-stream",
+                )
+            except ComposioMCPError as exc:
+                print(f"  [warn] upload failed for {record['filename']}: {exc}")
+                continue
+            record["drive_url"] = up.get("web_view_link") or ""
+            att_state[state_key] = {
+                "drive_file_id": up.get("file_id", ""),
+                "drive_url": record["drive_url"],
+                "sender": entry["sender_email"],
+                "filename": record["filename"],
+                "uploaded_at": utcnow().isoformat(),
+                "folder": "/".join(folder_path),
+            }
+            stats.attachments_uploaded += 1
+        save_attachments_state(brain_dir, att_state)
+        print(
+            f"  done. uploaded={stats.attachments_uploaded} "
+            f"skipped(already in Drive)={stats.attachments_skipped}"
+        )
+        print()
+    elif pending_attachments and not composio_actor_url:
+        print(
+            f"Phase A.5 — skipping Drive upload "
+            f"({len(pending_attachments)} attachments would have been uploaded). "
+            "Set COMPOSIO_ACTOR_MCP_URL to enable."
+        )
+        print()
 
     # ── Phase B: sent (style samples) ─────────────────────────────────────
     print("Phase B — fetching sent mail (for style samples)...")
@@ -920,6 +1389,7 @@ def run(
                     first_seen=first_seen,
                     last_contact=last_seen,
                     frequency=freq,
+                    attachments=person_attachments.get(email),
                     dry_run=False,
                 )
                 if changed:
@@ -995,6 +1465,9 @@ def run(
         f"- People profiles created/updated: `{stats.people_upserted}`",
         f"- Companies profiles created/updated: `{stats.companies_upserted}`",
         f"- style samples saved: `{stats.style_samples_saved}`",
+        f"- attachments seen: `{stats.attachments_seen}`",
+        f"- attachments uploaded to Drive: `{stats.attachments_uploaded}`",
+        f"- attachments skipped (already in Drive): `{stats.attachments_skipped}`",
         "",
         "## Top contacts (by message volume)",
         "",
@@ -1034,6 +1507,10 @@ def run(
     print(f"   Created   {stats.people_upserted} People profiles  -> brain/People/")
     print(f"             {stats.companies_upserted} Companies        -> brain/Companies/")
     print(f"             {stats.style_samples_saved} Style samples    -> postgres-obs.style_samples")
+    if stats.attachments_seen:
+        print(f"             {stats.attachments_seen} Attachments seen "
+              f"({stats.attachments_uploaded} uploaded to Drive, "
+              f"{stats.attachments_skipped} skipped)")
     print()
     print("Next steps:")
     print("   1. Open brain/0 - Identity/ and edit your soul.md (1 min)")
@@ -1094,6 +1571,10 @@ def main(argv: list[str]) -> int:
         print(f"ERROR: required env var {missing} is not set.", file=sys.stderr)
         return 1
 
+    # Optional — drives Phase A.5 (Drive upload). If absent, attachment
+    # metadata still lands in brain/People/<slug>.md without Drive links.
+    composio_actor_url = os.environ.get("COMPOSIO_ACTOR_MCP_URL") or None
+
     days_env = os.environ.get("BOOTSTRAP_DAYS")
     days = args.days or (int(days_env) if days_env else DEFAULT_DAYS)
 
@@ -1104,6 +1585,7 @@ def main(argv: list[str]) -> int:
             user_key=user_key,
             composio_api_key=composio_api_key,
             composio_reader_url=composio_reader_url,
+            composio_actor_url=composio_actor_url,
             composio_user_id=composio_user_id,
             days=days,
             dry_run=args.dry_run,

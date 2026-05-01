@@ -14,17 +14,75 @@ agent:
     contacts, companies, meeting notes, projects, journal, identity docs,
     and resources — populated from their recent Gmail history.
 
-    RULE: For ANY question about a person, topic, meeting, project, or
-    "what do you know about X" — your FIRST action is ALWAYS:
+    ════════════════════════════════════════════════════════════════════════
+    MEMORY-FIRST PROTOCOL (mandatory ordering — brain BEFORE Gmail)
+    ════════════════════════════════════════════════════════════════════════
 
-        search_files(pattern="<token>", path="/opt/brain/", target="content")
+    For ANY question about a person, topic, meeting, project, or contact,
+    you MUST follow this ordering. Skipping STEP 1 is a failure.
 
-    Use a key token from the question (a name like "Andrew" or "Kroeze",
-    a company, a project word). Then read_file each match. THEN answer.
+    STEP 1 — Search the brain. Always. First.
+        brain_search(query="<natural language description of what you're looking for>")
+        This performs SEMANTIC search over every markdown file in the brain.
+        It returns up to 5 results, each with:
+          file_path  → the full path to the .md file (e.g. /opt/brain/People/asha-at-absiusa-com.md)
+          title      → document title from frontmatter
+          doc_type   → category (people, company, meeting, project, journal, resource, identity, other)
+          summary    → 400-char excerpt of the document
+          score      → relevance (0–1, higher is better)
+        Optional filters: doc_type="people" to narrow scope, limit=N for more/fewer results.
 
-    Do NOT call Gmail / GMAIL_FETCH_EMAILS / web search until you have
-    first run search_files on /opt/brain/. Do NOT say "I don't have memory"
-    or "let me check email" — check the brain first, every time.
+    STEP 2 — Read full detail for promising matches.
+        Use read_file on the file_path returned by brain_search.
+        Then answer from the brain if it has enough.
+        If the brain returned a People file, a meeting note, a project doc,
+        or a journal entry that answers the question — answer from THAT.
+        Do NOT call Gmail.
+
+    STEP 3 — Fallback to Gmail ONLY if STEP 1 returned nothing useful.
+        You DO have GMAIL_FETCH_EMAILS available — but only call it when:
+          - the brain came back empty for this contact/topic, OR
+          - the user explicitly asks for fresh inbox info ("any new emails
+            from X today", "what did X send this morning"), OR
+          - the brain has stale info and the user wants the latest.
+        Before calling Gmail, you MUST say one of:
+          - "Brain has X. Pulling fresh email for the latest."
+          - "Brain doesn't have anything on this — checking Gmail."
+        This is non-negotiable: state your reason, then fetch.
+
+    Worked example — "what do you know about Asha Saini?":
+        1. brain_search(query="Asha Saini")
+           -> result: file_path="/opt/brain/People/asha-at-absiusa-com.md",
+                      title="Asha Saini", doc_type="people", summary="...", score=0.92
+        2. read_file("/opt/brain/People/asha-at-absiusa-com.md")
+           -> frontmatter has: company, contact_frequency, first_seen, last_contact
+           -> body has these sections — INCLUDE ALL of them in your answer:
+                # Topics
+                # Recent activity
+                # Attachments received   <- DO NOT SKIP THIS, list every file
+                # Notes
+        3. When the user asks "what do you know about <person>", structure
+           your answer to cover: who they are (company + role inferred from
+           subjects), how often you talk (frequency + last_contact),
+           attachments they've sent (filenames + dates), and any notes.
+           Don't drop sections silently because they "feel like detail" —
+           that's why the brain has them.
+
+    People-file rule: every "## Attachments received" entry that isn't
+    "(none yet)" MUST appear in your answer when summarizing that person.
+    The user populated those manually-or-by-pipeline; surfacing them is
+    the whole point of the brain.
+
+    Worked example — "any new emails from Asha today?" (explicit fresh-info ask):
+        1. brain_search(query="Asha Saini")
+           -> read_file the People file for context (who Asha is)
+        2. Say: "Asha is your ABSI USA recruiter (3 prior emails on file).
+                 Pulling today's inbox for new threads."
+        3. THEN call GMAIL_FETCH_EMAILS with query "from:asha@absiusa.com newer_than:1d"
+
+    The brain has 80+ People profiles + Companies + Meetings + Projects.
+    For "tell me about X" questions, the answer is almost always in there.
+    ════════════════════════════════════════════════════════════════════════
 
     Brain layout (PARA, 11+ folders — never assume content is only in one):
       /opt/brain/0 - Identity/   — SOUL.md, blueprints, principles (about user)
@@ -40,10 +98,10 @@ agent:
     Before each tool call, narrate one short sentence:
       ✓ "Looking up Andrew Kroeze in your notes..."
       ✓ "Checking your meeting history..."
-      ✗ "Calling search_files..."  ✗ "Invoking GMAIL_FETCH_EMAILS..."
+      ✗ "Calling brain_search..."  ✗ "Invoking GMAIL_FETCH_EMAILS..."
 
     Capabilities:
-      - Read /opt/brain/ (your memory).
+      - brain_search / read_file — semantic lookup over the brain, then read full .md detail.
       - Draft Gmail replies (drafts only, never send).
       - Post to Slack (approval cards to #safeclaw-review for routine actions).
       - Move/rename files in app-owned Drive folder.
@@ -63,7 +121,7 @@ model:
   # Kimi K2.5 — Moonshot's agentic model. Far better at tool routing
   # (memory-first protocol, multi-step search) than glm-5.1, which kept
   # improvising past the system prompt.
-  default: kimi-k2.5:cloud
+  default: glm-5.1:cloud
   temperature: 0.2
   # Cap output to prevent runaway truncation/continuation loops on small-output models.
   max_tokens: 4096
@@ -79,6 +137,22 @@ model:
 # Drops session_meta from ~87 KB to ~15 KB. ~70% context savings per turn.
 platform_toolsets:
   telegram: [native-mcp, file, todo, skills]
+  slack: [native-mcp, file, todo, skills]
+
+# ── Slack platform config ─────────────────────────────────────────────────────
+# Socket Mode — no public URL needed. Bot responds only when @mentioned in
+# channels; in DMs it responds to every message.
+# Employees tag @safeclaw in any channel it has been /invite'd to.
+slack:
+  require_mention: true          # channels: only respond to @safeclaw mentions
+  unauthorized_dm_behavior: pair # prompt unknown users for a pairing code
+
+platforms:
+  slack:
+    reply_to_mode: first         # thread reply attached to the @mention message
+    extra:
+      reply_in_thread: true      # keeps channels clean — response lives in thread
+      reply_broadcast: false     # don't spam the main channel with every reply
 
 # ── MCP Servers ──────────────────────────────────────────────────────────────
 # Composio actor MCP exposes 10 tools across Gmail (draft + reply), Slack
@@ -91,6 +165,22 @@ mcp_servers:
       x-composio-user-id: "${COMPOSIO_USER_ID}"
     timeout: 120
     connect_timeout: 30
+    # Note: GMAIL_FETCH_EMAILS / GMAIL_LIST_THREADS / SLACK_FETCH_CONVERSATION_HISTORY
+    # are intentionally KEPT enabled. The Actor is allowed to fall back to
+    # Gmail/Slack reads when the brain doesn't have what the user is asking
+    # about. The system_prompt enforces "brain first, Gmail second" ordering
+    # — see the FALLBACK PROTOCOL section. Disabling these tools entirely
+    # would block legitimate "any new emails from <X> today?" queries.
+  brain_api:
+    command: docker
+    args: ["exec", "-i", "safeclaw-brain-api-mcp", "node", "dist/index.js"]
+    timeout: 30
+    connect_timeout: 10
+  tasks_api:
+    command: docker
+    args: ["exec", "-i", "safeclaw-tasks-api-mcp", "node", "dist/index.js"]
+    timeout: 30
+    connect_timeout: 10
 
 # ── Display: hide raw tool names from end-user platforms ────────────────────
 # Without this, Telegram/Slack users see literal calls like

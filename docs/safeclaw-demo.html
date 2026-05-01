@@ -1,0 +1,1199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SafeClaw — Personal AI Assistant on Your Own VPS</title>
+<style>
+  :root {
+    --bg: #0b1020;
+    --bg-elev: #11172e;
+    --bg-card: #161d3a;
+    --line: #232c52;
+    --line-soft: #1c2444;
+    --text: #e6ebff;
+    --text-dim: #9aa3c7;
+    --text-soft: #c8cfee;
+    --accent: #7c8cff;
+    --accent-2: #34d6c3;
+    --accent-warm: #f7b955;
+    --good: #3ddc97;
+    --warn: #f7b955;
+    --bad: #ff6b6b;
+    --plan: #8a93b9;
+    --code-bg: #0a0f25;
+    --code-text: #d6dbf5;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .app {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    min-height: 100vh;
+  }
+  /* Sidebar */
+  .sidebar {
+    background: linear-gradient(180deg, #0b1226 0%, #0a0f1f 100%);
+    border-right: 1px solid var(--line);
+    padding: 28px 18px;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+  }
+  .brand {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 28px;
+  }
+  .brand-mark {
+    width: 36px; height: 36px;
+    border-radius: 9px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    display: grid; place-items: center;
+    font-weight: 800; color: #0b1020;
+    font-size: 18px;
+  }
+  .brand-title {
+    font-weight: 700; font-size: 16px; letter-spacing: 0.2px;
+  }
+  .brand-sub {
+    font-size: 11px; color: var(--text-dim);
+    text-transform: uppercase; letter-spacing: 1.2px;
+  }
+  .tab-group { margin-bottom: 22px; }
+  .tab-group-label {
+    font-size: 11px; color: var(--text-dim);
+    text-transform: uppercase; letter-spacing: 1.4px;
+    padding: 0 10px 8px;
+  }
+  .tab {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 12px;
+    border-radius: 8px;
+    color: var(--text-soft);
+    cursor: pointer;
+    font-size: 14px;
+    border: none;
+    background: transparent;
+    width: 100%;
+    text-align: left;
+    transition: background 0.15s, color 0.15s;
+  }
+  .tab:hover { background: var(--line-soft); color: var(--text); }
+  .tab.active {
+    background: linear-gradient(90deg, rgba(124,140,255,0.18), rgba(52,214,195,0.10));
+    color: var(--text);
+    border-left: 3px solid var(--accent);
+    padding-left: 9px;
+  }
+  .tab-num {
+    font-variant-numeric: tabular-nums;
+    color: var(--text-dim);
+    font-size: 11px;
+    width: 18px;
+    text-align: right;
+  }
+  .tab.active .tab-num { color: var(--accent-2); }
+
+  /* Main content */
+  main {
+    padding: 56px 64px 96px;
+    max-width: 1100px;
+  }
+  .panel { display: none; }
+  .panel.active { display: block; animation: fade 0.25s ease-out; }
+  @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+  .eyebrow {
+    color: var(--accent-2);
+    font-size: 12px; letter-spacing: 1.5px; text-transform: uppercase;
+    font-weight: 700;
+    margin-bottom: 10px;
+  }
+  h1, h2, h3 { color: var(--text); margin: 0; line-height: 1.2; }
+  h1 { font-size: 38px; letter-spacing: -0.5px; margin-bottom: 14px; font-weight: 700; }
+  h2 { font-size: 22px; margin-top: 32px; margin-bottom: 14px; font-weight: 700; }
+  h3 { font-size: 16px; margin-top: 22px; margin-bottom: 8px; font-weight: 700; color: var(--text-soft); }
+  p { color: var(--text-soft); margin: 8px 0 12px; }
+  .lede { font-size: 18px; color: var(--text); max-width: 780px; }
+
+  ul, ol { margin: 8px 0 14px; padding-left: 22px; color: var(--text-soft); }
+  li { margin-bottom: 6px; }
+  code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 13px;
+         background: var(--bg-elev); color: var(--code-text); padding: 1px 6px; border-radius: 4px; }
+  pre {
+    background: var(--code-bg);
+    color: var(--code-text);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-size: 13px;
+    line-height: 1.55;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+
+  /* Cards */
+  .grid { display: grid; gap: 14px; }
+  .grid.cols-2 { grid-template-columns: 1fr 1fr; }
+  .grid.cols-3 { grid-template-columns: 1fr 1fr 1fr; }
+  .grid.cols-4 { grid-template-columns: repeat(4, 1fr); }
+  @media (max-width: 1100px) {
+    .grid.cols-3, .grid.cols-4 { grid-template-columns: 1fr 1fr; }
+  }
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 18px 20px;
+  }
+  .card.hi { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .card-label {
+    font-size: 11px; color: var(--text-dim);
+    text-transform: uppercase; letter-spacing: 1.2px; margin-bottom: 6px;
+  }
+  .card-num {
+    font-size: 32px; font-weight: 700; line-height: 1;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .card-sub { font-size: 13px; color: var(--text-dim); margin-top: 6px; }
+
+  /* Status pills */
+  .pill {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+  }
+  .pill.live   { background: rgba(61, 220, 151, 0.12); color: var(--good); border: 1px solid rgba(61, 220, 151, 0.4); }
+  .pill.partial{ background: rgba(247, 185, 85, 0.12); color: var(--warn); border: 1px solid rgba(247, 185, 85, 0.4); }
+  .pill.next   { background: rgba(124, 140, 255, 0.12); color: var(--accent); border: 1px solid rgba(124, 140, 255, 0.35); }
+  .pill.plan   { background: rgba(138, 147, 185, 0.12); color: var(--plan); border: 1px solid rgba(138, 147, 185, 0.35); }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; font-size: 14px; margin: 10px 0 14px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+  th { color: var(--text-dim); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
+  tr:hover td { background: rgba(124,140,255,0.04); }
+
+  /* Architecture diagram */
+  .arch {
+    background: linear-gradient(180deg, #0d1429 0%, #0b1124 100%);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 28px 24px;
+    margin: 18px 0;
+  }
+  .arch-row { display: flex; gap: 14px; margin-bottom: 14px; align-items: stretch; }
+  .arch-row:last-child { margin-bottom: 0; }
+  .arch-box {
+    flex: 1;
+    background: var(--bg-card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 12px 14px;
+    text-align: center;
+    position: relative;
+  }
+  .arch-box.gateway { border-color: var(--accent); }
+  .arch-box.memory  { border-color: var(--accent-2); }
+  .arch-box.external { background: var(--bg-elev); border-style: dashed; }
+  .arch-box .role { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; }
+  .arch-box .name { font-weight: 700; margin: 4px 0; font-size: 14px; }
+  .arch-box .desc { font-size: 12px; color: var(--text-soft); }
+  .arch-arrow {
+    text-align: center;
+    font-size: 18px; color: var(--accent);
+    margin: 4px 0;
+  }
+  .legend {
+    display: flex; gap: 16px;
+    font-size: 12px; color: var(--text-dim);
+    margin-top: 12px;
+  }
+  .legend-dot {
+    display: inline-block;
+    width: 10px; height: 10px; border-radius: 50%;
+    margin-right: 6px; vertical-align: middle;
+  }
+
+  /* Steps */
+  .steps { counter-reset: step; padding: 0; list-style: none; margin: 12px 0; }
+  .steps > li {
+    counter-increment: step;
+    padding: 16px 18px 16px 60px;
+    background: var(--bg-card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    margin-bottom: 10px;
+    position: relative;
+  }
+  .steps > li::before {
+    content: counter(step);
+    position: absolute;
+    left: 16px; top: 16px;
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: #0b1020;
+    font-weight: 700;
+    display: grid; place-items: center;
+    font-size: 14px;
+  }
+  .steps .step-title {
+    font-weight: 700; font-size: 15px; color: var(--text);
+    margin-bottom: 4px;
+  }
+
+  /* Demo flow */
+  .flow-card {
+    background: var(--bg-card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 16px 18px;
+    margin-bottom: 12px;
+  }
+  .flow-prompt {
+    background: linear-gradient(90deg, rgba(124,140,255,0.10), transparent);
+    border-left: 3px solid var(--accent);
+    padding: 8px 12px;
+    font-style: italic;
+    color: var(--text);
+    margin: 4px 0 10px;
+    border-radius: 0 6px 6px 0;
+  }
+  .flow-trace {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 12.5px;
+    color: var(--text-dim);
+    background: var(--bg-elev);
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin: 8px 0;
+  }
+  .flow-trace span.t { color: var(--accent-2); }
+
+  /* Pricing tiers */
+  .tiers { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin: 14px 0; }
+  .tier {
+    background: var(--bg-card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 22px;
+  }
+  .tier.feat { border-color: var(--accent); position: relative; transform: translateY(-4px); }
+  .tier.feat::before {
+    content: "Recommended";
+    position: absolute; top: -10px; left: 22px;
+    background: var(--accent); color: #0b1020;
+    padding: 2px 10px; border-radius: 999px;
+    font-size: 11px; font-weight: 700;
+  }
+  .tier-name { font-size: 12px; text-transform: uppercase; letter-spacing: 1.2px; color: var(--text-dim); }
+  .tier-price { font-size: 32px; font-weight: 700; margin: 8px 0 4px; }
+  .tier-price span { font-size: 14px; font-weight: 400; color: var(--text-dim); }
+  .tier-feats { list-style: none; padding: 12px 0 0; }
+  .tier-feats li {
+    padding: 6px 0; font-size: 13px; color: var(--text-soft);
+    border-top: 1px solid var(--line-soft);
+  }
+  .tier-feats li::before { content: "✓ "; color: var(--good); margin-right: 4px; }
+
+  /* Layered diagram */
+  .layers .layer {
+    background: var(--bg-card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 14px 18px;
+    margin-bottom: 8px;
+    display: flex; align-items: center; gap: 18px;
+  }
+  .layer-name { font-weight: 700; min-width: 160px; }
+  .layer-tech { color: var(--text-dim); font-size: 13px; flex: 1; font-family: ui-monospace, monospace; }
+  .layer-icon {
+    width: 36px; height: 36px; border-radius: 8px;
+    display: grid; place-items: center;
+    font-weight: 700;
+    background: rgba(124,140,255,0.12);
+    color: var(--accent);
+  }
+
+  /* Footer */
+  .footer {
+    margin-top: 56px;
+    padding-top: 24px;
+    border-top: 1px solid var(--line);
+    color: var(--text-dim);
+    font-size: 12px;
+  }
+
+  /* Print */
+  @media print {
+    .sidebar { display: none; }
+    .app { grid-template-columns: 1fr; }
+    main { padding: 24px; }
+    .panel { display: block !important; page-break-after: always; }
+    .panel:last-child { page-break-after: auto; }
+  }
+
+  /* Callouts */
+  .callout {
+    border-left: 3px solid var(--accent-warm);
+    background: rgba(247, 185, 85, 0.06);
+    padding: 12px 16px;
+    margin: 14px 0;
+    border-radius: 0 8px 8px 0;
+    color: var(--text-soft);
+    font-size: 14px;
+  }
+  .callout strong { color: var(--accent-warm); }
+
+  .quote {
+    border-left: 3px solid var(--accent-2);
+    background: rgba(52, 214, 195, 0.05);
+    padding: 14px 18px;
+    margin: 14px 0;
+    border-radius: 0 8px 8px 0;
+    font-size: 15px;
+    color: var(--text);
+    font-style: italic;
+  }
+
+  .kbd {
+    display: inline-block;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-family: ui-monospace, monospace;
+    font-size: 12px;
+    color: var(--text);
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">S</div>
+      <div>
+        <div class="brand-title">SafeClaw</div>
+        <div class="brand-sub">Client Demo · v1</div>
+      </div>
+    </div>
+
+    <div class="tab-group">
+      <div class="tab-group-label">The Pitch</div>
+      <button class="tab active" data-target="vision"><span class="tab-num">01</span> Vision</button>
+      <button class="tab" data-target="value"><span class="tab-num">02</span> Why this, why now</button>
+    </div>
+
+    <div class="tab-group">
+      <div class="tab-group-label">The System</div>
+      <button class="tab" data-target="architecture"><span class="tab-num">03</span> Architecture</button>
+      <button class="tab" data-target="memory"><span class="tab-num">04</span> Memory & Learning</button>
+      <button class="tab" data-target="security"><span class="tab-num">05</span> Security & Trust</button>
+    </div>
+
+    <div class="tab-group">
+      <div class="tab-group-label">The Demo</div>
+      <button class="tab" data-target="setup"><span class="tab-num">06</span> Setup &amp; Onboarding</button>
+      <button class="tab" data-target="demo"><span class="tab-num">07</span> Live Demo Flow</button>
+      <button class="tab" data-target="capabilities"><span class="tab-num">08</span> Today's Capabilities</button>
+    </div>
+
+    <div class="tab-group">
+      <div class="tab-group-label">The Future</div>
+      <button class="tab" data-target="roadmap"><span class="tab-num">09</span> Roadmap</button>
+      <button class="tab" data-target="scaling"><span class="tab-num">10</span> Scaling Path</button>
+      <button class="tab" data-target="qa"><span class="tab-num">11</span> Q&amp;A Prep</button>
+    </div>
+  </aside>
+
+  <main>
+
+  <!-- ================= 01 VISION ================= -->
+  <section class="panel active" id="vision">
+    <div class="eyebrow">01 · Vision</div>
+    <h1>An AI assistant that actually knows you.</h1>
+    <p class="lede">SafeClaw is a personal AI assistant that runs on your own server, learns from your real email history, and acts on your behalf across Gmail, Drive, Slack, and Telegram — without ever sending your data to a third party for training.</p>
+
+    <div class="grid cols-3" style="margin-top:32px">
+      <div class="card">
+        <div class="card-label">Yours</div>
+        <div class="card-num">100%</div>
+        <div class="card-sub">runs on your VPS — your data, your tokens, your domain.</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Live now</div>
+        <div class="card-num">92</div>
+        <div class="card-sub">contacts auto-learned from this account&#39;s last 7 days.</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Trust split</div>
+        <div class="card-num">2</div>
+        <div class="card-sub">agents — Reader (read-only) + Actor (write, no inbox access).</div>
+      </div>
+    </div>
+
+    <h2>What makes this different</h2>
+    <div class="grid cols-2">
+      <div class="card">
+        <h3 style="margin-top:0">It actually has memory</h3>
+        <p>Most AI assistants forget you between sessions. SafeClaw builds a persistent <em>brain</em> on disk — every contact, company, meeting, and attachment becomes a markdown file the assistant references on every question.</p>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0">It runs on your VPS</h3>
+        <p>One Hostinger box per customer. No multi-tenant database holding everyone&#39;s mail. If you cancel, you take the disk image with you.</p>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0">Read/write are separated</h3>
+        <p>The agent that reads your inbox cannot send mail. The agent that drafts replies cannot read your inbox. A compromised agent can&#39;t do both at once.</p>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0">No OAuth tokens on our box</h3>
+        <p>Composio holds the Gmail / Drive / Slack tokens. SafeClaw calls Composio over MCP, never touches the raw tokens. We can&#39;t exfiltrate what we don&#39;t hold.</p>
+      </div>
+    </div>
+
+    <div class="quote" style="margin-top:24px">
+      &ldquo;The assistant knew John was my account manager at Acme, listed every proposal he sent, and then offered to check today&#39;s inbox for new threads — all from a Telegram message, in 4 seconds.&rdquo;
+    </div>
+  </section>
+
+  <!-- ================= 02 VALUE ================= -->
+  <section class="panel" id="value">
+    <div class="eyebrow">02 · Why this, why now</div>
+    <h1>The market gap.</h1>
+    <p class="lede">Cloud AI assistants are powerful but undifferentiated. Your competitors get the same answers. The defensible moat is <strong>your private context</strong> — and that lives in your own files, not a vendor&#39;s database.</p>
+
+    <h2>Three forces converging</h2>
+    <div class="grid cols-3">
+      <div class="card">
+        <h3 style="margin-top:0">📨 Inbox is the source of truth</h3>
+        <p>Every commercial relationship leaves a trail in email. Anyone who can index that trail has an unfair advantage — and most assistants can&#39;t, because cloud providers won&#39;t mount your IMAP.</p>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0">🔓 OAuth-as-MCP is new</h3>
+        <p>Composio (and similar) finally let agents call Gmail / Drive / Slack on your behalf without holding raw tokens. Two years ago this required custom OAuth servers per integration.</p>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0">💸 Cloud LLM costs collapsed</h3>
+        <p>Kimi K2.5 cloud and similar agentic models are now <strong>~$0.02</strong> per 1K tokens. A power user&#39;s monthly draft volume costs less than a coffee.</p>
+      </div>
+    </div>
+
+    <h2>The pitch in one sentence</h2>
+    <div class="quote">
+      You give us a Gmail OAuth and a VPS — we give you back an assistant that knows everyone you talk to, every project you&#39;re running, and how to draft email in your voice — for $X/month, deployed in 15 minutes.
+    </div>
+
+    <h2>Why now, specifically</h2>
+    <table>
+      <tr>
+        <th>Constraint that used to block this</th>
+        <th>What changed</th>
+      </tr>
+      <tr>
+        <td>OAuth integrations required custom backends per app</td>
+        <td>Composio MCP — one HTTPS endpoint per customer covers Gmail / Drive / Slack / Notion / Linear / 200+ tools</td>
+      </tr>
+      <tr>
+        <td>Agentic LLMs hallucinated tool calls</td>
+        <td>Kimi K2.5 + similar do reliable multi-step routing — production-grade today</td>
+      </tr>
+      <tr>
+        <td>Per-customer VPS too expensive</td>
+        <td>Hostinger / Hetzner: $4–8/month for a 4GB instance, cheaper than the LLM bill</td>
+      </tr>
+      <tr>
+        <td>Vector search required a managed service</td>
+        <td>pgvector ships with Postgres — runs in the same container as the rest of the stack</td>
+      </tr>
+    </table>
+  </section>
+
+  <!-- ================= 03 ARCHITECTURE ================= -->
+  <section class="panel" id="architecture">
+    <div class="eyebrow">03 · Architecture</div>
+    <h1>The full stack, end to end.</h1>
+    <p class="lede">Nine services, one Docker Compose file, one VPS per customer. Reader and Actor are deliberately separated so a prompt-injection attack can&#39;t escalate from inbox-read to outbound-send.</p>
+
+    <div class="arch">
+      <div class="arch-row">
+        <div class="arch-box external">
+          <div class="role">User</div>
+          <div class="name">📱 Telegram / Slack</div>
+          <div class="desc">primary chat surface</div>
+        </div>
+        <div class="arch-box external">
+          <div class="role">External SaaS</div>
+          <div class="name">Composio MCP</div>
+          <div class="desc">holds OAuth · Gmail/Drive/Slack/200+</div>
+        </div>
+      </div>
+      <div class="arch-arrow">↕ HTTPS / MCP-over-HTTP</div>
+      <div class="arch-row">
+        <div class="arch-box gateway">
+          <div class="role">Agent · Read</div>
+          <div class="name">Hermes Reader</div>
+          <div class="desc">read-only · ingest mail · build observations</div>
+        </div>
+        <div class="arch-box gateway">
+          <div class="role">Agent · Write</div>
+          <div class="name">Hermes Actor</div>
+          <div class="desc">drafts · Drive uploads · user chat (Kimi K2.5)</div>
+        </div>
+      </div>
+      <div class="arch-arrow">↓</div>
+      <div class="arch-row">
+        <div class="arch-box memory">
+          <div class="role">Memory · files</div>
+          <div class="name">/brain</div>
+          <div class="desc">PARA · 11+ folders · markdown</div>
+        </div>
+        <div class="arch-box memory">
+          <div class="role">Memory · DB</div>
+          <div class="name">postgres-obs</div>
+          <div class="desc">entities · facts · style samples · pgvector</div>
+        </div>
+        <div class="arch-box">
+          <div class="role">Tasks</div>
+          <div class="name">postgres-tasks</div>
+          <div class="desc">tasks-api-mcp · postgrest</div>
+        </div>
+      </div>
+      <div class="arch-arrow">↓</div>
+      <div class="arch-row">
+        <div class="arch-box">
+          <div class="role">Vector</div>
+          <div class="name">embedder</div>
+          <div class="desc">all-MiniLM-L6-v2 · auto-embeds new rows</div>
+        </div>
+        <div class="arch-box">
+          <div class="role">Bridge</div>
+          <div class="name">brain-api-mcp</div>
+          <div class="desc">brain_recall · brain_get_soul</div>
+        </div>
+        <div class="arch-box">
+          <div class="role">Onboarding</div>
+          <div class="name">onboarding webapp</div>
+          <div class="desc">4-step Flask install wizard</div>
+        </div>
+      </div>
+      <div class="legend">
+        <span><span class="legend-dot" style="background:var(--accent)"></span>Hermes agent runtime</span>
+        <span><span class="legend-dot" style="background:var(--accent-2)"></span>Persistent memory</span>
+        <span><span class="legend-dot" style="background:var(--text-dim)"></span>Supporting service</span>
+      </div>
+    </div>
+
+    <h2>The 9 services, in one table</h2>
+    <table>
+      <tr>
+        <th>Service</th><th>Role</th><th>Tech</th><th>Status</th>
+      </tr>
+      <tr>
+        <td><code>hermes-reader</code></td>
+        <td>Inbox ingest agent (read-only)</td>
+        <td>Hermes 0.4 · Composio Reader MCP</td>
+        <td><span class="pill live">Live</span></td>
+      </tr>
+      <tr>
+        <td><code>hermes-actor</code></td>
+        <td>Chat-facing agent (drafts, Drive, Slack send)</td>
+        <td>Hermes 0.4 · Kimi K2.5 cloud · Composio Actor MCP</td>
+        <td><span class="pill live">Live</span></td>
+      </tr>
+      <tr>
+        <td><code>postgres-obs</code></td>
+        <td>Observation store (entities, facts, style)</td>
+        <td>Postgres 16 + pgvector</td>
+        <td><span class="pill live">Live</span></td>
+      </tr>
+      <tr>
+        <td><code>postgres-tasks</code></td>
+        <td>Task &amp; reminder queue</td>
+        <td>Postgres 16</td>
+        <td><span class="pill live">Live</span></td>
+      </tr>
+      <tr>
+        <td><code>postgrest</code></td>
+        <td>Auto-generated REST over Postgres</td>
+        <td>PostgREST 12</td>
+        <td><span class="pill live">Live</span></td>
+      </tr>
+      <tr>
+        <td><code>embedder</code></td>
+        <td>Auto-embeds new rows for semantic search</td>
+        <td>Python · sentence-transformers</td>
+        <td><span class="pill live">Live</span></td>
+      </tr>
+      <tr>
+        <td><code>brain-api-mcp</code></td>
+        <td>MCP bridge so agents can query brain via tools</td>
+        <td>Node 20 · MCP SDK</td>
+        <td><span class="pill live">Live</span></td>
+      </tr>
+      <tr>
+        <td><code>tasks-api-mcp</code></td>
+        <td>MCP bridge for task management</td>
+        <td>Node 20 · MCP SDK</td>
+        <td><span class="pill live">Live</span></td>
+      </tr>
+      <tr>
+        <td><code>onboarding</code></td>
+        <td>Self-serve install wizard at https://&lt;customer&gt;.safeclaw.app</td>
+        <td>Flask · SSE progress</td>
+        <td><span class="pill live">Live</span></td>
+      </tr>
+    </table>
+
+    <h2>Data flow on a typical &ldquo;tell me about John&rdquo; query</h2>
+    <ol>
+      <li>User types message in Telegram → Telegram webhook → <code>hermes-actor</code></li>
+      <li>Actor system prompt forces brain-first protocol → calls <code>search_files</code> tool against <code>/opt/brain/People/</code></li>
+      <li>Found <code>john-at-acme-com.md</code> → calls <code>read_file</code></li>
+      <li>File contains contact frequency, company, attachments → Kimi summarizes</li>
+      <li>If user asked for fresh info, Actor announces fallback then calls Composio <code>GMAIL_FETCH_EMAILS</code></li>
+      <li>Final natural-language reply sent back to Telegram</li>
+    </ol>
+  </section>
+
+  <!-- ================= 04 MEMORY ================= -->
+  <section class="panel" id="memory">
+    <div class="eyebrow">04 · Memory &amp; learning</div>
+    <h1>The brain — what makes this stick.</h1>
+    <p class="lede">Most assistants forget you between conversations. SafeClaw builds a persistent file-system brain that grows over time, organized PARA-style (Projects · Areas · Resources · Archive) plus People and Companies.</p>
+
+    <h2>Brain folder layout</h2>
+    <div class="layers">
+      <div class="layer"><div class="layer-icon">🧬</div><div class="layer-name">/0 - Identity/</div><div class="layer-tech">SOUL.md · INTELLECTUAL BLUEPRINT.md · DECISION MAKING PRINCIPLES.md</div></div>
+      <div class="layer"><div class="layer-icon">🎯</div><div class="layer-name">/1 - Aspirations/</div><div class="layer-tech">long-term goals, vision docs</div></div>
+      <div class="layer"><div class="layer-icon">📊</div><div class="layer-name">/2 - Live Logs/</div><div class="layer-tech">bootstrap reports, observation logs (auto)</div></div>
+      <div class="layer"><div class="layer-icon">📓</div><div class="layer-name">/3 - Daily Journal/</div><div class="layer-tech">daily entries, reflections</div></div>
+      <div class="layer"><div class="layer-icon">🤝</div><div class="layer-name">/4 - Meetings/</div><div class="layer-tech">YYYY-MM-DD - &lt;topic&gt;.md · interview notes</div></div>
+      <div class="layer"><div class="layer-icon">🚀</div><div class="layer-name">/5 - Projects/</div><div class="layer-tech">active project notes</div></div>
+      <div class="layer"><div class="layer-icon">🗂️</div><div class="layer-name">/6 - Areas/</div><div class="layer-tech">ongoing areas of life/work</div></div>
+      <div class="layer"><div class="layer-icon">📚</div><div class="layer-name">/7 - Resources/</div><div class="layer-tech">reference material, snippets</div></div>
+      <div class="layer"><div class="layer-icon">⭐</div><div class="layer-name">/8 - North Star/</div><div class="layer-tech">guiding direction docs</div></div>
+      <div class="layer"><div class="layer-icon">⚙️</div><div class="layer-name">/9 - Operations/</div><div class="layer-tech">runbooks, SOPs</div></div>
+      <div class="layer"><div class="layer-icon">👥</div><div class="layer-name">/People/</div><div class="layer-tech">one .md per contact · slug = &lt;name&gt;-at-&lt;domain-com&gt;.md · 92 today</div></div>
+      <div class="layer"><div class="layer-icon">🏢</div><div class="layer-name">/Companies/</div><div class="layer-tech">one .md per sender domain · 73 today</div></div>
+    </div>
+
+    <h2>What gets auto-learned from email</h2>
+    <div class="grid cols-2">
+      <div class="card">
+        <h3 style="margin-top:0">From every inbound message</h3>
+        <ul>
+          <li>Sender → upsert to <code>/People/&lt;slug&gt;.md</code> + entities table</li>
+          <li>Sender domain → upsert to <code>/Companies/&lt;domain&gt;.md</code></li>
+          <li>Contact frequency, first seen, last contact</li>
+          <li>Attachment metadata: filename, MIME, size, date, subject</li>
+          <li>Subject + body for the embedder to vectorize</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0">From every sent message</h3>
+        <ul>
+          <li>Body sample → <code>style_samples</code> table</li>
+          <li>Recipient + relationship label (close/regular/cold)</li>
+          <li>Topic category (financial/legal/people/marketing/other)</li>
+          <li>Used for few-shot prompting when drafting replies in your voice</li>
+        </ul>
+      </div>
+    </div>
+
+    <h2>Live numbers from this account</h2>
+    <div class="grid cols-4">
+      <div class="card hi">
+        <div class="card-label">People</div>
+        <div class="card-num">92</div>
+        <div class="card-sub">contacts, last 7 days</div>
+      </div>
+      <div class="card hi">
+        <div class="card-label">Companies</div>
+        <div class="card-num">73</div>
+        <div class="card-sub">distinct sender domains</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Meetings</div>
+        <div class="card-num">5</div>
+        <div class="card-sub">interview &amp; call notes</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Attachments</div>
+        <div class="card-num">14</div>
+        <div class="card-sub">tracked w/ filename + date</div>
+      </div>
+    </div>
+
+    <h2>How memory stays fresh</h2>
+    <pre>┌─ host cron (every 30 min) ────────────────────────────────────┐
+│  scripts/brain-sync.sh                                         │
+│    → bootstrap-brain.sh --days 1                               │
+│        → Composio Reader MCP · GMAIL_FETCH_EMAILS              │
+│        → watermark-filtered: only newer than last successful   │
+│        → upsert People/, Companies/, entities, attachments     │
+└────────────────────────────────────────────────────────────────┘
+        ↓
+┌─ embedder (every 30 sec inside container) ────────────────────┐
+│  polls postgres-obs for rows missing embeddings                │
+│  → vectorizes via all-MiniLM-L6-v2                             │
+│  → writes 384-dim vectors via pgvector                         │
+└────────────────────────────────────────────────────────────────┘</pre>
+  </section>
+
+  <!-- ================= 05 SECURITY ================= -->
+  <section class="panel" id="security">
+    <div class="eyebrow">05 · Security &amp; trust</div>
+    <h1>Why a paranoid CISO sleeps fine.</h1>
+
+    <h2>Trust split — Reader vs Actor</h2>
+    <div class="callout">
+      <strong>The core idea:</strong> never let one agent both <em>read untrusted input</em> AND <em>send things outside</em>. A prompt-injection attack in an inbound email can hijack a Reader, but the Reader has no send tools to abuse.
+    </div>
+    <table>
+      <tr>
+        <th>Capability</th><th>Reader</th><th>Actor</th>
+      </tr>
+      <tr><td>Read inbox via Composio</td><td>✅</td><td>fallback only</td></tr>
+      <tr><td>Read /opt/brain/</td><td>✅</td><td>✅</td></tr>
+      <tr><td>Write to postgres-obs</td><td>✅</td><td>—</td></tr>
+      <tr><td>Send Gmail draft</td><td>—</td><td>✅ (drafts only · v1)</td></tr>
+      <tr><td>Send Slack message</td><td>—</td><td>✅</td></tr>
+      <tr><td>Upload to Drive</td><td>—</td><td>✅</td></tr>
+      <tr><td>Receives untrusted email bodies in context</td><td>✅ (wrapped in &lt;untrusted_email&gt;)</td><td>—</td></tr>
+    </table>
+
+    <h2>OAuth never lives on our box</h2>
+    <p>SafeClaw never holds Gmail / Drive / Slack tokens. Composio holds them and exposes a per-customer MCP HTTP endpoint with a strict toolkit allowlist. We pass an API key + user ID; Composio enforces the scope.</p>
+    <pre>customer @ Composio   → Authorize Gmail (read + draft)
+                      → Authorize Drive (file scope)
+                      → Authorize Slack (bot scope)
+                            ↓
+SafeClaw VPS receives:
+  COMPOSIO_API_KEY=ak_...
+  COMPOSIO_READER_MCP_URL=https://backend.composio.dev/v3/mcp/&lt;reader-id&gt;/mcp?user_id=...
+  COMPOSIO_ACTOR_MCP_URL =https://backend.composio.dev/v3/mcp/&lt;actor-id&gt;/mcp?user_id=...
+            ↓
+If SafeClaw VPS is breached → attacker gets the MCP URLs but not the OAuth tokens.
+Composio toolkit allowlist still blocks anything outside the configured scope.</pre>
+
+    <h2>Other layers</h2>
+    <div class="grid cols-2">
+      <div class="card">
+        <h3 style="margin-top:0">Untrusted-input wrapping</h3>
+        <p>Every inbound email body gets wrapped in <code>&lt;untrusted_email&gt;</code> tags before being shown to the Reader. The system prompt forbids treating wrapped content as instructions.</p>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0">Drafts only · v1</h3>
+        <p>Phase 1 ships drafts only — Actor never auto-sends. Auto-send unlocks after a 30-day clean-run gate (configurable per customer).</p>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0">Egress allowlist</h3>
+        <p>Host iptables rules pin egress to <code>*.googleapis.com</code>, <code>*.slack.com</code>, <code>backend.composio.dev</code>, and <code>api.telegram.org</code>. Compromised container can&#39;t exfiltrate to arbitrary IPs.</p>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0">Per-customer VPS</h3>
+        <p>No shared database. Customer A&#39;s mail never touches the same disk as Customer B&#39;s. Cancel anytime, take the snapshot home.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 06 SETUP ================= -->
+  <section class="panel" id="setup">
+    <div class="eyebrow">06 · Setup &amp; onboarding</div>
+    <h1>From zero to live in ~15 minutes.</h1>
+    <p class="lede">Customer self-serves through a web wizard. Operator only handles the VPS provisioning and the Composio account-creation pre-step.</p>
+
+    <h2>Operator (you) — one-time per customer</h2>
+    <ol class="steps">
+      <li>
+        <div class="step-title">Spin up a Hostinger VPS</div>
+        Ubuntu 22.04, 4GB RAM minimum. Get the IP, point a subdomain at it.
+      </li>
+      <li>
+        <div class="step-title">Run <code>scripts/provision-vps.sh</code></div>
+        Installs Docker, Caddy, Let&#39;s Encrypt, the local Ollama daemon, and pulls the SafeClaw Docker images from GHCR.
+      </li>
+      <li>
+        <div class="step-title">Hand the customer the install URL</div>
+        e.g. <code>https://acme.safeclaw.app/setup</code>. The Flask onboarding webapp is now ready.
+      </li>
+    </ol>
+
+    <h2>Customer — 4-step web form</h2>
+    <ol class="steps">
+      <li>
+        <div class="step-title">LLM credentials</div>
+        Choose provider (Ollama Cloud · Anthropic · OpenAI/OpenRouter) and paste their API key. Base URL and model are auto-derived behind the scenes.
+      </li>
+      <li>
+        <div class="step-title">Composio integrations</div>
+        Customer has already authorized Gmail / Drive / Slack on Composio (we send a one-page guide). They paste the API key, user ID, and MCP URLs.
+      </li>
+      <li>
+        <div class="step-title">Slack workspace</div>
+        Bot token + admin user ID + channel allowlist for invited employees.
+      </li>
+      <li>
+        <div class="step-title">Telegram bot</div>
+        Bot token from BotFather + their Telegram user ID for direct DMs.
+      </li>
+    </ol>
+
+    <h2>Behind the &ldquo;Submit&rdquo; click — 8 phases</h2>
+    <pre>validating       →  Server-side validation: API keys reachable, perms OK
+env_writing      →  .env file written (whitelist-driven, never echoes secrets)
+secrets          →  init-secrets.sh generates JWTs, postgres passwords
+compose_pull     →  Docker pulls SafeClaw images from GHCR
+compose_up       →  9 containers come up, postgres-obs healthcheck passes
+waiting_health   →  poll docker compose ps until all required services running
+bootstrap        →  bootstrap-brain.sh seeds 90 days of Gmail history
+welcome          →  Slack DM sent to the customer admin with usage tips
+done             →  Customer DMs the Telegram bot · live</pre>
+
+    <p>Progress is streamed back to the browser via Server-Sent Events — the customer sees each phase tick green in real time. Total time: 4–6 minutes (mostly the brain bootstrap).</p>
+  </section>
+
+  <!-- ================= 07 DEMO ================= -->
+  <section class="panel" id="demo">
+    <div class="eyebrow">07 · Live demo flow</div>
+    <h1>What to actually click during the demo.</h1>
+    <p class="lede">Five scenes, ~12 minutes total. Each scene proves a different feature; the order builds confidence (read → reason → write → schedule).</p>
+
+    <div class="flow-card">
+      <h3 style="margin-top:0">Scene 1 · Pure brain recall <span class="pill live" style="margin-left:8px">2 min</span></h3>
+      <div class="flow-prompt">&ldquo;Tell me about John&rdquo;</div>
+      <div class="flow-trace">
+        <span class="t">[brain]</span> search_files pattern=&quot;john&quot; path=&quot;/opt/brain/People/&quot;<br>
+        <span class="t">[brain]</span> read_file /opt/brain/People/john-at-acme-com.md<br>
+        <span class="t">[reply]</span> &ldquo;John is your account manager at Acme (5 emails on file...&rdquo;
+      </div>
+      <p><strong>What you&#39;re proving:</strong> the assistant has persistent memory and uses it without touching Gmail. No latency from Gmail API, no token cost for inbox reads.</p>
+    </div>
+
+    <div class="flow-card">
+      <h3 style="margin-top:0">Scene 2 · Memory + fresh-info fallback <span class="pill live" style="margin-left:8px">2 min</span></h3>
+      <div class="flow-prompt">&ldquo;Any new emails from John this week?&rdquo;</div>
+      <div class="flow-trace">
+        <span class="t">[brain]</span> search_files john → reads People file for context<br>
+        <span class="t">[narrate]</span> &ldquo;John is your account manager at Acme. Pulling today&#39;s inbox...&rdquo;<br>
+        <span class="t">[gmail]</span> GMAIL_FETCH_EMAILS query=&quot;from:john@acme.com newer_than:1d&quot;
+      </div>
+      <p><strong>What you&#39;re proving:</strong> the assistant knows when to fall back to live data — and tells the user before doing it. No silent inbox-reads behind the user&#39;s back.</p>
+    </div>
+
+    <div class="flow-card">
+      <h3 style="margin-top:0">Scene 3 · Cross-folder semantic recall <span class="pill live" style="margin-left:8px">2 min</span></h3>
+      <div class="flow-prompt">&ldquo;Summarize my interview with Andrew Kroeze&rdquo;</div>
+      <div class="flow-trace">
+        <span class="t">[brain]</span> search_files pattern=&quot;Kroeze&quot; path=&quot;/opt/brain/&quot; target=&quot;content&quot;<br>
+        <span class="t">[brain]</span> hits /opt/brain/4 - Meetings/2026-04-14 - Offer Structure....md<br>
+        <span class="t">[reply]</span> structured summary with key takeaways
+      </div>
+      <p><strong>What you&#39;re proving:</strong> the assistant searches the WHOLE brain — not just contacts. Meetings, projects, journals all participate. This is what separates SafeClaw from a contact CRM.</p>
+    </div>
+
+    <div class="flow-card">
+      <h3 style="margin-top:0">Scene 4 · Drafting in your voice <span class="pill partial" style="margin-left:8px">3 min · drafts only</span></h3>
+      <div class="flow-prompt">&ldquo;Draft a reply to John — push the renewal call to next week&rdquo;</div>
+      <div class="flow-trace">
+        <span class="t">[brain]</span> read People file + SOUL.md for tone cues<br>
+        <span class="t">[style]</span> pull 3 past sent samples to similar relationships<br>
+        <span class="t">[gmail]</span> GMAIL_CREATE_EMAIL_DRAFT (drafts folder, not sent)<br>
+        <span class="t">[reply]</span> &ldquo;Draft saved — open in Gmail to review/send.&rdquo;
+      </div>
+      <p><strong>What you&#39;re proving:</strong> the assistant matches the user&#39;s voice. Open the draft in Gmail mid-demo — the user nods or asks for an edit, never has to copy-paste.</p>
+    </div>
+
+    <div class="flow-card">
+      <h3 style="margin-top:0">Scene 5 · Background ingestion <span class="pill live" style="margin-left:8px">3 min</span></h3>
+      <div class="flow-prompt">(no prompt — open Telegram + show <code>tail -f logs/brain-sync.log</code>)</div>
+      <div class="flow-trace">
+        <span class="t">[cron]</span> fires every 30 min<br>
+        <span class="t">[reader]</span> polls Gmail via Composio MCP since last watermark<br>
+        <span class="t">[brain]</span> writes new People + Companies + attachments<br>
+        <span class="t">[embedder]</span> auto-vectorizes new entities for semantic search
+      </div>
+      <p><strong>What you&#39;re proving:</strong> the assistant gets smarter while the customer sleeps. New emails arrive → brain grows → next morning&#39;s questions are better-grounded.</p>
+    </div>
+
+    <h2>Optional Scene 6 — failure mode</h2>
+    <div class="flow-card">
+      <div class="flow-prompt">&ldquo;Who is Beyoncé?&rdquo; (someone NOT in the brain)</div>
+      <p>Bot honestly says <em>&ldquo;I don&#39;t have anything on Beyoncé in your contacts or notes — want me to search the web?&rdquo;</em> — proves it doesn&#39;t hallucinate facts about people it doesn&#39;t know.</p>
+    </div>
+
+    <div class="callout">
+      <strong>Demo prep checklist:</strong> before the call, run <code>bash scripts/brain-sync.sh</code> manually so the brain is fresh. Send yourself one or two test emails with attachments so attachments-in-brain is also live. Have the Telegram chat already open.
+    </div>
+  </section>
+
+  <!-- ================= 08 CAPABILITIES ================= -->
+  <section class="panel" id="capabilities">
+    <div class="eyebrow">08 · Today&#39;s capabilities</div>
+    <h1>What works in production today.</h1>
+
+    <table>
+      <tr><th>Feature</th><th>Status</th><th>Notes</th></tr>
+
+      <tr><td><strong>Gmail ingest</strong> (last N days)</td><td><span class="pill live">Live</span></td><td>Composio MCP · watermark-incremental · 30-min cron</td></tr>
+      <tr><td><strong>Auto contact graph</strong></td><td><span class="pill live">Live</span></td><td>92 People + 73 Companies on this account</td></tr>
+      <tr><td><strong>Attachment metadata in brain</strong></td><td><span class="pill live">Live</span></td><td>filename + MIME + size + subject + date per attachment</td></tr>
+      <tr><td><strong>Memory-first chat protocol</strong></td><td><span class="pill live">Live</span></td><td>Kimi K2.5 routes brain-first, Gmail as announced fallback</td></tr>
+      <tr><td><strong>Cross-folder semantic search</strong></td><td><span class="pill live">Live</span></td><td>People · Companies · Meetings · Projects · Daily Journal · ...</td></tr>
+      <tr><td><strong>Telegram chat interface</strong></td><td><span class="pill live">Live</span></td><td>Actor bound to Telegram bot · plain-English narration · no raw tool names</td></tr>
+      <tr><td><strong>Slack chat interface</strong></td><td><span class="pill live">Live</span></td><td>same Actor · approval cards in <code>#safeclaw-review</code> for routine actions</td></tr>
+      <tr><td><strong>Gmail drafts in your voice</strong></td><td><span class="pill partial">Partial</span></td><td>drafts only · auto-send gated behind 30-day clean run</td></tr>
+      <tr><td><strong>Style learning from sent mail</strong></td><td><span class="pill partial">Partial</span></td><td>style_samples table populated · few-shot wired · needs more samples in this account</td></tr>
+      <tr><td><strong>pgvector semantic recall</strong></td><td><span class="pill live">Live</span></td><td>embedder running · 384-dim · all-MiniLM-L6-v2</td></tr>
+      <tr><td><strong>Self-serve onboarding wizard</strong></td><td><span class="pill live">Live</span></td><td>Flask + SSE · 4-step form · 4–6 min total install</td></tr>
+      <tr><td><strong>Cron-driven incremental sync</strong></td><td><span class="pill live">Live</span></td><td>30 min interval · macOS+Linux portable lock · logs/brain-sync.log</td></tr>
+      <tr><td><strong>Drive upload pipeline</strong></td><td><span class="pill partial">Code complete</span></td><td>blocked on Composio toolkit enabling <code>GMAIL_FETCH_ATTACHMENT</code> — 1-click fix in dashboard</td></tr>
+      <tr><td><strong>Trust split (Reader vs Actor)</strong></td><td><span class="pill live">Live</span></td><td>separate containers, separate MCP toolkits, separate telegram polling</td></tr>
+    </table>
+
+    <h2>What you can demo with confidence today</h2>
+    <ul>
+      <li>Telegram-driven Q&amp;A about anyone the user emails with</li>
+      <li>Cross-folder recall (meetings, projects, journal)</li>
+      <li>Drafted Gmail replies in the user&#39;s voice</li>
+      <li>Slack posts via Actor (approval card flow)</li>
+      <li>Background brain growth (cron sync, attachment capture)</li>
+      <li>Self-serve onboarding flow (record a screencast or do it live)</li>
+    </ul>
+  </section>
+
+  <!-- ================= 09 ROADMAP ================= -->
+  <section class="panel" id="roadmap">
+    <div class="eyebrow">09 · Roadmap</div>
+    <h1>What ships next.</h1>
+
+    <h2>Q3 2026 · Next 6 weeks</h2>
+    <div class="grid cols-2">
+      <div class="card">
+        <h3 style="margin-top:0"><span class="pill next">Next</span> Drive auto-archive of attachments</h3>
+        <p>Code already written. Unblocked by enabling <code>GMAIL_FETCH_ATTACHMENT</code> in Composio toolkit. Folder layout: <code>SafeClaw Inbox/&lt;YYYY-MM&gt;/&lt;sender-domain&gt;/&lt;file&gt;</code>. People file gets the Drive link inline.</p>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0"><span class="pill next">Next</span> OCR + content extraction</h3>
+        <p>PDF and image attachments → text extraction (pdftotext + Tesseract / vision LLM) → searchable in brain. Bot can answer &quot;what was in the invoice from Stripe?&quot;</p>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0"><span class="pill next">Next</span> Auto-send graduation</h3>
+        <p>30-day clean-run gate: if no draft was edited by the user before send during a 30-day window, the customer can flip <code>auto_send_enabled=true</code>. Phase 1 → Phase 2.</p>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0"><span class="pill next">Next</span> Calendar integration</h3>
+        <p>Composio Google Calendar tools enabled on Actor. &ldquo;Schedule a follow-up with John Tuesday at 3pm&rdquo; → creates the event, drafts the invite.</p>
+      </div>
+    </div>
+
+    <h2>Q4 2026 · Larger initiatives</h2>
+    <div class="grid cols-2">
+      <div class="card">
+        <h3 style="margin-top:0"><span class="pill plan">Q4</span> Real-time email triggers</h3>
+        <p>Replace 30-min cron with Composio webhook triggers. Reader processes new mail within seconds of arrival → near-real-time critical-mail alerts.</p>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0"><span class="pill plan">Q4</span> Daily morning briefing</h3>
+        <p>Cron-fired summary at 7am: critical inbox · today&#39;s calendar · open tasks · pending drafts. Delivered to Telegram.</p>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0"><span class="pill plan">Q4</span> Voice input</h3>
+        <p>Telegram voice-note → Whisper transcription → Actor turn. Drive-time Q&amp;A with the assistant.</p>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0"><span class="pill plan">Q4</span> Notion / Linear / Asana</h3>
+        <p>Composio already supports these — add them to the Actor toolkit allowlist. &ldquo;Create a Linear ticket for this thread&rdquo; works out of the box.</p>
+      </div>
+    </div>
+
+    <h2>2027 · The bigger swings</h2>
+    <div class="grid cols-2">
+      <div class="card">
+        <h3 style="margin-top:0"><span class="pill plan">2027</span> Multi-employee per workspace</h3>
+        <p>One VPS · multiple boss accounts · shared brain root with per-user identity overlays. The assistant can route &ldquo;send this to legal&rdquo; correctly because it knows who legal is.</p>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0"><span class="pill plan">2027</span> Local-only mode</h3>
+        <p>Swap Composio MCP for direct OAuth on the customer&#39;s VPS for clients who refuse any third-party token holder. Heavier ops burden, premium tier.</p>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0"><span class="pill plan">2027</span> Voice-cloning replies</h3>
+        <p>Train a small per-customer LoRA on their style_samples to draft in their voice without needing few-shot — drops draft latency to ~2s and improves match.</p>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0"><span class="pill plan">2027</span> Browser-use mode</h3>
+        <p>For workflows Composio doesn&#39;t cover (legacy SaaS without APIs), Actor drives a headless browser. Already works — just behind a feature flag.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 10 SCALING ================= -->
+  <section class="panel" id="scaling">
+    <div class="eyebrow">10 · Scaling path</div>
+    <h1>Where this goes — full-blown personal AI.</h1>
+    <p class="lede">Today: an inbox-grounded chat assistant. Tomorrow: a digital chief of staff. The path is incremental — every step ships value on its own.</p>
+
+    <h2>Three horizons</h2>
+    <div class="grid cols-3">
+      <div class="card">
+        <h3 style="margin-top:0">Horizon 1 · Now</h3>
+        <p><strong>Conversational memory.</strong></p>
+        <ul>
+          <li>Ask anything about anyone you email with</li>
+          <li>Draft replies in your voice</li>
+          <li>Cross-folder semantic search</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0">Horizon 2 · 6 months</h3>
+        <p><strong>Proactive assistant.</strong></p>
+        <ul>
+          <li>Morning briefing in Telegram</li>
+          <li>Real-time critical-mail alerts</li>
+          <li>Auto-archives Drive · auto-files invoices</li>
+          <li>Schedules &amp; declines on your behalf</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0">Horizon 3 · 12-18 months</h3>
+        <p><strong>Digital chief of staff.</strong></p>
+        <ul>
+          <li>Multi-channel: Slack · Email · Calendar · Notion · CRM</li>
+          <li>Auto-send (after clean-run gate)</li>
+          <li>Manages contractors / employees as sub-agents</li>
+          <li>Voice-first interface (drive-time Q&amp;A)</li>
+        </ul>
+      </div>
+    </div>
+
+    <h2>Per-customer scaling — single VPS limits</h2>
+    <table>
+      <tr><th>Resource</th><th>Today (4GB VPS)</th><th>Bottleneck at</th><th>Mitigation</th></tr>
+      <tr><td>Brain folder size</td><td>~50MB / 1000 contacts</td><td>~10GB / 200K contacts</td><td>archive cold contacts to S3-compatible storage</td></tr>
+      <tr><td>postgres-obs rows</td><td>~5K rows</td><td>~10M rows on 4GB</td><td>upgrade to 8GB tier · add read replica</td></tr>
+      <tr><td>Embedder throughput</td><td>~100 rows/sec</td><td>~10K rows/sec</td><td>batch + GPU node when needed</td></tr>
+      <tr><td>Telegram messages/day</td><td>~200/day comfortable</td><td>~5K/day on Kimi K2.5 cloud cost</td><td>route low-stakes msgs to a smaller local model</td></tr>
+    </table>
+
+    <h2>Operator scaling — multi-customer fleet</h2>
+    <ol>
+      <li><strong>1–10 customers:</strong> manual VPS provision per customer, manual Composio account setup. Today.</li>
+      <li><strong>10–50 customers:</strong> Hostinger API automation — provision a VPS, run <code>provision-vps.sh</code>, send onboarding URL. Half a day per onboarding → 30 min per onboarding.</li>
+      <li><strong>50–500 customers:</strong> Terraform + a control-plane app that runs the whole flow + bills monthly. <code>git push</code> to the SafeClaw repo triggers a fleet-wide upgrade.</li>
+      <li><strong>500+ customers:</strong> Kubernetes cluster with one namespace per customer. Cheaper than VPS per customer at scale, still preserves the &ldquo;your data, your namespace&rdquo; promise.</li>
+    </ol>
+
+    <h2>The data network effect</h2>
+    <div class="callout">
+      <strong>Each new customer doesn&#39;t make the next customer&#39;s assistant smarter</strong> — and that&#39;s deliberate. Customer brains never mix. The product is &ldquo;your assistant on your data&rdquo;, not &ldquo;our assistant on everyone&#39;s data&rdquo;. Trust is the moat, not aggregated training data.
+    </div>
+  </section>
+
+  <!-- ================= 11 Q&A ================= -->
+  <section class="panel" id="qa">
+    <div class="eyebrow">11 · Q&amp;A prep</div>
+    <h1>Anticipated client questions.</h1>
+
+    <div class="grid">
+      <div class="card">
+        <h3 style="margin-top:0">&ldquo;What happens if SafeClaw goes out of business?&rdquo;</h3>
+        <p>Nothing changes for ~30 days. The VPS keeps running. The brain folder + Postgres are open formats — markdown + Postgres dumps. Customer can rsync the disk image off and self-host the same Docker Compose file. We commit to publishing the SafeClaw distribution images under MIT if we ever wind down.</p>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0">&ldquo;Can we run this fully on-prem?&rdquo;</h3>
+        <p>Yes. The same Docker Compose runs on a customer&#39;s own server. The only external dependencies are Composio (OAuth holder) and the LLM provider (Ollama Cloud or Anthropic). Both are swappable.</p>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0">&ldquo;Does my email train your AI?&rdquo;</h3>
+        <p>No. Customer brains are isolated per VPS. There&#39;s no shared dataset, no collective training pipeline. The LLM (Kimi / Anthropic / OpenAI) is third-party; we use their no-train-on-API-traffic terms by default.</p>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0">&ldquo;What if a draft accidentally goes out wrong?&rdquo;</h3>
+        <p>Phase 1 ships drafts only. The Actor cannot send Gmail directly. Auto-send unlocks only after a 30-day clean-run gate, and even then can be disabled per-customer. Slack posts go to <code>#safeclaw-review</code> as approval cards by default.</p>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0">&ldquo;What about prompt injection from a malicious email?&rdquo;</h3>
+        <p>Every inbound body is wrapped in <code>&lt;untrusted_email&gt;</code> tags before reaching the Reader. The Reader has no send tools to abuse. The Actor that does have send tools never sees raw email bodies — only structured observations the Reader has already parsed.</p>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0">&ldquo;How accurate is the contact graph?&rdquo;</h3>
+        <p>Auto-built from From/To/Cc + sent mail. ~95% accuracy on real contacts; the 5% noise is mostly newsletter aliases (<code>noreply@</code>) which the bot is trained to deprioritize. Manual edits to <code>People/&lt;slug&gt;.md</code> stick — the upsert logic is content-aware and won&#39;t overwrite human-added notes.</p>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0">&ldquo;What languages does this support?&rdquo;</h3>
+        <p>Anything Kimi K2.5 / Anthropic supports. Brain content is language-agnostic markdown; the embedder is multilingual. Tested in English; Japanese / Spanish / Hindi work in our internal tests.</p>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0">&ldquo;Why a VPS instead of SaaS multi-tenant?&rdquo;</h3>
+        <p>Trust. A multi-tenant database with everyone&#39;s mail is a single breach away from a catastrophic story. A single VPS being breached affects exactly one customer. The cost difference is small enough to absorb — and worth absorbing to keep the &ldquo;your data, your box&rdquo; promise honest.</p>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0">&ldquo;What&#39;s the minimum viable demo I can give my CFO?&rdquo;</h3>
+        <p>Scenes 1, 2, 4 from the Live Demo Flow tab — about 7 minutes. Show the brain, show the fallback, show a draft. Skip the architecture deep-dive unless asked. The wow moment is the assistant correctly identifying a contact you forgot existed.</p>
+      </div>
+    </div>
+
+    <h2>Quick decision tree for objections</h2>
+    <table>
+      <tr><th>Objection</th><th>Pivot to</th></tr>
+      <tr><td>&ldquo;ChatGPT does this for free&rdquo;</td><td>Show Scene 1 — ChatGPT has zero context about John. We&#39;ve learned 92 contacts in 7 days.</td></tr>
+      <tr><td>&ldquo;Too expensive&rdquo;</td><td>ROI math: 30 min/day saved drafting × $X/hr × 22 working days easily covers monthly cost. Defer specific number to follow-up call.</td></tr>
+      <tr><td>&ldquo;Privacy concerns&rdquo;</td><td>Security &amp; Trust tab — VPS-per-customer, OAuth never on our box, trust split.</td></tr>
+      <tr><td>&ldquo;What if AI hallucinates?&rdquo;</td><td>Drafts-only Phase 1 + 30-day clean-run gate + Scene 6 (won&#39;t fabricate facts about unknown contacts).</td></tr>
+    </table>
+  </section>
+
+  <div class="footer">
+    SafeClaw · personal AI assistant on your own VPS · prepared for client demo · single-file HTML, works offline.
+    Press <span class="kbd">Ctrl/Cmd + P</span> to print as PDF handout.
+  </div>
+
+  </main>
+</div>
+
+<script>
+  const tabs = document.querySelectorAll('.tab');
+  const panels = document.querySelectorAll('.panel');
+  tabs.forEach(t => t.addEventListener('click', () => {
+    const target = t.getAttribute('data-target');
+    tabs.forEach(x => x.classList.toggle('active', x === t));
+    panels.forEach(p => p.classList.toggle('active', p.id === target));
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  }));
+  // Keyboard nav: ←/→ to flip tabs
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    const list = Array.from(tabs);
+    const idx = list.findIndex(t => t.classList.contains('active'));
+    if (idx === -1) return;
+    const next = e.key === 'ArrowRight'
+      ? list[Math.min(idx + 1, list.length - 1)]
+      : list[Math.max(idx - 1, 0)];
+    next.click();
+  });
+</script>
+</body>
+</html>

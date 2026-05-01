@@ -402,11 +402,10 @@ class ComposioReader:
     ) -> dict[str, Any]:
         """Wraps ``GMAIL_FETCH_EMAILS``.
 
-        We pass through the most useful arguments; Composio normalizes the
-        underlying Gmail API parameters. The result is whatever the MCP
-        server returns — typically a dict with ``messages`` and
-        ``nextPageToken``. We pass through unmodified so callers can deal
-        with shape variation defensively.
+        Account selection is baked into the MCP URL via the
+        ``?connected_account_id=`` query parameter — NOT via tool arguments.
+        Composio ignores ``connected_account_id`` when passed as a tool arg;
+        it only honors it as a URL param at connection time.
         """
         args: dict[str, Any] = {
             "query": query,
@@ -1101,7 +1100,7 @@ def fetch_messages(
             )
             break
         result = reader.fetch_emails(
-            query=query, page_token=page_token, max_results=PAGE_SIZE
+            query=query, page_token=page_token, max_results=PAGE_SIZE,
         )
         raw_msgs, next_token = _extract_messages_payload(result)
         if not raw_msgs:
@@ -1124,18 +1123,21 @@ def run(
     composio_reader_url: str,
     composio_actor_url: str | None,
     composio_user_id: str | None,
+    composio_account_ids: list[str],
     days: int,
     dry_run: bool,
     reset: bool,
 ) -> int:
     """Top-level entry. Returns process exit code."""
     started_at = utcnow()
+    account_display = ", ".join(composio_account_ids) if composio_account_ids else "(default)"
     print(f"SafeClaw bootstrap_brain — UTC {started_at.isoformat()}")
     print(f"  brain dir : {brain_dir}")
     print(f"  user key  : {user_key}")
     print(f"  days back : {days}")
     print(f"  dry run   : {dry_run}")
     print(f"  reset     : {reset}")
+    print(f"  accounts  : {account_display}")
     print()
 
     people_dir = brain_dir / "People"
@@ -1154,7 +1156,33 @@ def run(
     days_window = max(1, days)
     base_query = f"newer_than:{days_window}d"
 
-    reader = ComposioReader(composio_reader_url, composio_api_key, composio_user_id)
+    # Build one ComposioReader per connected Gmail account.
+    # Composio MCP resolves which account to use via the URL query parameter
+    # ?user_id=<entity>&connected_account_id=<acct> — NOT via tool arguments.
+    # When COMPOSIO_ACCOUNT_IDS is set, each ID gets its own URL and reader so
+    # truly separate inboxes are all scanned. When the list has one entry (or is
+    # empty), a single reader is used — the common case when both email addresses
+    # are aliases on the same Google account.
+    from urllib.parse import urlparse, urlunparse
+    _parsed = urlparse(composio_reader_url)
+    _base_url = urlunparse(_parsed._replace(query=""))
+    _user_param = f"user_id={composio_user_id}" if composio_user_id else ""
+    if composio_account_ids:
+        readers: list[tuple[str, ComposioReader]] = [
+            (
+                acct_id,
+                ComposioReader(
+                    f"{_base_url}?{_user_param}&connected_account_id={acct_id}",
+                    composio_api_key,
+                ),
+            )
+            for acct_id in composio_account_ids
+        ]
+    else:
+        readers = [
+            (composio_user_id or "default",
+             ComposioReader(composio_reader_url, composio_api_key, composio_user_id))
+        ]
 
     stats = BootstrapStats()
     domain_to_people: dict[str, set[str]] = {}
@@ -1177,65 +1205,72 @@ def run(
     pending_attachments: list[dict[str, Any]] = []
 
     # ── Phase A: inbound (everyone who's emailed me) ──────────────────────
+    # Each reader targets one Gmail account via its ?connected_account_id= URL.
+    # Query is bare date-range (no in:inbox) to capture auto-archived threads.
     print("Phase A — fetching inbound mail...")
-    # `in:inbox` is more reliable than `-in:sent -in:chats` exclusions —
-    # Composio MCP appears to choke on negated label filters in the query.
-    inbound_query = f"{base_query} in:inbox"
+    inbound_query = base_query
     seen_message_ids: set[str] = set()
 
-    for msg in fetch_messages(reader, query=inbound_query, label="inbound"):
-        if msg.message_id in seen_message_ids:
-            continue
-        seen_message_ids.add(msg.message_id)
-        if last_message_id and msg.message_id == last_message_id:
-            # We've crossed the watermark; everything after is already known.
-            break
-        stats.emails_processed += 1
+    for acct_id, reader in readers:
+        acct_label = f"inbound/{acct_id[:8]}"
+        print(f"  account: {acct_id}")
+        for msg in fetch_messages(reader, query=inbound_query, label=acct_label):
+            if msg.message_id in seen_message_ids:
+                continue
+            seen_message_ids.add(msg.message_id)
+            if last_message_id and msg.message_id == last_message_id:
+                # We've crossed the watermark; everything after is already known.
+                break
+            stats.emails_processed += 1
 
-        sender = msg.sender_email
-        if not sender:
-            continue
+            # Skip outbound messages — Phase B handles sent mail separately.
+            if msg.is_sent:
+                continue
 
-        stats.contact_frequency[sender] = stats.contact_frequency.get(sender, 0) + 1
-        person_name.setdefault(sender, msg.sender_name or sender)
-        person_first_seen.setdefault(sender, msg.received_at)
-        if msg.received_at > person_last_seen.get(sender, dt.datetime.min.replace(tzinfo=dt.timezone.utc)):
-            person_last_seen[sender] = msg.received_at
+            sender = msg.sender_email
+            if not sender:
+                continue
 
-        d = domain_of(sender)
-        if d:
-            domain_to_people.setdefault(d, set()).add(sender)
-            domain_first_seen.setdefault(d, msg.received_at)
-            if msg.received_at > domain_last_seen.get(d, dt.datetime.min.replace(tzinfo=dt.timezone.utc)):
-                domain_last_seen[d] = msg.received_at
+            stats.contact_frequency[sender] = stats.contact_frequency.get(sender, 0) + 1
+            person_name.setdefault(sender, msg.sender_name or sender)
+            person_first_seen.setdefault(sender, msg.received_at)
+            if msg.received_at > person_last_seen.get(sender, dt.datetime.min.replace(tzinfo=dt.timezone.utc)):
+                person_last_seen[sender] = msg.received_at
 
-        # Capture attachment metadata + queue for Drive upload. We always
-        # record metadata in the brain (cheap); the upload itself happens
-        # in Phase A.5 only if the actor MCP is configured.
-        if msg.attachments:
-            for att in msg.attachments:
-                stats.attachments_seen += 1
-                record = {
-                    "date": msg.received_at.date().isoformat(),
-                    "filename": att.filename,
-                    "mime": att.mime_type,
-                    "size_bytes": att.size_bytes,
-                    "subject": msg.subject,
-                    "drive_url": "",   # filled by Phase A.5 if upload succeeds
-                    "message_id": msg.message_id,
-                    "attachment_id": att.attachment_id,
-                }
-                person_attachments.setdefault(sender, []).insert(0, record)
-                if att.attachment_id:
-                    pending_attachments.append({
-                        "record": record,
-                        "sender_domain": d,
-                        "sender_email": sender,
-                        "received_at": msg.received_at,
-                    })
+            d = domain_of(sender)
+            if d:
+                domain_to_people.setdefault(d, set()).add(sender)
+                domain_first_seen.setdefault(d, msg.received_at)
+                if msg.received_at > domain_last_seen.get(d, dt.datetime.min.replace(tzinfo=dt.timezone.utc)):
+                    domain_last_seen[d] = msg.received_at
 
-        if stats.emails_processed % 200 == 0:
-            print(f"  ...processed {stats.emails_processed} inbound messages")
+            # Capture attachment metadata + queue for Drive upload. We always
+            # record metadata in the brain (cheap); the upload itself happens
+            # in Phase A.5 only if the actor MCP is configured.
+            if msg.attachments:
+                for att in msg.attachments:
+                    stats.attachments_seen += 1
+                    record = {
+                        "date": msg.received_at.date().isoformat(),
+                        "filename": att.filename,
+                        "mime": att.mime_type,
+                        "size_bytes": att.size_bytes,
+                        "subject": msg.subject,
+                        "drive_url": "",   # filled by Phase A.5 if upload succeeds
+                        "message_id": msg.message_id,
+                        "attachment_id": att.attachment_id,
+                    }
+                    person_attachments.setdefault(sender, []).insert(0, record)
+                    if att.attachment_id:
+                        pending_attachments.append({
+                            "record": record,
+                            "sender_domain": d,
+                            "sender_email": sender,
+                            "received_at": msg.received_at,
+                        })
+
+            if stats.emails_processed % 200 == 0:
+                print(f"  ...processed {stats.emails_processed} inbound messages")
 
     print(f"  done. {stats.emails_processed} inbound messages processed.")
     if stats.attachments_seen:
@@ -1340,15 +1375,17 @@ def run(
     # ── Phase B: sent (style samples) ─────────────────────────────────────
     print("Phase B — fetching sent mail (for style samples)...")
     sent_query = f"{base_query} in:sent"
-    for msg in fetch_messages(reader, query=sent_query, label="sent"):
-        if msg.message_id in seen_message_ids:
-            continue
-        seen_message_ids.add(msg.message_id)
-        stats.sent_processed += 1
-        if msg.body_text:
-            sent_samples.append(msg)
-        if stats.sent_processed % 200 == 0:
-            print(f"  ...processed {stats.sent_processed} sent messages")
+    for acct_id, reader in readers:
+        acct_label = f"sent/{acct_id[:8]}"
+        for msg in fetch_messages(reader, query=sent_query, label=acct_label):
+            if msg.message_id in seen_message_ids:
+                continue
+            seen_message_ids.add(msg.message_id)
+            stats.sent_processed += 1
+            if msg.body_text:
+                sent_samples.append(msg)
+            if stats.sent_processed % 200 == 0:
+                print(f"  ...processed {stats.sent_processed} sent messages")
     print(f"  done. {stats.sent_processed} sent messages processed.")
     print()
 
@@ -1575,6 +1612,12 @@ def main(argv: list[str]) -> int:
     # metadata still lands in brain/People/<slug>.md without Drive links.
     composio_actor_url = os.environ.get("COMPOSIO_ACTOR_MCP_URL") or None
 
+    # Optional — comma-separated list of Composio connectedAccountIds.
+    # When set, Phase A + B iterate over each account so all linked Gmail
+    # inboxes are scanned. Example: "abc123,def456"
+    raw_account_ids = os.environ.get("COMPOSIO_ACCOUNT_IDS", "")
+    composio_account_ids = [a.strip() for a in raw_account_ids.split(",") if a.strip()]
+
     days_env = os.environ.get("BOOTSTRAP_DAYS")
     days = args.days or (int(days_env) if days_env else DEFAULT_DAYS)
 
@@ -1587,6 +1630,7 @@ def main(argv: list[str]) -> int:
             composio_reader_url=composio_reader_url,
             composio_actor_url=composio_actor_url,
             composio_user_id=composio_user_id,
+            composio_account_ids=composio_account_ids,
             days=days,
             dry_run=args.dry_run,
             reset=args.reset,

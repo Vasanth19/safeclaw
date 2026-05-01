@@ -129,6 +129,15 @@ const ListRelationshipsSchema = z.object({
   entity_name: z.string().min(1).max(200),
 });
 
+const BrainSearchSchema = z.object({
+  query: z.string().min(1).max(1000),
+  doc_type: z
+    .enum(["person", "company", "meeting", "project", "journal", "other", "any"])
+    .optional()
+    .default("any"),
+  limit: z.number().int().min(1).max(20).optional().default(8),
+});
+
 // ── Tool Implementations ──────────────────────────────────────────────────────
 
 interface RecallRow {
@@ -495,6 +504,90 @@ async function listRelationships(
   }
 }
 
+// ── brain_search ──────────────────────────────────────────────────────────────
+
+interface BrainSearchRow {
+  file_path: string;
+  title: string | null;
+  doc_type: string;
+  summary: string;
+  score: string;
+}
+
+async function brainSearch(rawInput: unknown): Promise<ReturnType<typeof toolResult>> {
+  const parsed = BrainSearchSchema.safeParse(rawInput);
+  if (!parsed.success) {
+    return errorResult(400, {
+      code: "VALIDATION_ERROR",
+      message: "Invalid input",
+      details: parsed.error.flatten(),
+      hint: null,
+    });
+  }
+
+  const { query, doc_type, limit } = parsed.data;
+
+  let embedding: number[];
+  try {
+    embedding = await embedText(query);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return errorResult(503, {
+      code: "EMBEDDER_UNAVAILABLE",
+      message,
+      details: null,
+      hint: "Verify the embedder container is running and EMBEDDER_URL is reachable.",
+    });
+  }
+
+  const vec = vectorLiteral(embedding);
+  const client = await pool.connect();
+  try {
+    const result = await client.query<BrainSearchRow>(
+      `SELECT bd.file_path,
+              bd.title,
+              bd.doc_type,
+              bd.summary,
+              ROUND((1 - (bde.embedding <=> $1::vector))::numeric, 3) AS score
+         FROM brain_doc_embeddings bde
+         JOIN brain_docs bd ON bd.id = bde.doc_id
+        WHERE ($2 = 'any' OR bd.doc_type = $2)
+        ORDER BY bde.embedding <=> $1::vector
+        LIMIT $3`,
+      [vec, doc_type, limit]
+    );
+
+    if (result.rows.length === 0) {
+      return toolResult(true, 200, {
+        query,
+        count: 0,
+        results: [],
+        hint: "No brain docs indexed yet. Run scripts/index-brain.py first.",
+      });
+    }
+
+    const rows = result.rows.map((row) => ({
+      file_path: row.file_path,
+      title: row.title,
+      doc_type: row.doc_type,
+      summary: row.summary,
+      score: Number(row.score),
+    }));
+
+    return toolResult(true, 200, { query, count: rows.length, results: rows });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return errorResult(500, {
+      code: "DB_ERROR",
+      message,
+      details: null,
+      hint: "Check postgres-obs connectivity and that 004_brain_docs.sql migration has run.",
+    });
+  } finally {
+    client.release();
+  }
+}
+
 // ── MCP Server ────────────────────────────────────────────────────────────────
 
 const server = new Server(
@@ -578,6 +671,30 @@ server.setRequestHandler(ListToolsRequestSchema, () => ({
         required: ["entity_name"],
       },
     },
+    {
+      name: "brain_search",
+      description:
+        "Semantic search across brain docs (People, Companies, Meetings, Projects). " +
+        "Returns file paths and summaries. Always call this FIRST before search_files or Gmail.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Natural-language search query (max 1000 chars)" },
+          doc_type: {
+            type: "string",
+            enum: ["person", "company", "meeting", "project", "journal", "other", "any"],
+            description: "Filter by document type (default: 'any')",
+          },
+          limit: {
+            type: "integer",
+            minimum: 1,
+            maximum: 20,
+            description: "Max results to return (default 8)",
+          },
+        },
+        required: ["query"],
+      },
+    },
   ],
 }));
 
@@ -593,13 +710,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       return getSoul(args);
     case "brain_list_relationships":
       return listRelationships(args);
+    case "brain_search":
+      return brainSearch(args);
     default:
       return errorResult(404, {
         code: "TOOL_NOT_FOUND",
         message: `Unknown tool: ${name}`,
         details: null,
         hint:
-          "Available tools: brain_recall, brain_write, brain_get_soul, brain_list_relationships",
+          "Available tools: brain_recall, brain_write, brain_get_soul, brain_list_relationships, brain_search",
       });
   }
 });

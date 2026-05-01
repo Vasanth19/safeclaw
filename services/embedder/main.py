@@ -234,6 +234,57 @@ def _embed_style_samples(conn: psycopg.Connection) -> int:
     return inserted
 
 
+def _embed_brain_docs(conn: psycopg.Connection) -> int:
+    """Embed brain_docs that have no row in brain_doc_embeddings. Returns count inserted."""
+    with conn.cursor(row_factory=tuple_row) as cur:
+        cur.execute(
+            """
+            SELECT id, title, summary
+              FROM brain_docs
+             WHERE embedded = FALSE
+             ORDER BY indexed_at ASC
+             LIMIT %s
+            """,
+            (BATCH_SIZE,),
+        )
+        rows = cur.fetchall()
+
+    if not rows:
+        return 0
+
+    texts = [
+        f"{title or ''}\n{summary or '(empty)'}".strip()[:1000]
+        for (_id, title, summary) in rows
+    ]
+
+    try:
+        vectors = encode_texts(texts)
+    except Exception as exc:
+        log.error("encode failed for brain_docs batch: %s", exc)
+        return 0
+
+    inserted = 0
+    with conn.cursor() as cur:
+        for (doc_id, _title, _summary), vec in zip(rows, vectors):
+            try:
+                cur.execute(
+                    "INSERT INTO brain_doc_embeddings (doc_id, embedding) "
+                    "VALUES (%s, %s::vector) ON CONFLICT (doc_id) DO NOTHING",
+                    (doc_id, vector_literal(vec)),
+                )
+                cur.execute(
+                    "UPDATE brain_docs SET embedded = TRUE WHERE id = %s",
+                    (doc_id,),
+                )
+                inserted += 1
+            except Exception as exc:
+                log.warning("skip brain_doc %s: %s", doc_id, exc)
+                conn.rollback()
+                continue
+    conn.commit()
+    return inserted
+
+
 def run_poll_loop() -> None:
     log.info("poll loop starting, interval=%ds, batch=%d", POLL_INTERVAL_SEC, BATCH_SIZE)
     while not _shutdown.is_set():
@@ -242,10 +293,11 @@ def run_poll_loop() -> None:
                 n_obs = _embed_observations(conn)
                 n_facts = _embed_facts(conn)
                 n_style = _embed_style_samples(conn)
-            if n_obs or n_facts or n_style:
+                n_brain = _embed_brain_docs(conn)
+            if n_obs or n_facts or n_style or n_brain:
                 log.info(
-                    "embedded %d observations, %d facts, %d style samples",
-                    n_obs, n_facts, n_style,
+                    "embedded %d observations, %d facts, %d style samples, %d brain docs",
+                    n_obs, n_facts, n_style, n_brain,
                 )
         except Exception as exc:
             log.error("poll cycle failed: %s", exc)

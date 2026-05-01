@@ -41,6 +41,7 @@ services:
       - obs_data:/var/lib/postgresql/data
       - ./db/001_obs_schema.sql:/migrations/001_obs_schema.sql:ro
       - ./db/003_brain_schema.sql:/migrations/003_brain_schema.sql:ro
+      - ./db/004_brain_docs.sql:/migrations/004_brain_docs.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_OBS_USER} -d ${POSTGRES_OBS_DB}"]
       interval: 10s
@@ -194,10 +195,12 @@ services:
       OLLAMA_BASE_URL: http://host.docker.internal:11434/v1
       OLLAMA_API_KEY: ollama-local
       HERMES_DEFAULT_MODEL: glm-5.1:cloud
-      # Reader is a background ingest agent — it does NOT bind to Telegram.
-      # The Actor owns the user-facing chat, so we blank the bot token here
-      # to prevent the dual-poller getUpdates conflict.
+      # Reader is a background ingest agent — it does NOT bind to Telegram or Slack.
+      # The Actor owns the user-facing chat; blanking these tokens here prevents
+      # dual-listener conflicts (two Socket Mode connections = dropped events).
       TELEGRAM_BOT_TOKEN: ""
+      SLACK_BOT_TOKEN: ""
+      SLACK_APP_TOKEN: ""
     volumes:
       # Mount the operator config as a READ-ONLY template at a separate path.
       # safeclaw-entrypoint.sh COPIES it into /opt/data/config.yaml on startup
@@ -205,6 +208,9 @@ services:
       # tripping the bind-mount "Device or resource busy" rename failure.
       - ./config/reader-hermes.yaml:/safeclaw/config-template/config.yaml:ro
       - hermes_reader_data:/opt/data
+      # Docker socket — required for stdio MCP servers (brain_api, tasks_api)
+      # spawned via `docker exec` from Hermes.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
       # Brain mount is deferred — needs HERMES_UID/GID alignment to avoid
       # chown failure on bind-mount permissions. Agent reads brain via the
       # brain-api-mcp → postgres-obs path until we land the UID work.
@@ -228,6 +234,8 @@ services:
     #   dockerfile: docker/Dockerfile.safeclaw-hermes
     container_name: safeclaw-hermes-actor
     restart: unless-stopped
+    ports:
+      - "127.0.0.1:9119:9119"   # Hermes Mission Control UI — localhost only
     networks:
       - safeclaw_net
     # See note on hermes-reader. Required for Linux Docker so the actor
@@ -246,17 +254,21 @@ services:
       OLLAMA_API_KEY: ollama-local
       # Kimi K2.5 — Moonshot's agentic model. Better at multi-step tool
       # routing than glm-5.1; required for the brain-first memory protocol.
-      HERMES_DEFAULT_MODEL: kimi-k2.5:cloud
+      HERMES_DEFAULT_MODEL: glm-5.1:cloud
     volumes:
       # Operator config as read-only template; entrypoint copies it into
       # /opt/data/config.yaml so /sethome + `hermes config set` can rewrite.
       - ./config/actor-hermes.yaml:/safeclaw/config-template/config.yaml:ro
       - hermes_actor_data:/opt/data
+      # Docker socket — required for stdio MCP servers (brain_api, tasks_api)
+      # spawned via `docker exec` from Hermes.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
       # Brain mount — read-only so the file skill can search People/, Companies/,
       # and the rest of the Evolving Brain layout. RO avoids the chown issue
       # (we only need to read; the Reader/embedder writes via DB, not files).
       - ./brain:/opt/brain:ro
-    # Gate: exit cleanly if ACTOR_ENABLED is not true; otherwise run gateway daemon.
+    # Gate: exit cleanly if ACTOR_ENABLED is not true; otherwise run gateway daemon
+    # + the Hermes web UI (Mission Control) on port 9119 in parallel.
     # Use full path to `hermes` (the CLI binary), not `hermes-agent` (broken legacy).
     command: >
       sh -c '
@@ -264,6 +276,7 @@ services:
           echo "hermes-actor is disabled (ACTOR_ENABLED=${ACTOR_ENABLED:-false}). Set ACTOR_ENABLED=true to enable.";
           exit 0;
         fi;
+        /opt/hermes/.venv/bin/hermes dashboard --port 9119 --host 0.0.0.0 --no-open --insecure &
         exec /opt/hermes/.venv/bin/hermes gateway run --accept-hooks
       '
     depends_on:
@@ -327,7 +340,7 @@ services:
   # TypeScript MCP server exposing brain_recall / brain_write / brain_get_soul /
   # brain_list_relationships to hermes-reader and hermes-actor.
   brain-api-mcp:
-    image: ghcr.io/vasanth19/safeclaw-brain-api:1.0
+    image: ghcr.io/vasanth19/safeclaw-brain-api:1.1
     # Dev-only: rebuild from source.
     # build:
     #   context: ./mcp-tools/brain-api

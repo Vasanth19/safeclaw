@@ -20,9 +20,12 @@ Notes:
 """
 from __future__ import annotations
 
+import datetime
+import json
 import logging
 import os
 import re
+import subprocess
 import threading
 import uuid
 from pathlib import Path
@@ -49,6 +52,19 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 log = logging.getLogger("safeclaw.app")
+
+
+# ── Dashboard ─────────────────────────────────────────────────────────────
+_CONTAINERS = {
+    "safeclaw-hermes-reader":  {"label": "Reader Agent",  "kind": "agent"},
+    "safeclaw-hermes-actor":   {"label": "Actor Agent",   "kind": "agent"},
+    "safeclaw-postgres-obs":   {"label": "Obs DB",        "kind": "infra"},
+    "safeclaw-postgres-tasks": {"label": "Tasks DB",      "kind": "infra"},
+    "safeclaw-postgrest":      {"label": "PostgREST",     "kind": "infra"},
+    "safeclaw-embedder":       {"label": "Embedder",      "kind": "infra"},
+    "safeclaw-reflector":      {"label": "Reflector",     "kind": "infra"},
+    "safeclaw-brain-api-mcp":  {"label": "Brain MCP",     "kind": "infra"},
+}
 
 
 def create_app() -> Flask:
@@ -169,6 +185,94 @@ def create_app() -> Flask:
             "closed": install.is_closed(),
             "events": install.snapshot(),
         })
+
+    # ── Dashboard ─────────────────────────────────────────────────────────
+    @app.get("/dashboard")
+    def dashboard():
+        return render_template("dashboard.html")
+
+    @app.get("/api/services")
+    def api_services():
+        results = []
+        names = list(_CONTAINERS.keys())
+        try:
+            raw = subprocess.run(
+                ["docker", "inspect"] + names,
+                capture_output=True, text=True, timeout=8,
+            )
+            inspected = json.loads(raw.stdout) if raw.returncode == 0 else []
+        except Exception:
+            inspected = []
+
+        inspected_by_name = {c["Name"].lstrip("/"): c for c in inspected}
+
+        for cname, meta in _CONTAINERS.items():
+            c = inspected_by_name.get(cname)
+            if c is None:
+                results.append({**meta, "container": cname, "status": "absent", "uptime": None, "health": None})
+                continue
+            state = c.get("State", {})
+            running = state.get("Running", False)
+            status = "running" if running else "stopped"
+            started_at = state.get("StartedAt", "")
+            uptime_str = None
+            if running and started_at:
+                try:
+                    dt = datetime.datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+                    delta = datetime.datetime.now(datetime.timezone.utc) - dt
+                    secs = int(delta.total_seconds())
+                    h, m = divmod(secs // 60, 60)
+                    uptime_str = f"{h}h {m:02d}m" if h else f"{m}m"
+                except Exception:
+                    pass
+            health = None
+            hc = state.get("Health")
+            if hc:
+                health = hc.get("Status")
+            results.append({**meta, "container": cname, "status": status, "uptime": uptime_str, "health": health})
+        return jsonify(results)
+
+    @app.get("/api/logs/<service>")
+    def api_logs(service: str):
+        if service not in _CONTAINERS:
+            abort(404)
+        tail = request.args.get("tail", "200")
+        try:
+            tail = str(max(1, min(2000, int(tail))))
+        except ValueError:
+            tail = "200"
+
+        @stream_with_context
+        def _stream():
+            try:
+                proc = subprocess.Popen(
+                    ["docker", "logs", "--tail", tail, "-f", "--timestamps", service],
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    text=True, bufsize=1,
+                )
+                for line in proc.stdout:
+                    line = line.rstrip("\n")
+                    yield f"data: {json.dumps(line)}\n\n"
+            except Exception as exc:
+                yield f"data: {json.dumps(f'[error] {exc}')}\n\n"
+
+        return Response(_stream(), content_type="text/event-stream",
+                        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    @app.post("/api/services/<service>/restart")
+    def api_restart(service: str):
+        if service not in _CONTAINERS:
+            abort(404)
+        try:
+            r = subprocess.run(
+                ["docker", "restart", service],
+                capture_output=True, text=True, timeout=30,
+            )
+            if r.returncode != 0:
+                return jsonify({"ok": False, "error": r.stderr.strip()}), 500
+        except Exception as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 500
+        return jsonify({"ok": True})
 
     @app.errorhandler(404)
     def not_found(_e):

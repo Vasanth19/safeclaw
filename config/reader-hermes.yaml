@@ -29,6 +29,11 @@ mcp_servers:
       x-composio-user-id: "${COMPOSIO_USER_ID}"
     timeout: 60
     connect_timeout: 30
+  brain_api:
+    command: docker
+    args: ["exec", "-i", "safeclaw-brain-api-mcp", "node", "dist/index.js"]
+    timeout: 30
+    connect_timeout: 10
 
 # ── System prompt ────────────────────────────────────────────────────────────
 system_prompt: |
@@ -63,7 +68,20 @@ system_prompt: |
 # ── Platform integrations (Slack via Composio MCP) ───────────────────────────
 # Slack connection is established via Composio; Hermes uses the MCP tools to
 # read Slack channels rather than running its own Slack platform listener.
-platforms: []
+platforms: []   # reader does not listen on Slack as a bot — ingestion is cron-driven below
+
+# ── Slack ingestion cron ──────────────────────────────────────────────────────
+# Every 30 minutes: pull recent messages from all channels the bot is in via
+# Composio SLACK_FETCH_CONVERSATION_HISTORY, write structured observations to
+# postgres-obs so the embedder can vectorise them and SafeClaw can recall them.
+schedules:
+  slack_ingest:
+    cron: "*/30 * * * *"
+    description: >
+      For each channel in SLACK_INGEST_CHANNELS, call
+      SLACK_FETCH_CONVERSATION_HISTORY (newest 50 messages), filter out bot
+      messages and already-seen timestamps (track watermark in todo list),
+      write one observation per human message to postgres-obs via brain_write.
 
 # ── Skills bundled with Hermes (we keep the safe-by-default ones) ────────────
 skills:

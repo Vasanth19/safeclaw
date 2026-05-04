@@ -65,6 +65,9 @@ build_image "brain-api" "mcp-tools/brain-api" "mcp-tools/brain-api/Dockerfile"
 # ─── 4. Tasks API MCP ───────────────────────────────────────────────────────
 build_image "tasks-api" "mcp-tools/tasks-api" "mcp-tools/tasks-api/Dockerfile"
 
+# ─── 5. Slack API MCP ───────────────────────────────────────────────────────
+build_image "slack-api" "mcp-tools/slack-api" "mcp-tools/slack-api/Dockerfile"
+
 # ─── Summary ────────────────────────────────────────────────────────────────
 log "Build complete. Images:"
 docker images \

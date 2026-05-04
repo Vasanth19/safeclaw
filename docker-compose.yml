@@ -16,8 +16,8 @@ volumes:
     name: safeclaw_obs_data
   tasks_data:
     name: safeclaw_tasks_data
-  drive_mirror:
-    name: safeclaw_drive_mirror
+  attachments:
+    name: safeclaw_attachments
   hermes_reader_data:
     name: safeclaw_hermes_reader_data
   hermes_actor_data:
@@ -108,39 +108,23 @@ services:
   # reaches them by talking to the Composio MCP servers (HTTP transport).
   # See COMPOSIO_READER_MCP_URL and COMPOSIO_ACTOR_MCP_URL in .env.
 
-  # ─── rclone: Drive Mirror ──────────────────────────────────────────────────
-  # Runs rclone sync on a 15-minute cron. Mirrors the client Drive folder to
-  # ./drive-mirror/ on the host so hermes-reader can inspect file change events.
-  rclone-sync:
+  # ─── rclone-upload: On-demand Drive upload sidecar ─────────────────────────
+  # Hermes-actor calls this via `docker exec` for organized Drive uploads.
+  # No cron — actor triggers uploads only when attachments need pushing.
+  rclone-upload:
     image: rclone/rclone:latest
     container_name: safeclaw-rclone
-    restart: unless-stopped
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["echo 'rclone-upload ready; will be invoked via docker exec'; sleep infinity"]
     networks:
       - safeclaw_net
     environment:
       RCLONE_DRIVE_FOLDER_ID: ${RCLONE_DRIVE_FOLDER_ID}
     volumes:
-      - drive_mirror:/data/drive-mirror
+      - attachments:/data/attachments
       # rclone config with Drive OAuth token — managed by Composio, mounted separately.
-      # Operator must create this file after OAuth setup (see DEPLOY-RUNBOOK.md).
       - ./config/rclone.conf:/config/rclone/rclone.conf:ro
-    command: >
-      sh -c '
-        echo "Starting rclone sync daemon (every 15 min)..." &&
-        while true; do
-          rclone sync \
-            "gdrive:${RCLONE_DRIVE_FOLDER_ID}" \
-            /data/drive-mirror \
-            --drive-root-folder-id "${RCLONE_DRIVE_FOLDER_ID}" \
-            --log-level INFO \
-            --stats 0 \
-            --transfers 4 \
-            --checkers 8 &&
-          echo "rclone sync complete at $(date)" ||
-          echo "rclone sync FAILED at $(date)";
-          sleep 900;
-        done
-      '
 
   # ─── Tasks API MCP Server ──────────────────────────────────────────────────
   # Runs the Node.js MCP server that wraps PostgREST for hermes-actor.
@@ -166,6 +150,21 @@ services:
       postgrest:
         condition: service_healthy
 
+  # ─── Slack API MCP Server ──────────────────────────────────────────────────
+  # Runs the Node.js MCP server that provides native Slack access.
+  slack-api-mcp:
+    image: safeclaw/slack-api-mcp:latest
+    build:
+      context: ./mcp-tools/slack-api
+    container_name: safeclaw-slack-api-mcp
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["echo 'slack-api-mcp ready; will be invoked via docker exec'; sleep infinity"]
+    networks:
+      - safeclaw_net
+    environment:
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN}
+
   # ─── hermes-reader — Read-Only Intake Agent ────────────────────────────────
   # Pulls the pre-built SafeClaw distribution image from GHCR (skill prune,
   # bind-mount fix, default session reset, and provider auto-pick all baked in).
@@ -183,7 +182,7 @@ services:
       - safeclaw_net
     # Linux Docker doesn't resolve host.docker.internal by default. The
     # extra_hosts shim maps it to the host gateway so Hermes can reach the
-    # Ollama daemon installed by scripts/provision-vps.sh on :11434.
+    # Ollama daemon installed by scripts/provision-vps.sh on :11435.
     # OrbStack on macOS handles this natively, but the entry is harmless there.
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -192,7 +191,7 @@ services:
       - .env
     environment:
       HERMES_INFERENCE_PROVIDER: ollama-cloud
-      OLLAMA_BASE_URL: http://host.docker.internal:11434/v1
+      OLLAMA_BASE_URL: http://host.docker.internal:11435/v1
       OLLAMA_API_KEY: ollama-local
       HERMES_DEFAULT_MODEL: glm-5.1:cloud
       # Reader is a background ingest agent — it does NOT bind to Telegram or Slack.
@@ -208,6 +207,8 @@ services:
       # tripping the bind-mount "Device or resource busy" rename failure.
       - ./config/reader-hermes.yaml:/safeclaw/config-template/config.yaml:ro
       - hermes_reader_data:/opt/data
+      # Attachment staging — reader downloads Gmail attachments here for actor pickup
+      - attachments:/data/attachments
       # Docker socket — required for stdio MCP servers (brain_api, tasks_api)
       # spawned via `docker exec` from Hermes.
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -239,7 +240,7 @@ services:
     networks:
       - safeclaw_net
     # See note on hermes-reader. Required for Linux Docker so the actor
-    # can reach the host's Ollama daemon at host.docker.internal:11434.
+    # can reach the host's Ollama daemon at host.docker.internal:11435.
     extra_hosts:
       - "host.docker.internal:host-gateway"
     # env_file loads ALL .env values directly into the container, bypassing
@@ -250,7 +251,7 @@ services:
     environment:
       # Hermes inference provider override — these are static, not from .env.
       HERMES_INFERENCE_PROVIDER: ollama-cloud
-      OLLAMA_BASE_URL: http://host.docker.internal:11434/v1
+      OLLAMA_BASE_URL: http://host.docker.internal:11435/v1
       OLLAMA_API_KEY: ollama-local
       # Kimi K2.5 — Moonshot's agentic model. Better at multi-step tool
       # routing than glm-5.1; required for the brain-first memory protocol.
@@ -260,6 +261,8 @@ services:
       # /opt/data/config.yaml so /sethome + `hermes config set` can rewrite.
       - ./config/actor-hermes.yaml:/safeclaw/config-template/config.yaml:ro
       - hermes_actor_data:/opt/data
+      # Attachment staging — actor reads pending files and uploads to Drive
+      - attachments:/data/attachments
       # Docker socket — required for stdio MCP servers (brain_api, tasks_api)
       # spawned via `docker exec` from Hermes.
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -377,8 +380,10 @@ services:
     ports:
       # Localhost-only — Caddy on the host terminates TLS at 443 and proxies here.
       - "127.0.0.1:8080:8080"
+      - "[::1]:8080:8080"
     volumes:
       - .:/safeclaw:rw
+      - ./onboarding:/app:rw
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       SAFECLAW_INSTALL_DIR: /safeclaw

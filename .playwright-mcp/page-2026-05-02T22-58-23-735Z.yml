@@ -1,0 +1,73 @@
+- generic [ref=e5]:
+  - complementary "Navigation" [ref=e6]:
+    - generic [ref=e8]:
+      - text: Hermes
+      - text: Agent
+    - navigation "Navigation" [ref=e9]:
+      - list [ref=e10]:
+        - listitem [ref=e11]:
+          - link "Sessions" [ref=e12] [cursor=pointer]:
+            - /url: /sessions
+            - img [ref=e13]
+            - generic [ref=e15]: Sessions
+        - listitem [ref=e17]:
+          - link "Analytics" [ref=e18] [cursor=pointer]:
+            - /url: /analytics
+            - img [ref=e19]
+            - generic [ref=e21]: Analytics
+        - listitem [ref=e22]:
+          - link "Logs" [ref=e23] [cursor=pointer]:
+            - /url: /logs
+            - img [ref=e24]
+            - generic [ref=e27]: Logs
+        - listitem [ref=e28]:
+          - link "Cron" [ref=e29] [cursor=pointer]:
+            - /url: /cron
+            - img [ref=e30]
+            - generic [ref=e33]: Cron
+        - listitem [ref=e34]:
+          - link "Skills" [ref=e35] [cursor=pointer]:
+            - /url: /skills
+            - img [ref=e36]
+            - generic [ref=e40]: Skills
+        - listitem [ref=e41]:
+          - link "Config" [ref=e42] [cursor=pointer]:
+            - /url: /config
+            - img [ref=e43]
+            - generic [ref=e46]: Config
+        - listitem [ref=e47]:
+          - link "Keys" [ref=e48] [cursor=pointer]:
+            - /url: /env
+            - img [ref=e49]
+            - generic [ref=e52]: Keys
+        - listitem [ref=e53]:
+          - link "Documentation" [ref=e54] [cursor=pointer]:
+            - /url: /docs
+            - img [ref=e55]
+            - generic [ref=e57]: Documentation
+    - generic [ref=e58]:
+      - generic [ref=e59]: System
+      - list [ref=e62]:
+        - listitem [ref=e63]:
+          - button "Restart Gateway" [ref=e64] [cursor=pointer]:
+            - img [ref=e65]
+            - generic [ref=e68]: Restart Gateway
+        - listitem [ref=e69]:
+          - button "Update Hermes" [ref=e70] [cursor=pointer]:
+            - img [ref=e71]
+            - generic [ref=e74]: Update Hermes
+    - generic [ref=e76]:
+      - button "Switch theme" [ref=e78] [cursor=pointer]:
+        - img [ref=e79]
+        - generic [ref=e85]: Hermes Teal
+      - button "Switch to Chinese" [ref=e86] [cursor=pointer]:
+        - generic [ref=e87]: 🇬🇧
+        - generic [ref=e88]: EN
+    - generic [ref=e89]:
+      - generic [ref=e90]: —
+      - link "Nous Research" [ref=e91] [cursor=pointer]:
+        - /url: https://nousresearch.com
+  - generic [ref=e92]:
+    - banner [ref=e93]:
+      - heading "Sessions" [level=1] [ref=e96]
+    - main [ref=e97]

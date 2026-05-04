@@ -119,6 +119,52 @@ def _iter_md_files(brain_dir: Path) -> Iterator[tuple[Path, str]]:
         yield path, doc_type
 
 
+# ── Garbage collection (orphan removal) ───────────────────────────────────────
+
+def _gc_orphans(
+    conn: psycopg.Connection,
+    brain_dir: Path,
+    user_key: str,
+    dry_run: bool,
+) -> int:
+    """Delete brain_docs rows whose underlying .md file no longer exists on disk.
+
+    Because brain_doc_embeddings has ON DELETE CASCADE, removing the doc row
+    automatically removes the embedding. Returns number of rows deleted.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT file_path FROM brain_docs WHERE user_key = %s",
+            (user_key,),
+        )
+        db_paths = {row[0] for row in cur.fetchall()}
+
+    existing_paths = set()
+    for path in brain_dir.rglob("*.md"):
+        rel = str(path.relative_to(brain_dir))
+        existing_paths.add(rel)
+
+    orphans = db_paths - existing_paths
+    if not orphans:
+        return 0
+
+    log.info("Found %d orphan brain_docs (file deleted on disk)", len(orphans))
+    if dry_run:
+        for p in sorted(orphans):
+            log.info("[dry-run] would delete orphan: %s", p)
+        return len(orphans)
+
+    with conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM brain_docs WHERE user_key = %s AND file_path = ANY(%s)",
+            (user_key, list(orphans)),
+        )
+        deleted = cur.rowcount
+    conn.commit()
+    log.info("Deleted %d orphan brain_docs (embeddings cascaded)", deleted)
+    return deleted
+
+
 # ── Upsert logic ──────────────────────────────────────────────────────────────
 
 def _process_file(
@@ -209,6 +255,13 @@ def main() -> int:
         action="store_true",
         help="Log each file as it is processed",
     )
+    parser.add_argument(
+        "--no-gc",
+        dest="gc",
+        action="store_false",
+        default=True,
+        help="Skip orphan cleanup (default: enabled)",
+    )
     args = parser.parse_args()
 
     brain_dir = Path(args.brain_dir).resolve()
@@ -254,6 +307,10 @@ def main() -> int:
             )
             counts[outcome] = counts.get(outcome, 0) + 1
 
+        if args.gc:
+            gc_count = _gc_orphans(conn, brain_dir, USER_KEY, dry_run=False)
+            counts["orphans_removed"] = gc_count
+
     _print_summary(counts)
     return 0
 
@@ -266,6 +323,9 @@ def _print_summary(counts: dict[str, int]) -> None:
     )
     if counts["skipped"]:
         print(f"Skipped {counts['skipped']} files (binary or unreadable)")
+    orphans = counts.get("orphans_removed", 0)
+    if orphans:
+        print(f"Garbage-collected {orphans} orphan brain_docs (embeddings removed)")
 
 
 if __name__ == "__main__":

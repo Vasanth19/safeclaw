@@ -146,8 +146,7 @@ class GmailMessage:
 class BootstrapStats:
     emails_processed: int = 0
     sent_processed: int = 0
-    people_upserted: int = 0
-    companies_upserted: int = 0
+    journal_files_created: int = 0
     style_samples_saved: int = 0
     attachments_seen: int = 0
     attachments_uploaded: int = 0
@@ -856,45 +855,28 @@ def save_attachments_state(brain_dir: Path, state: dict[str, dict[str, Any]]) ->
 # ─── Brain folder writers (People/, Companies/, Live Logs/) ───────────────
 
 
-PERSON_TEMPLATE = """\
+DAILY_JOURNAL_TEMPLATE = """\
 ---
-type: person
-email: {email}
-name: {name}
-companies: {companies}
-first_seen: {first_seen}
-last_contact: {last_contact}
-contact_frequency: {frequency}
+date: {date}
+source: gmail
+account: {account}
+inbound_count: {inbound_count}
+sent_count: {sent_count}
 ---
 
-# {display_name}
+# Daily Journal — {date}
 
-## Topics
-- (auto-populated by the reflector)
+## Inbound ({inbound_count})
 
-## Recent activity
-- {last_contact}: last seen in inbox
+{inbound_block}
 
-## Attachments received
+## Sent ({sent_count})
+
+{sent_block}
+
+## Attachments
+
 {attachments_block}
-
-## Notes
-"""
-
-
-COMPANY_TEMPLATE = """\
----
-type: company
-domain: {domain}
-first_seen: {first_seen}
-last_contact: {last_contact}
-people_count: {people_count}
----
-
-# {domain}
-
-## People
-{people_list}
 
 ## Notes
 """
@@ -928,64 +910,62 @@ def _format_attachments_block(records: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def upsert_person_file(
+def write_daily_journal(
     *,
-    people_dir: Path,
-    email: str,
-    name: str,
-    company_domain: str,
-    first_seen: dt.datetime,
-    last_contact: dt.datetime,
-    frequency: int,
-    attachments: list[dict[str, Any]] | None,
+    journal_dir: Path,
+    date: dt.date,
+    account: str,
+    inbound: list[GmailMessage],
+    sent: list[GmailMessage],
+    attachments_map: dict[str, list[dict[str, Any]]],
     dry_run: bool,
 ) -> bool:
-    """Idempotently write a People/<slug>.md file. Returns True if a file
-    was created or modified."""
-    slug = slugify_email(email)
-    out_path = people_dir / f"{slug}.md"
-    display = name or email
-    content = PERSON_TEMPLATE.format(
-        email=email,
-        name=name,
-        companies=f"[{company_domain}]" if company_domain else "[]",
-        first_seen=first_seen.date().isoformat(),
-        last_contact=last_contact.date().isoformat(),
-        frequency=frequency,
-        display_name=display,
-        attachments_block=_format_attachments_block(attachments or []),
-    )
+    """Write one Daily Journal file for a single date. Returns True if written."""
+    out_path = journal_dir / f"{date.isoformat()}.md"
 
-    if out_path.exists():
-        existing = out_path.read_text(encoding="utf-8", errors="replace")
-        if existing == content:
-            return False  # idempotent no-op
+    # Group inbound by sender domain
+    sender_groups: dict[str, list[GmailMessage]] = {}
+    for msg in inbound:
+        d = domain_of(msg.sender_email) or "unknown"
+        sender_groups.setdefault(d, []).append(msg)
 
-    if dry_run:
-        return True
-    people_dir.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(content, encoding="utf-8")
-    return True
+    inbound_lines: list[str] = []
+    for domain, msgs in sorted(sender_groups.items(), key=lambda kv: -len(kv[1])):
+        inbound_lines.append(f"### {domain} ({len(msgs)})")
+        for msg in msgs:
+            preview = msg.subject or "(no subject)"
+            sender = msg.sender_name or msg.sender_email
+            inbound_lines.append(f"- **{sender}** — {preview}")
+        inbound_lines.append("")
 
+    if not inbound_lines:
+        inbound_lines.append("No inbound email.")
 
-def upsert_company_file(
-    *,
-    companies_dir: Path,
-    domain: str,
-    first_seen: dt.datetime,
-    last_contact: dt.datetime,
-    people: list[str],
-    dry_run: bool,
-) -> bool:
-    fname = safe_filename(domain) + ".md"
-    out_path = companies_dir / fname
-    people_lines = "\n".join(f"- {p}" for p in sorted(set(people))) or "- (none yet)"
-    content = COMPANY_TEMPLATE.format(
-        domain=domain,
-        first_seen=first_seen.date().isoformat(),
-        last_contact=last_contact.date().isoformat(),
-        people_count=len(set(people)),
-        people_list=people_lines,
+    sent_lines: list[str] = []
+    for msg in sent:
+        preview = msg.subject or "(no subject)"
+        recipients = ", ".join(msg.recipient_emails[:3])
+        body_preview = msg.body_text.strip().replace("\n", " ")[:80]
+        sent_lines.append(f"- **To:** {recipients} — {preview}")
+        if body_preview:
+            sent_lines.append(f"  > {body_preview}")
+
+    if not sent_lines:
+        sent_lines.append("No sent email.")
+
+    att_records: list[dict[str, Any]] = []
+    for sender, records in attachments_map.items():
+        att_records.extend(records)
+    att_block = _format_attachments_block(att_records)
+
+    content = DAILY_JOURNAL_TEMPLATE.format(
+        date=date.isoformat(),
+        account=account,
+        inbound_count=len(inbound),
+        sent_count=len(sent),
+        inbound_block="\n".join(inbound_lines),
+        sent_block="\n".join(sent_lines),
+        attachments_block=att_block,
     )
 
     if out_path.exists():
@@ -995,7 +975,7 @@ def upsert_company_file(
 
     if dry_run:
         return True
-    companies_dir.mkdir(parents=True, exist_ok=True)
+    journal_dir.mkdir(parents=True, exist_ok=True)
     out_path.write_text(content, encoding="utf-8")
     return True
 
@@ -1140,8 +1120,7 @@ def run(
     print(f"  accounts  : {account_display}")
     print()
 
-    people_dir = brain_dir / "People"
-    companies_dir = brain_dir / "Companies"
+    journal_dir = brain_dir / "3 - Daily Journal"
     live_logs_dir = brain_dir / "2 - Live Logs"
 
     state = {} if reset else load_state(brain_dir)
@@ -1193,6 +1172,7 @@ def run(
     domain_last_seen: dict[str, dt.datetime] = {}
 
     sent_samples: list[GmailMessage] = []
+    all_inbound: list[GmailMessage] = []
 
     # Per-person attachment records, accumulated during Phase A and rendered
     # into brain/People/<slug>.md during Phase C. Key: sender_email, value:
@@ -1231,6 +1211,7 @@ def run(
             if not sender:
                 continue
 
+            all_inbound.append(msg)
             stats.contact_frequency[sender] = stats.contact_frequency.get(sender, 0) + 1
             person_name.setdefault(sender, msg.sender_name or sender)
             person_first_seen.setdefault(sender, msg.received_at)
@@ -1389,80 +1370,56 @@ def run(
     print(f"  done. {stats.sent_processed} sent messages processed.")
     print()
 
-    # ── Phase C: write brain folder + DB ──────────────────────────────────
-    print("Phase C — writing People/, Companies/, and DB rows...")
-    people_dir.mkdir(parents=True, exist_ok=True)
-    companies_dir.mkdir(parents=True, exist_ok=True)
+    # ── Phase C: write Daily Journal + DB ─────────────────────────────────
+    print("Phase C — writing Daily Journal files and DB rows...")
+    journal_dir.mkdir(parents=True, exist_ok=True)
     live_logs_dir.mkdir(parents=True, exist_ok=True)
 
+    # Group messages by date for journal creation.
+    daily_inbound: dict[str, list[GmailMessage]] = {}
+    daily_sent: dict[str, list[GmailMessage]] = {}
+    daily_attachments: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    for msg in (m for m in all_inbound if m.sender_email):
+        date_key = msg.received_at.date().isoformat()
+        daily_inbound.setdefault(date_key, []).append(msg)
+    for msg in sent_samples:
+        date_key = msg.received_at.date().isoformat()
+        daily_sent.setdefault(date_key, []).append(msg)
+    for sender, records in person_attachments.items():
+        for rec in records:
+            date_key = rec.get("date") or started_at.date().isoformat()
+            daily_attachments.setdefault(date_key, {}).setdefault(sender, []).append(rec)
+
     if dry_run:
-        # Show what we would do, then exit.
-        for email, freq in sorted(stats.contact_frequency.items(), key=lambda kv: -kv[1])[:20]:
-            print(f"  [DRY] would upsert person: {email!r} freq={freq}")
-        for d in sorted(domain_to_people):
-            print(f"  [DRY] would upsert company: {d} ({len(domain_to_people[d])} people)")
-        for s in sent_samples[:5]:
-            preview = s.body_text.strip().replace("\n", " ")[:80]
-            print(f"  [DRY] would save style sample (subject={s.subject!r}): {preview!r}")
+        print("  [DRY] would write daily journals for:")
+        for date_key in sorted(set(daily_inbound) | set(daily_sent)):
+            ib = len(daily_inbound.get(date_key, []))
+            se = len(daily_sent.get(date_key, []))
+            print(f"    {date_key}: {ib} inbound, {se} sent")
+        print(f"  [DRY] would save {len(sent_samples)} style samples")
         print()
         print(f"DRY RUN — no writes performed. Inbound={stats.emails_processed}, sent={stats.sent_processed}")
         return 0
 
-    # Real DB writes.
+    # Real DB + vault writes.
     with psycopg.connect(db_url, autocommit=False) as conn:
         with conn.cursor() as cur:
-            # People
-            for email, freq in stats.contact_frequency.items():
-                name = person_name.get(email, email)
-                first_seen = person_first_seen.get(email, started_at)
-                last_seen = person_last_seen.get(email, started_at)
-                d = domain_of(email)
-
-                changed = upsert_person_file(
-                    people_dir=people_dir,
-                    email=email,
-                    name=name,
-                    company_domain=d,
-                    first_seen=first_seen,
-                    last_contact=last_seen,
-                    frequency=freq,
-                    attachments=person_attachments.get(email),
+            # Daily Journal files — one per date.
+            for date_key in sorted(set(daily_inbound) | set(daily_sent)):
+                d = dt.date.fromisoformat(date_key)
+                changed = write_daily_journal(
+                    journal_dir=journal_dir,
+                    date=d,
+                    account=account_display,
+                    inbound=daily_inbound.get(date_key, []),
+                    sent=daily_sent.get(date_key, []),
+                    attachments_map=daily_attachments.get(date_key, {}),
                     dry_run=False,
                 )
                 if changed:
-                    stats.people_upserted += 1
+                    stats.journal_files_created += 1
 
-                upsert_entity(
-                    cur,
-                    kind="person",
-                    name=name or email,
-                    canonical_email=email,
-                    aliases=[email],
-                    metadata={"domain": d, "frequency": freq},
-                )
-
-            # Companies
-            for d, people in domain_to_people.items():
-                changed = upsert_company_file(
-                    companies_dir=companies_dir,
-                    domain=d,
-                    first_seen=domain_first_seen.get(d, started_at),
-                    last_contact=domain_last_seen.get(d, started_at),
-                    people=sorted(people),
-                    dry_run=False,
-                )
-                if changed:
-                    stats.companies_upserted += 1
-                upsert_entity(
-                    cur,
-                    kind="company",
-                    name=d,
-                    canonical_email=None,
-                    aliases=[d],
-                    metadata={"people_count": len(people)},
-                )
-
-            # Style samples (sent mail bodies)
+            # Style samples (sent mail bodies) — still go to postgres.
             for msg in sent_samples:
                 primary_recipient = msg.recipient_emails[0] if msg.recipient_emails else ""
                 relationship = relationship_label(
@@ -1499,8 +1456,7 @@ def run(
         f"- days scanned: `{days}`",
         f"- inbound emails processed: `{stats.emails_processed}`",
         f"- sent emails processed: `{stats.sent_processed}`",
-        f"- People profiles created/updated: `{stats.people_upserted}`",
-        f"- Companies profiles created/updated: `{stats.companies_upserted}`",
+        f"- daily journal files created/updated: `{stats.journal_files_created}`",
         f"- style samples saved: `{stats.style_samples_saved}`",
         f"- attachments seen: `{stats.attachments_seen}`",
         f"- attachments uploaded to Drive: `{stats.attachments_uploaded}`",
@@ -1541,8 +1497,7 @@ def run(
     print(bar)
     print(f"  Brain bootstrapped from {days} days of Gmail history")
     print(bar)
-    print(f"   Created   {stats.people_upserted} People profiles  -> brain/People/")
-    print(f"             {stats.companies_upserted} Companies        -> brain/Companies/")
+    print(f"   Created   {stats.journal_files_created} Daily journals -> brain/3 - Daily Journal/")
     print(f"             {stats.style_samples_saved} Style samples    -> postgres-obs.style_samples")
     if stats.attachments_seen:
         print(f"             {stats.attachments_seen} Attachments seen "
@@ -1551,8 +1506,8 @@ def run(
     print()
     print("Next steps:")
     print("   1. Open brain/0 - Identity/ and edit your soul.md (1 min)")
-    print("   2. Glance at brain/People/ — verify it picked up the right contacts")
-    print("   3. DM your bot on Telegram — it now knows who you talk to")
+    print("   2. Glance at brain/3 - Daily Journal/ — daily digest of emails")
+    print("   3. Create People/ entries manually only for key relationships")
     print(bar)
     print(f"  Report: {report_path.relative_to(brain_dir.parent)}")
     print(f"  Brain layout: Evolving Brain Template (MIT) by Samin Yasar")

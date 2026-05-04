@@ -40,14 +40,14 @@ agent:
         Do NOT call Gmail.
 
     STEP 3 — Fallback to Gmail ONLY if STEP 1 returned nothing useful.
-        You DO have GMAIL_FETCH_EMAILS available — but only call it when:
-          - the brain came back empty for this contact/topic, OR
-          - the user explicitly asks for fresh inbox info ("any new emails
-            from X today", "what did X send this morning"), OR
-          - the brain has stale info and the user wants the latest.
+        You have three Gmail accounts available via separate MCP servers:
+          - gmail_hyphenlabs : vasanth@hyphenlabs.com (Work)
+          - gmail_personal   : vasanth19@gmail.com (Personal)
+          - gmail_growth     : mark@growthsystems.ai (Growth)
+
         Before calling Gmail, you MUST say one of:
-          - "Brain has X. Pulling fresh email for the latest."
-          - "Brain doesn't have anything on this — checking Gmail."
+          - "Brain has X. Pulling fresh email from <account> for the latest."
+          - "Brain doesn't have anything on this — checking <account> Gmail."
         This is non-negotiable: state your reason, then fetch.
 
     Worked example — "what do you know about Asha Saini?":
@@ -77,8 +77,8 @@ agent:
         1. brain_search(query="Asha Saini")
            -> read_file the People file for context (who Asha is)
         2. Say: "Asha is your ABSI USA recruiter (3 prior emails on file).
-                 Pulling today's inbox for new threads."
-        3. THEN call GMAIL_FETCH_EMAILS with query "from:asha@absiusa.com newer_than:1d"
+                 Pulling today's personal inbox for new threads."
+        3. THEN call mcp_gmail_personal_GMAIL_FETCH_EMAILS with query "from:asha@absiusa.com newer_than:1d"
 
     The brain has 80+ People profiles + Companies + Meetings + Projects.
     For "tell me about X" questions, the answer is almost always in there.
@@ -103,8 +103,37 @@ agent:
     Capabilities:
       - brain_search / read_file — semantic lookup over the brain, then read full .md detail.
       - Draft Gmail replies (drafts only, never send).
-      - Post to Slack (approval cards to #safeclaw-review for routine actions).
+      - Post to Slack and list Slack channels via the `slack_main` toolkit.
       - Move/rename files in app-owned Drive folder.
+      - Manage Composio connections via the `composio_mgmt` toolkit.
+      - Upload files to Google Drive via Composio Drive tools (on-demand, organized by project).
+
+    ════════════════════════════════════════════════════════════════════════
+    ATTACHMENT PROCESSING PROTOCOL
+    ════════════════════════════════════════════════════════════════════════
+
+    When the reader drops an attachment in /data/attachments/staging/:
+
+    STEP 1 — Read the sidecar metadata JSON (same basename + .json).
+        It contains: sender, subject, email_id, attachment_name, received_at.
+
+    STEP 2 — Infer the project / deal from context.
+        a) brain_search the sender + subject for project/deal matches.
+        b) Check /opt/brain/Companies/ and /opt/brain/People/ for deal links.
+        c) If ambiguous, use the conversation thread context (ongoing deal discussions).
+        d) Default fallback: "Uncategorized" folder.
+
+    STEP 3 — Build the Drive path.
+        SafeClaw/Attachments/{project_or_deal}/{YYYY-MM}/{filename}
+        Example: SafeClaw/Attachments/Royal-Mysorian/2026-05/contract.pdf
+
+    STEP 4 — Upload via Composio Drive (DRIVE_UPLOAD_FILE).
+        After upload succeeds, move the local file to /data/attachments/processed/
+        and record the Drive URL + path in the brain (brain_write or a note file).
+
+    STEP 5 — For bulk uploads, the rclone sidecar (safeclaw-rclone) is available.
+        You can trigger it via: docker exec safeclaw-rclone rclone copy ...
+        (Use this only for batches of 5+ files; prefer Composio for one-offs.)
 
     When drafting an email reply:
       1. read_file the matching /opt/brain/People/<slug>.md for context.
@@ -115,7 +144,7 @@ model:
   # `custom` = generic OpenAI-compatible endpoint (per `hermes setup` hint).
   # We point at local Ollama daemon which proxies :cloud models to ollama.com.
   provider: custom
-  base_url: http://host.docker.internal:11434/v1
+  base_url: http://host.docker.internal:11435/v1
   api_key: ollama-local
   # Hermes uses `default:` (the default model), not `name:` — unlike most agent runtimes.
   # Kimi K2.5 — Moonshot's agentic model. Far better at tool routing
@@ -155,14 +184,39 @@ platforms:
       reply_broadcast: false     # don't spam the main channel with every reply
 
 # ── MCP Servers ──────────────────────────────────────────────────────────────
-# Composio actor MCP exposes 10 tools across Gmail (draft + reply), Slack
-# (send), Drive (move/find/upload/create_folder).
+# Composio actor MCP exposes tools across Gmail (draft + reply), Slack
+# (send), Drive (move/find/upload/create_folder), and Composio management.
 mcp_servers:
-  composio_actor:
-    url: "${COMPOSIO_ACTOR_MCP_URL}"
-    headers:
+  gmail_hyphenlabs:
+    url: "${COMPOSIO_ACTOR_MCP_URL}&connected_account_id=gmail_awber-baraca"
+    headers: &composio_headers
       x-api-key: "${COMPOSIO_API_KEY}"
       x-composio-user-id: "${COMPOSIO_USER_ID}"
+    timeout: 120
+    connect_timeout: 30
+  gmail_personal:
+    url: "${COMPOSIO_ACTOR_MCP_URL}&connected_account_id=gmail_deify-opaled"
+    headers: *composio_headers
+    timeout: 120
+    connect_timeout: 30
+  gmail_growth:
+    url: "${COMPOSIO_ACTOR_MCP_URL}&connected_account_id=gmail_told-rune"
+    headers: *composio_headers
+    timeout: 120
+    connect_timeout: 30
+  slack_main:
+    url: "${COMPOSIO_ACTOR_MCP_URL}&connected_account_id=slack_yearly-gangue"
+    headers: *composio_headers
+    timeout: 120
+    connect_timeout: 30
+  slack_native:
+    command: docker
+    args: ["exec", "-i", "-e", "SLACK_MCP_MODE=actor", "safeclaw-slack-api-mcp", "node", "dist/index.js"]
+    timeout: 30
+    connect_timeout: 10
+  composio_mgmt:
+    url: "${COMPOSIO_ACTOR_MCP_URL}"
+    headers: *composio_headers
     timeout: 120
     connect_timeout: 30
     # Note: GMAIL_FETCH_EMAILS / GMAIL_LIST_THREADS / SLACK_FETCH_CONVERSATION_HISTORY

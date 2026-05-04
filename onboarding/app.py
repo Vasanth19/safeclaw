@@ -104,6 +104,88 @@ def create_app() -> Flask:
     def healthz():
         return {"ok": True}, 200
 
+    @app.post("/api/slack/lookup")
+    def api_slack_lookup():
+        """Resolve a bot token → team_id + user_id via Slack auth.test."""
+        data = request.get_json(silent=True) or {}
+        token = (data.get("bot_token") or "").strip()
+        if not token.startswith("xoxb-"):
+            return jsonify({"ok": False, "error": "invalid token format"}), 400
+        import requests as _req
+        try:
+            r = _req.post(
+                "https://slack.com/api/auth.test",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=8,
+            )
+            body = r.json()
+        except Exception as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 502
+        if not body.get("ok"):
+            return jsonify({"ok": False, "error": body.get("error", "slack_error")}), 400
+        return jsonify({"ok": True, "team_id": body["team_id"], "user_id": body.get("user_id", "")})
+
+    @app.get("/api/slack/list-channels")
+    def api_slack_list_channels():
+        """Return all public channels (and private ones the bot is in) via conversations.list."""
+        token = (request.args.get("bot_token") or "").strip()
+        if not token.startswith("xoxb-"):
+            return jsonify({"ok": False, "error": "invalid token format"}), 400
+        import requests as _req
+        channels = []
+        cursor = None
+        try:
+            while True:
+                params = {"types": "public_channel,private_channel", "exclude_archived": "true", "limit": 200}
+                if cursor:
+                    params["cursor"] = cursor
+                r = _req.get(
+                    "https://slack.com/api/conversations.list",
+                    params=params,
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=10,
+                )
+                body = r.json()
+                if not body.get("ok"):
+                    return jsonify({"ok": False, "error": body.get("error", "slack_error")}), 400
+                for ch in body.get("channels", []):
+                    channels.append({"id": ch["id"], "name": ch.get("name", ch["id"]), "is_private": ch.get("is_private", False)})
+                cursor = body.get("response_metadata", {}).get("next_cursor")
+                if not cursor:
+                    break
+        except Exception as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 502
+        channels.sort(key=lambda c: c["name"])
+        return jsonify({"ok": True, "channels": channels})
+
+    @app.post("/api/slack/check-channels")
+    def api_slack_check_channels():
+        """Check whether the bot can see each channel ID."""
+        data = request.get_json(silent=True) or {}
+        token = (data.get("bot_token") or "").strip()
+        channel_ids = [c.strip() for c in (data.get("channel_ids") or []) if c.strip()]
+        if not token.startswith("xoxb-"):
+            return jsonify({"ok": False, "error": "invalid token format"}), 400
+        import requests as _req
+        results = []
+        for cid in channel_ids[:20]:  # hard cap
+            try:
+                r = _req.get(
+                    "https://slack.com/api/conversations.info",
+                    params={"channel": cid},
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=6,
+                )
+                body = r.json()
+                if body.get("ok"):
+                    ch = body.get("channel", {})
+                    results.append({"id": cid, "ok": True, "name": ch.get("name", cid)})
+                else:
+                    results.append({"id": cid, "ok": False, "error": body.get("error", "unknown")})
+            except Exception as exc:
+                results.append({"id": cid, "ok": False, "error": str(exc)})
+        return jsonify({"ok": True, "channels": results})
+
     @app.post("/api/provision")
     def api_provision():
         # Reject anything that isn't JSON — keeps form parsers honest.

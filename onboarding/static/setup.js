@@ -1,18 +1,3 @@
-/* SafeClaw setup wizard — vanilla JS, no framework.
- *
- * Responsibilities:
- *   - Step navigation (4 steps, hidden fieldsets)
- *   - Conditional field visibility (LLM provider, Telegram on/off)
- *   - Client-side format validation (cheap, gives instant feedback)
- *   - Submit -> POST /api/provision with the right payload shape
- *   - Surface server-side validation errors per-field
- *   - On success -> redirect to /progress/<id>
- *
- * Composio credentials are collected from the customer in Step 2. They
- * own the Composio account (that's where they did their OAuth for Gmail /
- * Drive / Slack), so the four COMPOSIO_* values come from them, not from
- * the operator.
- */
 (function () {
   "use strict";
 
@@ -23,31 +8,76 @@
 
   const stepper = document.getElementById("stepper");
   const panels = form.querySelectorAll(".step-panel");
+  const instrPanels = document.querySelectorAll(".instr-panel");
   const errorBanner = document.getElementById("form-error");
+  const instrToggle = document.getElementById("instructions-toggle");
+  const instrPane = document.getElementById("setup-instructions");
 
-  // ── Step navigation ──────────────────────────────────────────────────
+  // ── Tab navigation ──────────────────────────────────────────────────
   function gotoStep(n) {
+    console.log("Navigating to step:", n);
     panels.forEach(function (panel) {
       panel.classList.toggle("hidden", panel.dataset.step !== String(n));
+    });
+    instrPanels.forEach(function (panel) {
+      panel.classList.toggle("hidden", panel.id !== "instr-step-" + n);
     });
     stepper.querySelectorAll(".step").forEach(function (li) {
       const step = Number(li.dataset.step);
       li.classList.toggle("active", step === n);
-      li.classList.toggle("complete", step < n);
     });
-    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  form.querySelectorAll(".btn-next, .btn-prev").forEach(function (btn) {
-    btn.addEventListener("click", function () {
-      const target = Number(btn.dataset.goto);
-      if (btn.classList.contains("btn-next")) {
-        const current = Number(btn.closest(".step-panel").dataset.step);
-        if (!validateStep(current)) return;
-      }
-      gotoStep(target);
-    });
+  // Use event delegation or direct attachment, ensuring it works
+  stepper.addEventListener("click", function (e) {
+    const li = e.target.closest(".step");
+    if (li) {
+      const step = Number(li.dataset.step);
+      gotoStep(step);
+    }
   });
+
+  // Default to first step
+  gotoStep(1);
+
+  // ── Instructions slide-over ──────────────────────────────────────────
+  const backdrop = document.getElementById("instr-backdrop");
+  const instrClose = document.getElementById("instr-close");
+
+  function openInstr() {
+    instrPane.classList.add("show");
+    backdrop && backdrop.classList.add("show");
+    instrToggle.querySelector("span").textContent = "Hide Instructions";
+  }
+  function closeInstr() {
+    instrPane.classList.remove("show");
+    backdrop && backdrop.classList.remove("show");
+    instrToggle.querySelector("span").textContent = "Show Instructions";
+  }
+
+  if (instrToggle) {
+    instrToggle.addEventListener("click", function () {
+      instrPane.classList.contains("show") ? closeInstr() : openInstr();
+    });
+  }
+  if (instrClose) instrClose.addEventListener("click", closeInstr);
+  if (backdrop) backdrop.addEventListener("click", closeInstr);
+
+  // ── JSON copy button ─────────────────────────────────────────────────
+  const copyBtn = document.getElementById("slack-manifest-copy");
+  if (copyBtn) {
+    copyBtn.addEventListener("click", function () {
+      const text = document.getElementById("slack-manifest").textContent;
+      navigator.clipboard.writeText(text).then(function () {
+        copyBtn.textContent = "Copied!";
+        copyBtn.classList.add("copied");
+        setTimeout(function () {
+          copyBtn.textContent = "Copy";
+          copyBtn.classList.remove("copied");
+        }, 2000);
+      });
+    });
+  }
 
   // ── Conditional visibility ───────────────────────────────────────────
   function refreshLLMVisibility() {
@@ -82,6 +112,189 @@
     r.addEventListener("change", refreshLLMVisibility);
   });
   refreshLLMVisibility();
+
+  // ── Slack auto-populate: workspace ID + admin user ID ───────────────────
+  (function () {
+    const botTokenEl  = form.SLACK_BOT_TOKEN;
+    const workspaceEl = form.SLACK_WORKSPACE_ID;
+    const adminUserEl = form.SLACK_BOT_ADMIN_USER_ID;
+    if (!botTokenEl || !workspaceEl) return;
+
+    let _lastToken = "";
+
+    async function lookupToken(token) {
+      if (!token.startsWith("xoxb-") || token.length < 20) return;
+      if (token === _lastToken) return;
+      _lastToken = token;
+
+      workspaceEl.placeholder = "Looking up…";
+      workspaceEl.disabled = true;
+      if (adminUserEl) { adminUserEl.placeholder = "Looking up…"; adminUserEl.disabled = true; }
+
+      try {
+        const resp = await fetch("/api/slack/lookup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ bot_token: token }),
+        });
+        const body = await resp.json();
+        if (body.ok) {
+          if (body.team_id) { workspaceEl.value = body.team_id; workspaceEl.placeholder = "T…"; }
+          if (body.user_id && adminUserEl && !adminUserEl.value) {
+            adminUserEl.value = body.user_id;
+          }
+        } else {
+          const hint = body.error === "invalid_auth" || body.error === "not_found"
+            ? "token invalid or revoked"
+            : body.error || "unknown";
+          workspaceEl.placeholder = "T… (lookup failed: " + hint + ")";
+        }
+      } catch (_) {
+        workspaceEl.placeholder = "T… (network error)";
+      } finally {
+        workspaceEl.disabled = false;
+        if (adminUserEl) { adminUserEl.placeholder = "U…"; adminUserEl.disabled = false; }
+      }
+    }
+
+    botTokenEl.addEventListener("blur", function () { lookupToken(botTokenEl.value.trim()); });
+    botTokenEl.addEventListener("paste", function (e) {
+      const pasted = (e.clipboardData || window.clipboardData).getData("text").trim();
+      setTimeout(function () { lookupToken(pasted); }, 0);
+    });
+  })();
+
+  // ── Slack channel ID validation ──────────────────────────────────────────
+  (function () {
+    const botTokenEl   = form.SLACK_BOT_TOKEN;
+    const channelsEl   = form.SLACK_PUBLIC_CHANNELS;
+    if (!channelsEl) return;
+
+    let _badgesEl = null;
+
+    function getBadgesContainer() {
+      if (!_badgesEl) {
+        _badgesEl = document.createElement("div");
+        _badgesEl.className = "channel-badges";
+        channelsEl.closest(".field").appendChild(_badgesEl);
+      }
+      return _badgesEl;
+    }
+
+    function renderBadges(channels) {
+      const container = getBadgesContainer();
+      container.innerHTML = "";
+      channels.forEach(function (ch) {
+        const b = document.createElement("span");
+        b.className = "channel-badge " + (ch.ok ? "badge-ok" : "badge-err");
+        b.textContent = ch.ok ? ("✓ #" + ch.name) : ("✗ " + ch.id);
+        if (!ch.ok) b.title = ch.error || "not accessible";
+        container.appendChild(b);
+      });
+    }
+
+    async function checkChannels() {
+      const token    = (botTokenEl && botTokenEl.value.trim()) || "";
+      const rawInput = channelsEl.value.trim();
+      const ids      = rawInput.split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+      if (!token.startsWith("xoxb-") || ids.length === 0) return;
+
+      getBadgesContainer().textContent = "Checking…";
+      try {
+        const resp = await fetch("/api/slack/check-channels", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ bot_token: token, channel_ids: ids }),
+        });
+        const body = await resp.json();
+        if (body.ok) renderBadges(body.channels);
+        else getBadgesContainer().textContent = "Check failed: " + (body.error || "unknown");
+      } catch (_) {
+        getBadgesContainer().textContent = "Network error";
+      }
+    }
+
+    channelsEl.addEventListener("blur", checkChannels);
+    channelsEl.addEventListener("paste", function () { setTimeout(checkChannels, 50); });
+
+    // ── Channel browser ──────────────────────────────────────────────────────
+    const browseBtn    = document.getElementById("slack-browse-channels");
+    const browserEl    = document.getElementById("channel-browser");
+    const searchEl     = document.getElementById("channel-search");
+    const listEl       = document.getElementById("channel-list");
+    let   _allChannels = [];
+
+    // Enable browse button once we have a valid token
+    function updateBrowseBtn() {
+      const token = (botTokenEl && botTokenEl.value.trim()) || "";
+      browseBtn.disabled = !token.startsWith("xoxb-");
+    }
+    if (botTokenEl) {
+      botTokenEl.addEventListener("input", updateBrowseBtn);
+      botTokenEl.addEventListener("blur", updateBrowseBtn);
+    }
+
+    function renderChannelList(channels) {
+      listEl.innerHTML = "";
+      const selected = channelsEl.value.split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+      channels.forEach(function (ch) {
+        const li = document.createElement("li");
+        const checked = selected.includes(ch.id);
+        li.className = checked ? "ch-selected" : "";
+        li.innerHTML = '<label><input type="checkbox"' + (checked ? " checked" : "") + '> ' +
+          (ch.is_private ? "🔒 " : "#") + ch.name +
+          ' <span class="ch-id">' + ch.id + '</span></label>';
+        li.querySelector("input").addEventListener("change", function (e) {
+          let ids = channelsEl.value.split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+          if (e.target.checked) {
+            if (!ids.includes(ch.id)) ids.push(ch.id);
+          } else {
+            ids = ids.filter(function (id) { return id !== ch.id; });
+          }
+          channelsEl.value = ids.join(", ");
+          li.className = e.target.checked ? "ch-selected" : "";
+          checkChannels();
+        });
+        listEl.appendChild(li);
+      });
+    }
+
+    searchEl.addEventListener("input", function () {
+      const q = searchEl.value.toLowerCase();
+      const filtered = q ? _allChannels.filter(function (c) { return c.name.toLowerCase().includes(q); }) : _allChannels;
+      renderChannelList(filtered);
+    });
+
+    browseBtn.addEventListener("click", async function () {
+      if (!browserEl.classList.contains("hidden")) {
+        browserEl.classList.add("hidden");
+        return;
+      }
+      const token = (botTokenEl && botTokenEl.value.trim()) || "";
+      listEl.innerHTML = '<li class="ch-loading">Loading channels…</li>';
+      browserEl.classList.remove("hidden");
+      try {
+        const resp = await fetch("/api/slack/list-channels?bot_token=" + encodeURIComponent(token));
+        const body = await resp.json();
+        if (body.ok) {
+          _allChannels = body.channels;
+          searchEl.value = "";
+          renderChannelList(_allChannels);
+        } else {
+          listEl.innerHTML = '<li class="ch-error">Error: ' + (body.error || "unknown") + '</li>';
+        }
+      } catch (_) {
+        listEl.innerHTML = '<li class="ch-error">Network error</li>';
+      }
+    });
+
+    // Close browser on outside click
+    document.addEventListener("click", function (e) {
+      if (!browserEl.contains(e.target) && e.target !== browseBtn) {
+        browserEl.classList.add("hidden");
+      }
+    });
+  })();
 
   const telegramToggle = document.getElementById("telegram_enabled");
   const telegramFields = document.getElementById("telegram-fields");
@@ -165,24 +378,6 @@
         setFieldError("COMPOSIO_USER_ID", "Composio user ID is required");
         ok = false;
       }
-
-      const reader = (form.COMPOSIO_READER_MCP_URL.value || "").trim();
-      if (!reader) {
-        setFieldError("COMPOSIO_READER_MCP_URL", "Reader MCP URL is required");
-        ok = false;
-      } else if (!looksLikeMcpUrl(reader)) {
-        setFieldError("COMPOSIO_READER_MCP_URL", "Must end with /mcp?user_id=<your_user_id>");
-        ok = false;
-      }
-
-      const actor = (form.COMPOSIO_ACTOR_MCP_URL.value || "").trim();
-      if (!actor) {
-        setFieldError("COMPOSIO_ACTOR_MCP_URL", "Actor MCP URL is required");
-        ok = false;
-      } else if (!looksLikeMcpUrl(actor)) {
-        setFieldError("COMPOSIO_ACTOR_MCP_URL", "Must end with /mcp?user_id=<your_user_id>");
-        ok = false;
-      }
     }
 
     if (step === 3) {
@@ -234,8 +429,6 @@
       // Composio (customer-supplied)
       COMPOSIO_API_KEY: form.COMPOSIO_API_KEY.value.trim(),
       COMPOSIO_USER_ID: form.COMPOSIO_USER_ID.value.trim(),
-      COMPOSIO_READER_MCP_URL: form.COMPOSIO_READER_MCP_URL.value.trim(),
-      COMPOSIO_ACTOR_MCP_URL: form.COMPOSIO_ACTOR_MCP_URL.value.trim(),
       // Slack
       SLACK_BOT_TOKEN: form.SLACK_BOT_TOKEN.value.trim(),
       SLACK_APP_TOKEN: form.SLACK_APP_TOKEN.value.trim(),
@@ -243,9 +436,6 @@
       SLACK_BOT_ADMIN_USER_ID: form.SLACK_BOT_ADMIN_USER_ID.value.trim(),
       SLACK_PUBLIC_CHANNELS: form.SLACK_PUBLIC_CHANNELS.value.trim(),
       telegram_enabled: telegramToggle.checked,
-      // The single LLM_API_KEY field — the provisioner routes it to the
-      // right env var (OLLAMA_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY)
-      // server-side based on the provider radio.
       LLM_API_KEY: apiKey,
     };
 
@@ -294,14 +484,12 @@
       submitBtn.textContent = "Provision now";
       const errs = body.errors || {};
       Object.keys(errs).forEach(function (key) {
-        // Map "llm" pseudo-field back to LLM_API_KEY for highlighting.
         const target = key === "llm" ? "LLM_API_KEY" : key;
         setFieldError(target, errs[key]);
       });
       const summary = body.error || "Some fields didn't check out — see highlighted inputs.";
       errorBanner.textContent = summary;
       errorBanner.classList.remove("hidden");
-      // jump to step that contains first error
       const firstBad = Object.keys(errs)[0];
       const step = stepOf(firstBad);
       if (step) gotoStep(step);
@@ -322,3 +510,4 @@
     return null;
   }
 })();
+

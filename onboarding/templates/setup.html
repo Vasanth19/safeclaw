@@ -5,185 +5,307 @@
 <section class="setup">
   <header class="setup-header">
     <h1>Setup</h1>
-    <p>Four short steps. Nothing leaves this VPS.</p>
-    <ol class="stepper" id="stepper">
-      <li class="step active" data-step="1"><span>1</span> LLM</li>
-      <li class="step" data-step="2"><span>2</span> Composio</li>
-      <li class="step" data-step="3"><span>3</span> Slack</li>
-      <li class="step" data-step="4"><span>4</span> Telegram</li>
-    </ol>
+    <p>Configure your assistant. All data stays local.</p>
   </header>
 
-  <form id="setup-form" class="setup-form" autocomplete="off" novalidate>
+  <button type="button" class="instructions-toggle" id="instructions-toggle">
+    <span>Show Instructions</span>
+  </button>
 
-    <!-- ── Step 1: LLM ──────────────────────────────────────────────── -->
-    <fieldset class="step-panel" data-step="1">
-      <legend>1 / 4 &middot; Which model should drive your assistant?</legend>
+  <div class="setup-container">
+    <div class="setup-main" style="width:100%;">
+      <nav>
+        <ol class="stepper" id="stepper">
+          <li class="step active" data-step="1"><span>1</span> LLM</li>
+          <li class="step" data-step="2"><span>2</span> Composio</li>
+          <li class="step" data-step="3"><span>3</span> Slack</li>
+          <li class="step" data-step="4"><span>4</span> Telegram</li>
+        </ol>
+      </nav>
 
-      <div class="field">
-        <label>
-          <input type="radio" name="llm_provider" value="ollama-cloud" checked>
-          <span class="radio-title">Ollama Cloud <small>(default, fastest path to live)</small></span>
-        </label>
-        <label>
-          <input type="radio" name="llm_provider" value="anthropic">
-          <span class="radio-title">Anthropic Claude</span>
-        </label>
-        <label>
-          <input type="radio" name="llm_provider" value="openai">
-          <span class="radio-title">OpenAI gpt-4o</span>
-        </label>
-      </div>
+      <form id="setup-form" class="setup-form" autocomplete="off" novalidate>
+        <!-- ── Step 1: LLM ──────────────────────────────────────────────── -->
+        <fieldset class="step-panel" data-step="1">
+          <legend>Model Selection</legend>
 
-      <div class="field">
-        <label for="LLM_API_KEY">
-          <span class="api-key-label-text">Ollama API key</span>
-          <a class="help-link" href="/help#llm" target="_blank">where do I get this?</a>
-        </label>
-        <input type="password" id="LLM_API_KEY" name="LLM_API_KEY" autocomplete="new-password"
-               placeholder="ollama_...">
-        <p class="hint" data-when="llm_provider=ollama-cloud">Get from <a href="https://ollama.com/settings/keys" target="_blank" rel="noopener">https://ollama.com/settings/keys</a> &mdash; starts with <code>ollama_</code>.</p>
-        <p class="hint" data-when="llm_provider=anthropic">Starts with <code>sk-ant-</code>. Get from <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Anthropic Console</a>.</p>
-        <p class="hint" data-when="llm_provider=openai">Starts with <code>sk-</code>. Get from <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">OpenAI dashboard</a>.</p>
-      </div>
+          <div class="field">
+            <label>
+              <input type="radio" name="llm_provider" value="ollama-cloud" checked>
+              <span class="radio-title">Ollama Cloud <small>(default, fastest path to live)</small></span>
+            </label>
+            <label>
+              <input type="radio" name="llm_provider" value="anthropic">
+              <span class="radio-title">Anthropic Claude</span>
+            </label>
+            <label>
+              <input type="radio" name="llm_provider" value="openai">
+              <span class="radio-title">OpenAI gpt-4o</span>
+            </label>
+          </div>
 
-      <div class="step-actions">
-        <button type="button" class="btn-next" data-goto="2">Next: Composio</button>
-      </div>
-    </fieldset>
+          <div class="field">
+            <label for="LLM_API_KEY">
+              <span class="api-key-label-text">Ollama API key</span>
+            </label>
+            <input type="password" id="LLM_API_KEY" name="LLM_API_KEY" autocomplete="new-password"
+                   placeholder="ollama_...">
+            <p class="hint" data-when="llm_provider=ollama-cloud">Get from <a href="https://ollama.com/settings/keys" target="_blank" rel="noopener">ollama.com/settings/keys</a></p>
+            <p class="hint" data-when="llm_provider=anthropic">Starts with <code>sk-ant-</code>. Get from <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Anthropic Console</a>.</p>
+            <p class="hint" data-when="llm_provider=openai">Starts with <code>sk-</code>. Get from <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">OpenAI dashboard</a>.</p>
+          </div>
+        </fieldset>
 
-    <!-- ── Step 2: Composio ─────────────────────────────────────────── -->
-    <fieldset class="step-panel hidden" data-step="2">
-      <legend>2 / 4 &middot; Composio &mdash; OAuth + MCP integrations</legend>
+        <!-- ── Step 2: Composio ─────────────────────────────────────────── -->
+        <fieldset class="step-panel hidden" data-step="2">
+          <legend>Composio (OAuth & MCP)</legend>
 
-      <p class="step-intro">
-        Composio holds your Gmail / Drive / Slack OAuth tokens so SafeClaw
-        never has to. First time? Follow the
-        <a href="/help#composio" target="_blank">5-minute Composio walkthrough</a>
-        in another tab, then come back with the four values below.
-      </p>
+          <p class="hint" style="margin-bottom: 20px; color: var(--text-dim);">
+            Provide your API key and User ID. SafeClaw will automatically provision the 
+            <code>safeclaw-reader</code> and <code>safeclaw-actor</code> MCP servers for you.
+          </p>
 
-      <div class="field">
-        <label for="COMPOSIO_API_KEY">
-          Composio API key
-          <a class="help-link" href="/help#composio" target="_blank">where do I get this?</a>
-        </label>
-        <input type="password" id="COMPOSIO_API_KEY" name="COMPOSIO_API_KEY"
-               autocomplete="new-password" placeholder="ak_...">
-        <p class="hint">Starts with <code>ak_</code>. Get from <a href="https://app.composio.dev/settings/api-keys" target="_blank" rel="noopener">app.composio.dev/settings/api-keys</a>.</p>
-      </div>
+          <div class="field">
+            <label for="COMPOSIO_API_KEY">Composio API key</label>
+            <input type="password" id="COMPOSIO_API_KEY" name="COMPOSIO_API_KEY"
+                   autocomplete="new-password" placeholder="ak_...">
+          </div>
 
-      <div class="field">
-        <label for="COMPOSIO_USER_ID">Composio user ID</label>
-        <input type="text" id="COMPOSIO_USER_ID" name="COMPOSIO_USER_ID"
-               placeholder="pg-test-...">
-        <p class="hint">The user ID you connected Gmail / Drive / Slack under in the Composio dashboard.</p>
-      </div>
+          <div class="field">
+            <label for="COMPOSIO_USER_ID">Composio user ID</label>
+            <input type="text" id="COMPOSIO_USER_ID" name="COMPOSIO_USER_ID"
+                   placeholder="user-...">
+          </div>
+        </fieldset>
 
-      <div class="field">
-        <label for="COMPOSIO_READER_MCP_URL">Reader MCP URL</label>
-        <input type="text" id="COMPOSIO_READER_MCP_URL" name="COMPOSIO_READER_MCP_URL"
-               placeholder="https://backend.composio.dev/v3/mcp/.../mcp?user_id=...">
-        <p class="hint">Read-only MCP server URL. Must end with <code>/mcp?user_id=&lt;your_user_id&gt;</code>.</p>
-      </div>
+        <!-- ── Step 3: Slack ────────────────────────────────────────────── -->
+        <fieldset class="step-panel hidden" data-step="3">
+          <legend>Slack Configuration</legend>
 
-      <div class="field">
-        <label for="COMPOSIO_ACTOR_MCP_URL">Actor MCP URL</label>
-        <input type="text" id="COMPOSIO_ACTOR_MCP_URL" name="COMPOSIO_ACTOR_MCP_URL"
-               placeholder="https://backend.composio.dev/v3/mcp/.../mcp?user_id=...">
-        <p class="hint">Draft / send MCP server URL. Must end with <code>/mcp?user_id=&lt;your_user_id&gt;</code>.</p>
-      </div>
+          <div class="field">
+            <label for="SLACK_BOT_TOKEN">Bot Token</label>
+            <input type="password" id="SLACK_BOT_TOKEN" name="SLACK_BOT_TOKEN"
+                   autocomplete="new-password" placeholder="xoxb-...">
+          </div>
 
-      <div class="step-actions">
-        <button type="button" class="btn-prev" data-goto="1">Back</button>
-        <button type="button" class="btn-next" data-goto="3">Next: Slack</button>
-      </div>
-    </fieldset>
+          <div class="field">
+            <label for="SLACK_APP_TOKEN">App Token (Socket Mode)</label>
+            <input type="password" id="SLACK_APP_TOKEN" name="SLACK_APP_TOKEN"
+                   autocomplete="new-password" placeholder="xapp-...">
+          </div>
 
-    <!-- ── Step 3: Slack ────────────────────────────────────────────── -->
-    <fieldset class="step-panel hidden" data-step="3">
-      <legend>3 / 4 &middot; Slack — your assistant's chat surface</legend>
+          <div class="field-row">
+            <div class="field">
+              <label for="SLACK_WORKSPACE_ID">Workspace ID</label>
+              <input type="text" id="SLACK_WORKSPACE_ID" name="SLACK_WORKSPACE_ID"
+                     placeholder="T...">
+            </div>
+            <div class="field">
+              <label for="SLACK_BOT_ADMIN_USER_ID">Admin User ID</label>
+              <input type="text" id="SLACK_BOT_ADMIN_USER_ID" name="SLACK_BOT_ADMIN_USER_ID"
+                     placeholder="U...">
+            </div>
+          </div>
 
-      <p class="step-intro">
-        First time creating a Slack app? Follow the
-        <a href="/help#slack" target="_blank">10-step walkthrough</a>
-        in another tab, then come back.
-      </p>
+          <div class="field">
+            <label for="SLACK_PUBLIC_CHANNELS">Listen in (Channel IDs)</label>
+            <div class="channel-input-row">
+              <input type="text" id="SLACK_PUBLIC_CHANNELS" name="SLACK_PUBLIC_CHANNELS"
+                     placeholder="C012ABCD,C098WXYZ">
+              <button type="button" id="slack-browse-channels" class="btn-ghost" disabled>Browse</button>
+            </div>
+            <div id="channel-browser" class="channel-browser hidden">
+              <input type="text" id="channel-search" placeholder="Search channels…" autocomplete="off">
+              <ul id="channel-list"></ul>
+            </div>
+          </div>
+        </fieldset>
 
-      <div class="field">
-        <label for="SLACK_BOT_TOKEN">Bot Token</label>
-        <input type="password" id="SLACK_BOT_TOKEN" name="SLACK_BOT_TOKEN"
-               autocomplete="new-password" placeholder="xoxb-...">
-      </div>
+        <!-- ── Step 4: Telegram ─────────────────────────────────────────── -->
+        <fieldset class="step-panel hidden" data-step="4">
+          <legend>Telegram (Optional)</legend>
 
-      <div class="field">
-        <label for="SLACK_APP_TOKEN">App Token (Socket Mode)</label>
-        <input type="password" id="SLACK_APP_TOKEN" name="SLACK_APP_TOKEN"
-               autocomplete="new-password" placeholder="xapp-...">
-      </div>
+          <div class="field checkbox-field">
+            <label>
+              <input type="checkbox" id="telegram_enabled" name="telegram_enabled">
+              <span>Enable Telegram bot assistant</span>
+            </label>
+          </div>
 
-      <div class="field-row">
-        <div class="field">
-          <label for="SLACK_WORKSPACE_ID">Workspace ID</label>
-          <input type="text" id="SLACK_WORKSPACE_ID" name="SLACK_WORKSPACE_ID"
-                 placeholder="T...">
+          <div id="telegram-fields" class="hidden">
+            <div class="field">
+              <label for="TELEGRAM_BOT_TOKEN">Bot Token</label>
+              <input type="password" id="TELEGRAM_BOT_TOKEN" name="TELEGRAM_BOT_TOKEN"
+                     autocomplete="new-password" placeholder="123456:ABC-...">
+            </div>
+            <div class="field">
+              <label for="TELEGRAM_ALLOWED_USERS">Allowed User IDs</label>
+              <input type="text" id="TELEGRAM_ALLOWED_USERS" name="TELEGRAM_ALLOWED_USERS"
+                     placeholder="987654321,123456789">
+            </div>
+          </div>
+        </fieldset>
+
+        <div class="step-actions">
+          <button type="submit" class="btn-submit">Provision now</button>
         </div>
-        <div class="field">
-          <label for="SLACK_BOT_ADMIN_USER_ID">Your Slack user ID (admin)</label>
-          <input type="text" id="SLACK_BOT_ADMIN_USER_ID" name="SLACK_BOT_ADMIN_USER_ID"
-                 placeholder="U...">
-        </div>
-      </div>
 
-      <div class="field">
-        <label for="SLACK_PUBLIC_CHANNELS">Channel IDs to listen in</label>
-        <input type="text" id="SLACK_PUBLIC_CHANNELS" name="SLACK_PUBLIC_CHANNELS"
-               placeholder="C012ABCD,C098WXYZ">
-        <p class="hint">Comma-separated. The bot must already be invited to these channels.</p>
-      </div>
-
-      <div class="step-actions">
-        <button type="button" class="btn-prev" data-goto="2">Back</button>
-        <button type="button" class="btn-next" data-goto="4">Next: Telegram</button>
-      </div>
-    </fieldset>
-
-    <!-- ── Step 4: Telegram (optional) ─────────────────────────────── -->
-    <fieldset class="step-panel hidden" data-step="4">
-      <legend>4 / 4 &middot; Telegram <span class="badge">optional</span></legend>
-
-      <div class="field checkbox-field">
-        <label>
-          <input type="checkbox" id="telegram_enabled" name="telegram_enabled">
-          <span>I want a Telegram bot too — boss's pocket assistant.</span>
-        </label>
-      </div>
-
-      <div id="telegram-fields" class="hidden">
-        <div class="field">
-          <label for="TELEGRAM_BOT_TOKEN">Telegram bot token</label>
-          <input type="password" id="TELEGRAM_BOT_TOKEN" name="TELEGRAM_BOT_TOKEN"
-                 autocomplete="new-password" placeholder="123456:ABC-...">
-          <p class="hint">Get from <code>@BotFather</code> on Telegram.</p>
-        </div>
-        <div class="field">
-          <label for="TELEGRAM_ALLOWED_USERS">Allowed Telegram user IDs</label>
-          <input type="text" id="TELEGRAM_ALLOWED_USERS" name="TELEGRAM_ALLOWED_USERS"
-                 placeholder="987654321,123456789">
-          <p class="hint">Comma-separated numeric IDs. DM <code>@userinfobot</code> to find yours.</p>
-        </div>
-      </div>
-
-      <div class="step-actions">
-        <button type="button" class="btn-prev" data-goto="3">Back</button>
-        <button type="submit" class="btn-submit">Provision now</button>
-      </div>
-
-      <p class="error-banner hidden" id="form-error" role="alert"></p>
-    </fieldset>
-
-  </form>
+        <p class="error-banner hidden" id="form-error" role="alert"></p>
+      </form>
+    </div>
+  </div>
 </section>
+
+<div class="instr-backdrop" id="instr-backdrop"></div>
+<aside class="setup-instructions" id="setup-instructions">
+      <div class="instructions-header">
+        <h2>Instructions</h2>
+        <button type="button" class="instr-close" id="instr-close" aria-label="Close">&times;</button>
+      </div>
+      <div class="instructions-content">
+        <!-- ── LLM Instructions ─────────────────────────────────────────── -->
+        <div id="instr-step-1" class="instr-panel">
+          <h3>1. LLM Provider Setup</h3>
+          <p>Choose the model provider for your assistant's intelligence.</p>
+
+          <div class="step-guide">
+            <p><strong>Ollama Cloud (Fastest)</strong></p>
+            <ol>
+              <li>Go to <a href="https://ollama.com/settings/keys" target="_blank">ollama.com/settings/keys</a></li>
+              <li>Sign in and generate a new API key.</li>
+              <li>Copy the key starting with <code>ollama_</code>.</li>
+            </ol>
+
+            <p><strong>Anthropic Claude</strong></p>
+            <ol>
+              <li>Log in to <a href="https://console.anthropic.com/" target="_blank">console.anthropic.com</a></li>
+              <li>Go to <strong>Settings</strong> → <strong>API Keys</strong>.</li>
+              <li>Generate a key starting with <code>sk-ant-</code>.</li>
+            </ol>
+
+            <p><strong>OpenAI GPT-4o</strong></p>
+            <ol>
+              <li>Log in to <a href="https://platform.openai.com/" target="_blank">platform.openai.com</a></li>
+              <li>Go to <strong>Dashboard</strong> → <strong>API keys</strong>.</li>
+              <li>Generate a key starting with <code>sk-</code>.</li>
+            </ol>
+          </div>
+          <p><a href="/help#llm" target="_blank" class="help-link">View full LLM help &rarr;</a></p>
+        </div>
+
+        <!-- ── Composio Instructions ────────────────────────────────────── -->
+        <div id="instr-step-2" class="instr-panel hidden">
+          <h3>2. Composio (Google Auth)</h3>
+          <p>Composio securely handles your Gmail and Drive connections.</p>
+
+          <div class="step-guide">
+            <ol>
+              <li><strong>Sign up:</strong> Create an account at <a href="https://app.composio.dev" target="_blank">app.composio.dev</a>.</li>
+              <li><strong>Connect Tools:</strong> Go to <strong>Tools</strong> in the sidebar.
+                <ul>
+                  <li>Add <strong>Gmail</strong> (Connect your Google account).</li>
+                  <li>Add <strong>Google Drive</strong> (Same account).</li>
+                </ul>
+              </li>
+              <li><strong>Get API Key:</strong> Navigate to <a href="https://app.composio.dev/settings/api-keys" target="_blank">Settings → API Keys</a> and copy your <code>ak_...</code> key.</li>
+              <li><strong>User ID:</strong> This can be your email or any unique string you used when connecting tools. SafeClaw uses this to group your connections.</li>
+            </ol>
+            <p><em>SafeClaw will automatically provision the necessary MCP servers once you submit the form.</em></p>
+          </div>
+          <p><a href="/help#composio" target="_blank" class="help-link">View 5-minute walkthrough &rarr;</a></p>
+        </div>
+
+        <!-- ── Slack Instructions ───────────────────────────────────────── -->
+        <div id="instr-step-3" class="instr-panel hidden">
+          <h3>3. Slack Native Bot</h3>
+          <p>The fastest way to set up Slack is to use an <strong>App Manifest</strong>.</p>
+
+          <div class="step-guide">
+            <ol>
+              <li><strong>Create:</strong> Go to <a href="https://api.slack.com/apps" target="_blank">api.slack.com/apps</a> → <strong>Create New App</strong> → <strong>From Manifest</strong>.</li>
+              <li>Select your workspace, then paste this JSON into the <strong>JSON</strong> tab:</li>
+            </ol>
+            <div class="json-copy-wrapper">
+              <button type="button" class="json-copy-btn" id="slack-manifest-copy" title="Copy JSON">Copy</button>
+            <div class="scope-list-small" id="slack-manifest" style="white-space: pre; overflow-x: auto;">{
+        "display_information": {
+        "name": "SafeClaw"
+        },
+        "features": {
+        "app_home": {
+        "home_tab_enabled": true,
+        "messages_tab_enabled": true,
+        "messages_tab_read_only_enabled": false
+        },
+        "bot_user": {
+        "display_name": "SafeClaw",
+        "always_online": true
+        }
+        },
+        "oauth_config": {
+        "scopes": {
+        "bot": [
+        "app_mentions:read",
+        "channels:history",
+        "channels:read",
+        "chat:write",
+        "chat:write.public",
+        "commands",
+        "groups:history",
+        "groups:read",
+        "im:history",
+        "im:read",
+        "im:write",
+        "mpim:history",
+        "mpim:read",
+        "reactions:read",
+        "reactions:write",
+        "users:read",
+        "users:read.email"
+        ]
+        }
+        },
+        "settings": {
+        "event_subscriptions": {
+        "bot_events": [
+        "app_mention",
+        "message.channels",
+        "message.groups",
+        "message.im",
+        "message.mpim"
+        ]
+        },
+        "org_deploy_enabled": false,
+        "socket_mode_enabled": true,
+        "is_hosted": false,
+        "token_rotation_enabled": false
+        }
+        }</div>
+            </div>
+            <ol start="3">
+              <li><strong>Install:</strong> Sidebar → <strong>Install App</strong>. Install to workspace and copy the <strong>Bot User OAuth Token</strong> (<code>xoxb-...</code>).</li>
+              <li><strong>Socket Mode:</strong> Sidebar → <strong>Basic Information</strong>. Scroll down to <strong>App-Level Tokens</strong> and copy your <code>xapp-...</code> token (scope: <code>connections:write</code>).</li>
+              <li><strong>Admin ID:</strong> In Slack, click your Profile → <strong>More (...)</strong> → <strong>Copy member ID</strong>. This ID (<code>U...</code>) will be the only one allowed to approve email sends.</li>
+            </ol>
+          </div>
+          <p><a href="/help#slack" target="_blank" class="help-link">View 10-step walkthrough &rarr;</a></p>
+        </div>
+        <!-- ── Telegram Instructions ────────────────────────────────────── -->
+        <div id="instr-step-4" class="instr-panel hidden">
+          <h3>4. Telegram Pocket Assistant</h3>
+          <p>Optional: Control your assistant from Telegram.</p>
+
+          <div class="step-guide">
+            <ol>
+              <li><strong>Message @BotFather:</strong> Open <a href="https://t.me/BotFather" target="_blank">t.me/BotFather</a>.</li>
+              <li><strong>Create Bot:</strong> Send <code>/newbot</code> and follow instructions to get your <strong>API Token</strong>.</li>
+              <li><strong>Get Your ID:</strong> Message <a href="https://t.me/userinfobot" target="_blank">t.me/userinfobot</a> to find your numeric User ID. SafeClaw uses this to ensure only you can talk to the bot.</li>
+            </ol>
+          </div>
+          <p><a href="/help#telegram" target="_blank" class="help-link">View Telegram help &rarr;</a></p>
+        </div>
+      </div>
+</aside>
+
 {% endblock %}
 
 {% block scripts %}

@@ -1,0 +1,63 @@
+{
+  "display_information": {
+    "name": "SafeClaw"
+  },
+  "features": {
+    "app_home": {
+      "home_tab_enabled": true,
+      "messages_tab_enabled": true,
+      "messages_tab_read_only_enabled": false
+    },
+    "bot_user": {
+      "display_name": "SafeClaw",
+      "always_online": true
+    }
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "app_mentions:read",
+        "channels:history",
+        "channels:join",
+        "channels:read",
+        "chat:write",
+        "chat:write.public",
+        "commands",
+        "bookmarks:read",
+        "bookmarks:write",
+        "files:read",
+        "files:write",
+        "groups:history",
+        "groups:read",
+        "im:history",
+        "im:read",
+        "im:write",
+        "links:write",
+        "mpim:history",
+        "mpim:read",
+        "pins:read",
+        "pins:write",
+        "reactions:read",
+        "reactions:write",
+        "usergroups:read",
+        "users:read",
+        "users:read.email"
+      ]
+    }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "bot_events": [
+        "app_mention",
+        "message.channels",
+        "message.groups",
+        "message.im",
+        "message.mpim"
+      ]
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": true,
+    "is_hosted": false,
+    "token_rotation_enabled": false
+  }
+}

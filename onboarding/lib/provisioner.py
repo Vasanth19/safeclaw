@@ -115,7 +115,7 @@ def _phase_env(install: Install, install_dir: Path, form: dict) -> None:
     LLM_PRESETS = {
         "ollama-cloud": {
             "HERMES_INFERENCE_PROVIDER": "ollama-cloud",
-            "OLLAMA_BASE_URL": "http://host.docker.internal:11434/v1",
+            "OLLAMA_BASE_URL": "http://host.docker.internal:11435/v1",
             "HERMES_DEFAULT_MODEL": "glm-5.1:cloud",
         },
         "anthropic": {
@@ -145,6 +145,23 @@ def _phase_env(install: Install, install_dir: Path, form: dict) -> None:
     # Layer the provider preset on top — these always win over form input
     # so a customer can't accidentally point at the wrong endpoint.
     values.update(preset)
+
+    # ── Composio Provisioning ────────────────────────────────────────────────
+    # Automatically create the safeclaw-reader and safeclaw-actor MCP servers
+    # using the customer's API key.
+    composio_api_key = form.get("COMPOSIO_API_KEY", "").strip()
+    composio_user_id = form.get("COMPOSIO_USER_ID", "").strip()
+    if composio_api_key and composio_user_id:
+        try:
+            _emit(install, "env_writing", "progress", "Provisioning Composio MCP servers...")
+            mcp_urls = validator.provision_composio_mcps(composio_api_key, composio_user_id)
+            values.update(mcp_urls)
+        except Exception as exc:
+            raise ProvisionError(
+                "env_writing",
+                "Composio provisioning failed.",
+                hint=str(exc)
+            )
 
     try:
         env_writer.write_env(install_dir, values)

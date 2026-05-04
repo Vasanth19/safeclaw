@@ -100,6 +100,62 @@ def validate_openai(api_key: str, base_url: str, model: str) -> tuple[bool, str]
 
 
 # ── Composio ─────────────────────────────────────────────────────────────────
+def provision_composio_mcps(api_key: str, user_id: str) -> dict[str, str]:
+    """Programmatically create the Reader and Actor MCP servers.
+    Returns {READER_URL, ACTOR_URL}. Raises on error."""
+    
+    headers = {"x-api-key": api_key, "Content-Type": "application/json"}
+    
+    # Tool definitions derived from ARCHITECTURE.md and setup.html
+    READER_TOOLS = ["GMAIL_FETCH_EMAILS", "GMAIL_LIST_THREADS", "GMAIL_GET_PROFILE"]
+    ACTOR_TOOLS = [
+        "GMAIL_CREATE_EMAIL_DRAFT", "GMAIL_REPLY_TO_THREAD", "SLACK_SEND_MESSAGE",
+        "GOOGLEDRIVE_FIND_FILE", "GOOGLEDRIVE_MOVE_FILE", "GOOGLEDRIVE_UPLOAD_FILE",
+        "GOOGLEDRIVE_CREATE_FOLDER"
+    ]
+
+    urls = {}
+    for name, tools in [("safeclaw-reader", READER_TOOLS), ("safeclaw-actor", ACTOR_TOOLS)]:
+        # 1. Create the server
+        payload = {
+            "name": name,
+            "user_id": user_id,
+            "app_names": ["gmail", "slack", "googledrive"],
+            "use_composio_auth": True
+        }
+        
+        try:
+            resp = requests.post("https://backend.composio.dev/api/v3/mcp/create", 
+                               json=payload, headers=headers, timeout=TIMEOUT)
+            
+            if resp.status_code in (409, 400):
+                 # Fetch existing if it already exists
+                 list_resp = requests.get("https://backend.composio.dev/api/v3/mcp", 
+                                       headers=headers, timeout=TIMEOUT)
+                 servers = list_resp.json().get("items", [])
+                 server = next((s for s in servers if s["name"] == name), None)
+                 if not server:
+                     raise Exception(f"Could not create or find MCP server: {name}")
+            else:
+                resp.raise_for_status()
+                server = resp.json()
+
+            base_url = server.get("url")
+            if not base_url:
+                raise Exception(f"Composio returned no URL for {name}")
+            
+            # 2. Append the user_id suffix as required by SafeClaw architecture
+            urls[name] = f"{base_url.rstrip('/')}/mcp?user_id={user_id}"
+
+        except Exception as exc:
+            raise Exception(f"Failed to provision {name}: {str(exc)}")
+
+    return {
+        "COMPOSIO_READER_MCP_URL": urls["safeclaw-reader"],
+        "COMPOSIO_ACTOR_MCP_URL": urls["safeclaw-actor"]
+    }
+
+
 def validate_composio_api_key(api_key: str) -> tuple[bool, str]:
     """Confirm the customer's Composio API key works.
 
@@ -232,19 +288,6 @@ def validate_composio(form: dict[str, Any]) -> dict[str, str]:
     if not user_id:
         errors["COMPOSIO_USER_ID"] = "Composio user ID is required"
 
-    # Only do the live MCP check if the API key passed format validation —
-    # the MCP endpoints are slow and 5xx if Composio is unhealthy, no point
-    # piling on errors when the customer's first problem is the API key.
-    reader_url = (form.get("COMPOSIO_READER_MCP_URL") or "").strip()
-    ok, msg = validate_composio_mcp_url(reader_url, api_key, label="Reader MCP")
-    if not ok:
-        errors["COMPOSIO_READER_MCP_URL"] = msg
-
-    actor_url = (form.get("COMPOSIO_ACTOR_MCP_URL") or "").strip()
-    ok, msg = validate_composio_mcp_url(actor_url, api_key, label="Actor MCP")
-    if not ok:
-        errors["COMPOSIO_ACTOR_MCP_URL"] = msg
-
     return errors
 
 
@@ -365,7 +408,7 @@ def validate_telegram(form: dict[str, Any]) -> dict[str, str]:
 # provisioner.LLM_PRESETS is the source of truth at write time.
 _LLM_DEFAULTS = {
     "ollama-cloud": (
-        "http://host.docker.internal:11434/v1",
+        "http://host.docker.internal:11435/v1",
         "glm-5.1:cloud",
     ),
     "anthropic": (

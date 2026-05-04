@@ -56,5 +56,6 @@ push_image "hermes"
 push_image "embedder"
 push_image "brain-api"
 push_image "tasks-api"
+push_image "slack-api"
 
 log "Push complete. Images now available at ${REGISTRY}/safeclaw-*:${VERSION}"

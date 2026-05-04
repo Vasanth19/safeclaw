@@ -88,24 +88,20 @@ docker compose down      # Stops containers, preserves volumes
 
 ### Steps
 
-**Step 1: Configure Composio integrations**
+**Step 1: Configure Integrations (Hybrid Model)**
 
-OAuth + per-toolkit MCP is delegated to Composio (off-box). For each toolkit
-the assistant should reach (Gmail, Drive, Slack, etc.):
+SafeClaw uses a **Hybrid Model** for external tools:
+- **Google (Gmail/Drive):** Delegated to Composio (off-box OAuth).
+- **Slack:** Uses a native on-box MCP server (`slack-api-mcp`) for high-fidelity access (history, files).
 
-1. In the Composio dashboard, connect the underlying account to your
-   `COMPOSIO_USER_ID`.
-2. Add the toolkit to your **Reader** MCP server (read-only allowlist) and / or
-   your **Actor** MCP server (draft/send allowlist) as appropriate.
-3. Suggested connection IDs for a single-user install:
-   - `primary-inbox` (Gmail readonly + draft)
-   - `secondary-inbox` (optional second Gmail account)
-   - `tertiary-inbox` (optional third Gmail account)
-   - `primary-drive` (Drive file scope)
-   - `your-workspace` (Slack — v2 only)
+**Composio (Google):**
+1. In the Composio dashboard, connect Gmail and Drive to your `COMPOSIO_USER_ID`.
+2. Add these to your **Reader** and **Actor** MCP servers.
+3. Slack connection in Composio is **optional** (native tools are preferred).
 
-The two MCP server URLs and your API key go in `.env` as
-`COMPOSIO_READER_MCP_URL`, `COMPOSIO_ACTOR_MCP_URL`, and `COMPOSIO_API_KEY`.
+**Native Slack:**
+1. Ensure `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` are set in `.env`.
+2. The stack automatically boots `slack-api-mcp` to handle deep Slack integration.
 
 **Step 2: Run database migrations**
 ```bash
@@ -353,7 +349,7 @@ docker compose restart hermes-actor
 1. The problem: why LLM personal assistants are inherently risky
 2. The lethal trifecta: private data + untrusted input + exfiltration capability
 3. SafeClaw's architectural solution: the reader/actor split
-4. Per-toolkit MCP allowlists as the load-bearing trust boundary (Composio)
+4. Per-toolkit MCP allowlists: Hybrid Model (Composio for Google + Native for Slack)
 5. Network-layer egress vs. prompt-layer egress: why prompts aren't enough
 6. The approval gate and the 30-day clean-run prerequisite for auto-send
 7. What we'd do differently (lessons learned)

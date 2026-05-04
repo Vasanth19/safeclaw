@@ -133,13 +133,14 @@ SafeClaw never holds a refresh token on disk.
 
 ### 4.2 Platform tier
 
-**Members:** `postgrest`, `embedder`, `brain-api`, `tasks-api`, `reflector`
+**Members:** `postgrest`, `embedder`, `brain-api`, `tasks-api`, `slack-api`, `reflector`
 
 **What's in it:**
 - **postgrest** — auto-generated REST API over `postgres-tasks`. Read/write on the task / review queue happens through HTTP endpoints with row-level-security policies, not raw SQL. The agent tier can `POST /tasks` with a scoped JWT but cannot `SELECT * FROM` arbitrary tables.
 - **embedder** — local sentence-transformers server (`all-MiniLM-L6-v2`, 384-dim). Generates vector embeddings for the brain's semantic search. No API key, no egress, fully self-contained.
 - **brain-api** — MCP server exposing `brain_recall`, `brain_write`, `brain_get_soul`, `brain_list_relationships` to agents. Stdio transport — Hermes spawns it via `docker exec`.
 - **tasks-api** — MCP server wrapping PostgREST for the Actor: `create_task`, `add_comment`, `update_status`, `list_my_open`. Stdio transport, scoped JWT.
+- **slack-api** — Native MCP server for deep Slack access (history, file uploads) using the on-box `SLACK_BOT_TOKEN`. Stdio transport.
 - **reflector** — weekly cron container that re-reads recent observations and proposes Soul/preference updates.
 
 OAuth + per-toolkit access (Gmail, Drive, Slack, etc.) is **not** on this tier. It is delegated to Composio's hosted MCP servers — see §4.4.

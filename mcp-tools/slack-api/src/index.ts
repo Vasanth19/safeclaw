@@ -71,12 +71,36 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["user_id"],
         },
+      },
+      {
+        name: "slack_download_file",
+        description: "Download a file from Slack (url_private from files[] in message history) and save it to a local path. Returns the saved path and file size.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            url_private: { type: "string", description: "url_private or url_private_download from the Slack file object" },
+            save_path: { type: "string", description: "Absolute local path to save the file, e.g. /data/attachments/staging/20260504T120000Z_vasanth_contract.pdf" },
+          },
+          required: ["url_private", "save_path"],
+        },
       }
     );
   }
 
   if (MODE === "actor") {
     tools.push(
+      {
+        name: "slack_download_file",
+        description: "Download a file from Slack (url_private from an incoming message) and save it to a local path. Use this when a user sends a file in DM or channel.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            url_private: { type: "string", description: "url_private or url_private_download from the Slack file object" },
+            save_path: { type: "string", description: "Absolute local path to save the file, e.g. /data/attachments/staging/20260504T120000Z_vasanth_contract.pdf" },
+          },
+          required: ["url_private", "save_path"],
+        },
+      },
       {
         name: "slack_send_message",
         description: "Post a message to a channel or DM",
@@ -130,6 +154,37 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "slack_get_user_info": {
         const res = await slack.users.info({ user: args?.user_id as string });
         return { content: [{ type: "text", text: JSON.stringify(res.user) }] };
+      }
+      case "slack_download_file": {
+        const url = args?.url_private as string;
+        const savePath = args?.save_path as string;
+        const https = await import("https");
+        const http = await import("http");
+        const fs = await import("fs");
+        const path = await import("path");
+
+        // Ensure staging directory exists
+        await fs.promises.mkdir(path.dirname(savePath), { recursive: true });
+
+        await new Promise<void>((resolve, reject) => {
+          const file = fs.createWriteStream(savePath);
+          const proto = url.startsWith("https") ? https : http;
+          proto.get(url, { headers: { Authorization: `Bearer ${token}` } }, (res) => {
+            if (res.statusCode === 301 || res.statusCode === 302) {
+              // Follow redirect
+              proto.get(res.headers.location!, { headers: { Authorization: `Bearer ${token}` } }, (r2) => {
+                r2.pipe(file);
+                file.on("finish", () => { file.close(); resolve(); });
+              }).on("error", reject);
+            } else {
+              res.pipe(file);
+              file.on("finish", () => { file.close(); resolve(); });
+            }
+          }).on("error", (err) => { fs.unlinkSync(savePath); reject(err); });
+        });
+
+        const stat = await fs.promises.stat(savePath);
+        return { content: [{ type: "text", text: JSON.stringify({ saved_path: savePath, size: stat.size }) }] };
       }
       case "slack_send_message": {
         const res = await slack.chat.postMessage({

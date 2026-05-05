@@ -1,3 +1,7 @@
 psycopg[binary]>=3.2
 sentence-transformers>=3.0
 numpy>=1.26
+# Google Drive (used by scripts/lib/bootstrap_brain.py — historical attachment
+# upload to Drive via service account, mirrors mcp-tools/drive-api/main.py).
+google-api-python-client>=2.100
+google-auth>=2.30

@@ -20,6 +20,7 @@
           <li class="step" data-step="2"><span>2</span> Composio</li>
           <li class="step" data-step="3"><span>3</span> Slack</li>
           <li class="step" data-step="4"><span>4</span> Telegram</li>
+          <li class="step" data-step="5"><span>5</span> Google Drive</li>
         </ol>
       </nav>
 
@@ -141,6 +142,62 @@
               <label for="TELEGRAM_ALLOWED_USERS">Allowed User IDs</label>
               <input type="text" id="TELEGRAM_ALLOWED_USERS" name="TELEGRAM_ALLOWED_USERS"
                      placeholder="987654321,123456789">
+            </div>
+          </div>
+        </fieldset>
+
+        <!-- ── Step 5: Google Drive ─────────────────────────────────────── -->
+        <fieldset class="step-panel hidden" data-step="5">
+          <legend>Google Drive (File Upload)</legend>
+
+          <p class="hint" style="margin-bottom: 16px; color: var(--text-dim);">
+            SafeClaw uses a <strong>service account</strong> to upload Slack attachments
+            directly to your Google Drive. Paste your service account key JSON below,
+            then share your Drive folder with the displayed email.
+          </p>
+
+          <div class="field">
+            <label for="GDRIVE_SERVICE_ACCOUNT_JSON">Service Account Key JSON</label>
+            <div class="gdrive-drop-zone" id="gdrive-drop-zone">
+              <textarea
+                id="GDRIVE_SERVICE_ACCOUNT_JSON"
+                name="GDRIVE_SERVICE_ACCOUNT_JSON"
+                class="gdrive-json-textarea"
+                rows="10"
+                placeholder='Paste your service account JSON here, or drag-and-drop the .json file onto this area…
+
+{
+  "type": "service_account",
+  "project_id": "my-project",
+  "private_key_id": "...",
+  ...
+}'
+                spellcheck="false"
+                autocomplete="off"
+              ></textarea>
+              <div class="gdrive-drop-overlay" id="gdrive-drop-overlay">
+                <span>Drop .json file here</span>
+              </div>
+            </div>
+            <div class="gdrive-file-row">
+              <button type="button" class="btn-ghost" id="gdrive-file-btn">Upload .json file</button>
+              <input type="file" id="gdrive-file-input" accept=".json,application/json" style="display:none">
+              <span class="gdrive-status" id="gdrive-status"></span>
+            </div>
+            <div id="gdrive-email-badge" class="gdrive-email-badge hidden">
+              <span class="badge-icon">✓</span>
+              <span>Share your Drive folder with: </span>
+              <code id="gdrive-email-value"></code>
+              <button type="button" class="btn-copy-email" id="gdrive-copy-email" title="Copy email">Copy</button>
+            </div>
+          </div>
+
+          <div class="field gdrive-share-hint hidden" id="gdrive-share-hint">
+            <div class="info-box">
+              <strong>One last step:</strong> Open Google Drive, right-click your
+              <code>SafeClaw</code> folder → <strong>Share</strong> → paste the email
+              above → set role to <strong>Editor</strong> → click Send.
+              SafeClaw will create the folder automatically if it doesn't exist.
             </div>
           </div>
         </fieldset>
@@ -302,6 +359,68 @@
             </ol>
           </div>
           <p><a href="/help#telegram" target="_blank" class="help-link">View Telegram help &rarr;</a></p>
+        </div>
+
+        <!-- ── Google Drive Instructions ────────────────────────────────── -->
+        <div id="instr-step-5" class="instr-panel hidden">
+          <h3>5. Google Drive — Service Account Setup</h3>
+          <p>A service account lets SafeClaw upload files to Drive on your behalf
+             without requiring you to re-authorise. You set it up once.</p>
+
+          <div class="step-guide">
+            <p><strong>Step A — Create a GCP project (skip if you have one)</strong></p>
+            <ol>
+              <li>Go to <a href="https://console.cloud.google.com/" target="_blank">console.cloud.google.com</a>.</li>
+              <li>Click the project dropdown → <strong>New Project</strong>.</li>
+              <li>Name it <code>safeclaw</code> and click <strong>Create</strong>.</li>
+            </ol>
+
+            <p><strong>Step B — Enable the Google Drive API</strong></p>
+            <ol>
+              <li>In the GCP console, go to <strong>APIs &amp; Services → Library</strong>.</li>
+              <li>Search for <strong>Google Drive API</strong> → click it → click <strong>Enable</strong>.</li>
+            </ol>
+
+            <p><strong>Step C — Create a service account</strong></p>
+            <ol>
+              <li>Go to <strong>IAM &amp; Admin → Service Accounts</strong>.</li>
+              <li>Click <strong>+ Create Service Account</strong>.</li>
+              <li>Name it <code>safeclaw-drive</code> → click <strong>Create and Continue</strong>.</li>
+              <li>Skip role assignment → click <strong>Done</strong>.</li>
+            </ol>
+
+            <p><strong>Step D — Download the JSON key</strong></p>
+            <ol>
+              <li>Click the service account you just created.</li>
+              <li>Go to the <strong>Keys</strong> tab → <strong>Add Key → Create new key</strong>.</li>
+              <li>Select <strong>JSON</strong> → click <strong>Create</strong>.</li>
+              <li>A <code>.json</code> file downloads automatically — keep it safe.</li>
+            </ol>
+
+            <p><strong>Step E — Paste the key here</strong></p>
+            <ol>
+              <li>Open the downloaded <code>.json</code> file in any text editor.</li>
+              <li>Select all (<kbd>Cmd+A</kbd> / <kbd>Ctrl+A</kbd>) → copy.</li>
+              <li>Paste into the text area on this step.</li>
+              <li>The setup page will extract and display the service account email
+                  (format: <code>safeclaw-drive@your-project.iam.gserviceaccount.com</code>).</li>
+            </ol>
+
+            <p><strong>Step F — Share your Drive folder with the service account</strong></p>
+            <ol>
+              <li>Open <a href="https://drive.google.com" target="_blank">Google Drive</a>.</li>
+              <li>Find or create a folder named <code>SafeClaw</code>.</li>
+              <li>Right-click the folder → <strong>Share</strong>.</li>
+              <li>Paste the service account email (shown in the green badge after you paste the JSON).</li>
+              <li>Set the role to <strong>Editor</strong> → click <strong>Send</strong>.</li>
+            </ol>
+
+            <p class="hint" style="margin-top: 12px;">
+              <em>The service account only has access to folders you explicitly share with it —
+              it cannot see the rest of your Drive.</em>
+            </p>
+          </div>
+          <p><a href="/help#gdrive" target="_blank" class="help-link">View full Drive setup walkthrough &rarr;</a></p>
         </div>
       </div>
 </aside>

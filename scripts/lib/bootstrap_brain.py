@@ -487,60 +487,46 @@ class ComposioReader:
             return None
 
 
-class ComposioActor:
-    """Tiny client for the Composio Actor MCP server (write side).
+class DriveActorError(Exception):
+    """Raised when the Drive service-account client fails."""
 
-    Owns Drive upload + folder creation. Kept separate from Reader so the
-    trust boundary stays explicit — a misconfigured COMPOSIO_ACTOR_MCP_URL
-    or missing Drive scope shows up as a clean error here, not as a silent
-    Reader privilege escalation.
+
+class DriveActor:
+    """Drive client backed by a Google service account.
+
+    Mirrors the surface of ``mcp-tools/drive-api/main.py`` so the actor flow
+    (real-time, per-attachment) and the bootstrap flow (historical, batched)
+    behave identically against Drive.
+
+    Reads the service-account JSON key from ``GDRIVE_CREDENTIALS_PATH``
+    (the bootstrap container mounts it at ``/repo/config/drive_credentials.json``).
+    No OAuth, no token refresh, no vendor in the upload path — see Step 5 of
+    the onboarding setup page for how the operator generates the key.
     """
 
-    def __init__(self, mcp_url: str, api_key: str, user_id: str | None = None):
-        self.mcp_url = mcp_url
-        self.headers = {
-            "x-api-key": api_key,
-            "User-Agent": "SafeClaw-Bootstrap/1.0",
-        }
-        if user_id:
-            self.headers["x-composio-user-id"] = user_id
-        self._rpc_id = 0
+    def __init__(self, credentials_path: str):
+        try:
+            from google.oauth2 import service_account
+            from googleapiclient.discovery import build
+        except ImportError as exc:  # pragma: no cover — embedder image carries these
+            raise DriveActorError(
+                "google-api-python-client / google-auth not installed in this "
+                "container. Rebuild the embedder image (services/embedder/"
+                "requirements.txt was updated)."
+            ) from exc
 
-    def _next_id(self) -> int:
-        self._rpc_id += 1
-        return self._rpc_id
-
-    def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        body = {
-            "jsonrpc": "2.0",
-            "id": self._next_id(),
-            "method": "tools/call",
-            "params": {"name": tool_name, "arguments": arguments},
-        }
-        resp = _http_post_json(self.mcp_url, self.headers, body)
-        if "error" in resp and resp["error"]:
-            raise ComposioMCPError(
-                f"Composio Actor MCP error for tool {tool_name}: {resp['error']}"
+        if not Path(credentials_path).exists():
+            raise DriveActorError(
+                f"Drive credentials file not found at {credentials_path!r}. "
+                "Complete Step 5 of the onboarding setup (Google Drive service "
+                "account JSON) before running bootstrap."
             )
-        return resp.get("result", {}) or {}
 
-    @staticmethod
-    def _extract_payload(result: dict[str, Any]) -> dict[str, Any]:
-        """Probe the same content shapes the Reader uses."""
-        content = result.get("content")
-        if isinstance(content, list) and content:
-            first = content[0]
-            if isinstance(first, dict) and isinstance(first.get("text"), str):
-                try:
-                    parsed = json.loads(first["text"])
-                    if isinstance(parsed, dict):
-                        return parsed.get("data") or parsed
-                except json.JSONDecodeError:
-                    pass
-        data = result.get("data")
-        if isinstance(data, dict):
-            return data
-        return result if isinstance(result, dict) else {}
+        creds = service_account.Credentials.from_service_account_file(
+            credentials_path,
+            scopes=["https://www.googleapis.com/auth/drive"],
+        )
+        self.service = build("drive", "v3", credentials=creds, cache_discovery=False)
 
     def find_or_create_folder(
         self,
@@ -550,15 +536,14 @@ class ComposioActor:
     ) -> str:
         """Walk ``folder_path`` (top-down), creating any missing segment.
 
-        Returns the leaf folder's Drive ID. Cached per-process so a run
-        with 100 attachments to the same monthly folder makes 1 lookup,
-        not 100.
+        Returns the leaf folder's Drive ID. Cached per-process so a run with
+        100 attachments to the same monthly folder makes 1 lookup, not 100.
         """
         cache_key = "/".join(folder_path)
         if cache_key in folder_cache:
             return folder_cache[cache_key]
 
-        parent_id = "root"
+        parent_id: str | None = None
         running_path: list[str] = []
         for segment in folder_path:
             running_path.append(segment)
@@ -566,47 +551,43 @@ class ComposioActor:
             if running_key in folder_cache:
                 parent_id = folder_cache[running_key]
                 continue
-            # Create (or find existing). Composio's GOOGLEDRIVE_CREATE_FOLDER
-            # is idempotent on (name, parent) in our experience — but we still
-            # try-then-find as a defensive belt.
-            try:
-                result = self.call_tool(
-                    "GOOGLEDRIVE_CREATE_FOLDER",
-                    {
-                        "folder_name": segment,
-                        "parent_id": parent_id,
-                    },
-                )
-                payload = self._extract_payload(result)
-                new_id = (
-                    payload.get("id")
-                    or payload.get("folder_id")
-                    or payload.get("file_id")
-                    or ""
-                )
-            except ComposioMCPError:
-                new_id = ""
+
+            esc = segment.replace("\\", "\\\\").replace("'", "\\'")
+            q = (
+                f"name = '{esc}' "
+                f"and mimeType = 'application/vnd.google-apps.folder' "
+                f"and trashed = false"
+            )
+            if parent_id:
+                q += f" and '{parent_id}' in parents"
+            result = (
+                self.service.files()
+                .list(q=q, fields="files(id,name)", spaces="drive")
+                .execute()
+            )
+            files = result.get("files", [])
+
+            if files:
+                new_id = files[0]["id"]
+            else:
+                meta: dict[str, Any] = {
+                    "name": segment,
+                    "mimeType": "application/vnd.google-apps.folder",
+                }
+                if parent_id:
+                    meta["parents"] = [parent_id]
+                folder = self.service.files().create(body=meta, fields="id").execute()
+                new_id = folder["id"]
+
             if not new_id:
-                # Fallback: GOOGLEDRIVE_FIND_FOLDER lookup by name+parent.
-                try:
-                    found = self.call_tool(
-                        "GOOGLEDRIVE_FIND_FOLDER",
-                        {"folder_name": segment, "parent_id": parent_id},
-                    )
-                    fpayload = self._extract_payload(found)
-                    new_id = (
-                        fpayload.get("id")
-                        or fpayload.get("folder_id")
-                        or ""
-                    )
-                except ComposioMCPError:
-                    new_id = ""
-            if not new_id:
-                raise ComposioMCPError(
+                raise DriveActorError(
                     f"could not create or find Drive folder {segment!r} under {parent_id}"
                 )
             folder_cache[running_key] = new_id
             parent_id = new_id
+
+        if parent_id is None:
+            raise DriveActorError(f"empty folder path {folder_path!r}")
         return parent_id
 
     def upload_file(
@@ -618,28 +599,23 @@ class ComposioActor:
         mime_type: str,
     ) -> dict[str, str]:
         """Upload bytes to Drive. Returns ``{file_id, web_view_link}``."""
-        import base64
-        b64 = base64.b64encode(content).decode("ascii")
-        result = self.call_tool(
-            "GOOGLEDRIVE_UPLOAD_FILE",
-            {
-                "file_name": filename,
-                "parent_id": parent_folder_id,
-                "mime_type": mime_type or "application/octet-stream",
-                "file_content_base64": b64,
-            },
+        import io
+        from googleapiclient.http import MediaIoBaseUpload
+
+        media = MediaIoBaseUpload(
+            io.BytesIO(content),
+            mimetype=mime_type or "application/octet-stream",
+            resumable=True,
         )
-        payload = self._extract_payload(result)
+        meta = {"name": filename, "parents": [parent_folder_id]}
+        uploaded = (
+            self.service.files()
+            .create(body=meta, media_body=media, fields="id,name,webViewLink")
+            .execute()
+        )
         return {
-            "file_id": str(
-                payload.get("id") or payload.get("file_id") or ""
-            ),
-            "web_view_link": str(
-                payload.get("webViewLink")
-                or payload.get("web_view_link")
-                or payload.get("url")
-                or ""
-            ),
+            "file_id": str(uploaded.get("id") or ""),
+            "web_view_link": str(uploaded.get("webViewLink") or ""),
         }
 
 
@@ -1101,7 +1077,7 @@ def run(
     user_key: str,
     composio_api_key: str,
     composio_reader_url: str,
-    composio_actor_url: str | None,
+    drive_credentials_path: str | None,
     composio_user_id: str | None,
     composio_account_ids: list[str],
     days: int,
@@ -1259,12 +1235,21 @@ def run(
     print()
 
     # ── Phase A.5: download & upload attachments to Drive ─────────────────
-    # Skipped silently if no actor URL configured — the metadata still
-    # lands in brain/People/<slug>.md, just without Drive links.
-    if pending_attachments and composio_actor_url and not dry_run:
+    # Skipped silently if no Drive credentials configured — the metadata still
+    # lands in brain/People/<slug>.md, just without Drive links. Uses a Google
+    # service account directly (google-api-python-client), not Composio — the
+    # actor flow at mcp-tools/drive-api/main.py uses the same credentials and
+    # the same Drive layout.
+    if pending_attachments and drive_credentials_path and not dry_run:
         print(f"Phase A.5 — uploading {len(pending_attachments)} attachments to Google Drive...")
         att_state = load_attachments_state(brain_dir)
-        actor = ComposioActor(composio_actor_url, composio_api_key, composio_user_id)
+        try:
+            actor = DriveActor(drive_credentials_path)
+        except DriveActorError as exc:
+            print(f"  [error] Drive client init failed: {exc}")
+            print(f"  [error] Skipping Drive upload for {len(pending_attachments)} attachments. "
+                  "Metadata is still recorded in brain/People/<slug>.md.")
+            actor = None
         folder_cache: dict[str, str] = {}
         # Drive layout: SafeClaw Inbox / <YYYY-MM> / <sender-domain> / <filename>
         DRIVE_ROOT = "SafeClaw Inbox"
@@ -1272,7 +1257,7 @@ def run(
         # Quick precondition probe: if GMAIL_FETCH_ATTACHMENT isn't in the
         # MCP toolkit, fail fast with a clear message instead of looping
         # over every attachment producing identical "not found" errors.
-        toolkit_ok = True
+        toolkit_ok = actor is not None
         for entry in pending_attachments:
             record = entry["record"]
             mid = record["message_id"]
@@ -1286,7 +1271,8 @@ def run(
                 continue
             if not toolkit_ok:
                 # Earlier iteration already proved the toolkit is missing the
-                # download tool — don't repeat the error for every file.
+                # download tool (or the Drive client failed to init) — don't
+                # repeat the error for every file.
                 continue
             # Download from Gmail.
             try:
@@ -1315,7 +1301,10 @@ def run(
                 folder_id = actor.find_or_create_folder(
                     folder_path=folder_path, folder_cache=folder_cache,
                 )
-            except ComposioMCPError as exc:
+            except DriveActorError as exc:
+                print(f"  [warn] folder resolve failed for {'/'.join(folder_path)}: {exc}")
+                continue
+            except Exception as exc:  # google-api-client raises HttpError, etc.
                 print(f"  [warn] folder resolve failed for {'/'.join(folder_path)}: {exc}")
                 continue
             # Upload.
@@ -1326,7 +1315,10 @@ def run(
                     content=blob,
                     mime_type=record["mime"] or "application/octet-stream",
                 )
-            except ComposioMCPError as exc:
+            except DriveActorError as exc:
+                print(f"  [warn] upload failed for {record['filename']}: {exc}")
+                continue
+            except Exception as exc:  # google-api-client raises HttpError, etc.
                 print(f"  [warn] upload failed for {record['filename']}: {exc}")
                 continue
             record["drive_url"] = up.get("web_view_link") or ""
@@ -1345,11 +1337,11 @@ def run(
             f"skipped(already in Drive)={stats.attachments_skipped}"
         )
         print()
-    elif pending_attachments and not composio_actor_url:
+    elif pending_attachments and not drive_credentials_path:
         print(
             f"Phase A.5 — skipping Drive upload "
             f"({len(pending_attachments)} attachments would have been uploaded). "
-            "Set COMPOSIO_ACTOR_MCP_URL to enable."
+            "Set GDRIVE_CREDENTIALS_PATH (or complete Step 5 of onboarding) to enable."
         )
         print()
 
@@ -1565,7 +1557,14 @@ def main(argv: list[str]) -> int:
 
     # Optional — drives Phase A.5 (Drive upload). If absent, attachment
     # metadata still lands in brain/People/<slug>.md without Drive links.
-    composio_actor_url = os.environ.get("COMPOSIO_ACTOR_MCP_URL") or None
+    # Default mirrors scripts/bootstrap-brain.sh's volume mount; the operator's
+    # credentials JSON is generated by Step 5 of the onboarding setup.
+    drive_credentials_path = (
+        os.environ.get("GDRIVE_CREDENTIALS_PATH")
+        or "/repo/config/drive_credentials.json"
+    )
+    if not Path(drive_credentials_path).exists():
+        drive_credentials_path = None
 
     # Optional — comma-separated list of Composio connectedAccountIds.
     # When set, Phase A + B iterate over each account so all linked Gmail
@@ -1583,7 +1582,7 @@ def main(argv: list[str]) -> int:
             user_key=user_key,
             composio_api_key=composio_api_key,
             composio_reader_url=composio_reader_url,
-            composio_actor_url=composio_actor_url,
+            drive_credentials_path=drive_credentials_path,
             composio_user_id=composio_user_id,
             composio_account_ids=composio_account_ids,
             days=days,

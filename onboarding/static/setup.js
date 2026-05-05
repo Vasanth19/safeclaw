@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const TOTAL_STEPS = 4;
+  const TOTAL_STEPS = 5;
 
   const form = document.getElementById("setup-form");
   if (!form) return;
@@ -302,6 +302,119 @@
     telegramFields.classList.toggle("hidden", !telegramToggle.checked);
   });
 
+  // ── Google Drive: drag-and-drop + paste + file picker ───────────────────
+  (function () {
+    const dropZone   = document.getElementById("gdrive-drop-zone");
+    const overlay    = document.getElementById("gdrive-drop-overlay");
+    const textarea   = document.getElementById("GDRIVE_SERVICE_ACCOUNT_JSON");
+    const fileBtn    = document.getElementById("gdrive-file-btn");
+    const fileInput  = document.getElementById("gdrive-file-input");
+    const statusEl   = document.getElementById("gdrive-status");
+    const emailBadge = document.getElementById("gdrive-email-badge");
+    const emailValue = document.getElementById("gdrive-email-value");
+    const copyEmail  = document.getElementById("gdrive-copy-email");
+    const shareHint  = document.getElementById("gdrive-share-hint");
+    if (!dropZone || !textarea) return;
+
+    function applyJson(text) {
+      textarea.value = text;
+      validateGdriveJson(text);
+    }
+
+    async function validateGdriveJson(text) {
+      text = (text || "").trim();
+      if (!text) { setGdriveStatus(""); hideEmailBadge(); return; }
+
+      setGdriveStatus("Validating…");
+      try {
+        var resp = await fetch("/api/gdrive/validate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ json_str: text }),
+        });
+        var body = await resp.json();
+        if (body.ok) {
+          setGdriveStatus("✓ Valid service account key", "ok");
+          showEmailBadge(body.client_email);
+        } else {
+          setGdriveStatus("✗ " + (body.error || "Invalid JSON"), "err");
+          hideEmailBadge();
+        }
+      } catch (_) {
+        setGdriveStatus("✗ Network error", "err");
+        hideEmailBadge();
+      }
+    }
+
+    function setGdriveStatus(msg, kind) {
+      if (!statusEl) return;
+      statusEl.textContent = msg;
+      statusEl.className = "gdrive-status" + (kind ? " gdrive-status-" + kind : "");
+    }
+    function showEmailBadge(email) {
+      if (!emailBadge || !emailValue) return;
+      emailValue.textContent = email || "";
+      emailBadge.classList.remove("hidden");
+      if (shareHint) shareHint.classList.remove("hidden");
+    }
+    function hideEmailBadge() {
+      if (emailBadge) emailBadge.classList.add("hidden");
+      if (shareHint) shareHint.classList.add("hidden");
+    }
+
+    // Copy email button
+    if (copyEmail) {
+      copyEmail.addEventListener("click", function () {
+        var email = (emailValue && emailValue.textContent) || "";
+        navigator.clipboard.writeText(email).then(function () {
+          copyEmail.textContent = "Copied!";
+          setTimeout(function () { copyEmail.textContent = "Copy"; }, 2000);
+        });
+      });
+    }
+
+    // Drag events on the drop zone
+    ["dragenter", "dragover"].forEach(function (evt) {
+      dropZone.addEventListener(evt, function (e) {
+        e.preventDefault(); e.stopPropagation();
+        overlay.classList.add("active");
+      });
+    });
+    ["dragleave", "dragend"].forEach(function (evt) {
+      dropZone.addEventListener(evt, function (e) {
+        if (!dropZone.contains(e.relatedTarget)) overlay.classList.remove("active");
+      });
+    });
+    dropZone.addEventListener("drop", function (e) {
+      e.preventDefault(); e.stopPropagation();
+      overlay.classList.remove("active");
+      var file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (!file) return;
+      var reader = new FileReader();
+      reader.onload = function (ev) { applyJson(ev.target.result); };
+      reader.readAsText(file);
+    });
+
+    // File picker
+    if (fileBtn && fileInput) {
+      fileBtn.addEventListener("click", function () { fileInput.click(); });
+      fileInput.addEventListener("change", function () {
+        var file = fileInput.files && fileInput.files[0];
+        if (!file) return;
+        var reader = new FileReader();
+        reader.onload = function (ev) { applyJson(ev.target.result); };
+        reader.readAsText(file);
+        fileInput.value = "";
+      });
+    }
+
+    // Validate on manual paste or blur
+    textarea.addEventListener("blur", function () { validateGdriveJson(textarea.value); });
+    textarea.addEventListener("paste", function () {
+      setTimeout(function () { validateGdriveJson(textarea.value); }, 50);
+    });
+  })();
+
   // ── Client-side validation ───────────────────────────────────────────
   function setFieldError(name, msg) {
     const el = form.querySelector('[name="' + name + '"]');
@@ -415,6 +528,26 @@
       }
     }
 
+    if (step === 5) {
+      const ta = document.getElementById("GDRIVE_SERVICE_ACCOUNT_JSON");
+      const raw = (ta && ta.value || "").trim();
+      if (!raw) {
+        setFieldError("GDRIVE_SERVICE_ACCOUNT_JSON", "Service account JSON is required");
+        ok = false;
+      } else {
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed.type !== "service_account") {
+            setFieldError("GDRIVE_SERVICE_ACCOUNT_JSON", "JSON must be a service_account key type");
+            ok = false;
+          }
+        } catch (_) {
+          setFieldError("GDRIVE_SERVICE_ACCOUNT_JSON", "Invalid JSON — paste the full contents of the downloaded key file");
+          ok = false;
+        }
+      }
+    }
+
     return ok;
   }
 
@@ -442,6 +575,11 @@
     if (telegramToggle.checked) {
       payload.TELEGRAM_BOT_TOKEN = form.TELEGRAM_BOT_TOKEN.value.trim();
       payload.TELEGRAM_ALLOWED_USERS = form.TELEGRAM_ALLOWED_USERS.value.trim();
+    }
+
+    const gdriveEl = document.getElementById("GDRIVE_SERVICE_ACCOUNT_JSON");
+    if (gdriveEl && gdriveEl.value.trim()) {
+      payload.GDRIVE_SERVICE_ACCOUNT_JSON = gdriveEl.value.trim();
     }
 
     return payload;
@@ -507,6 +645,7 @@
     if (field.startsWith("COMPOSIO_")) return 2;
     if (field.startsWith("SLACK_")) return 3;
     if (field.startsWith("TELEGRAM_")) return 4;
+    if (field.startsWith("GDRIVE_")) return 5;
     return null;
   }
 })();

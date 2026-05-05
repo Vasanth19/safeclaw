@@ -18,8 +18,10 @@ Composio note:
 from __future__ import annotations
 
 import logging
+import os
 import shlex
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 
@@ -170,6 +172,30 @@ def _phase_env(install: Install, install_dir: Path, form: dict) -> None:
             "env_writing", f"could not write .env: {exc}",
             hint="Check filesystem permissions on the install directory.",
         ) from exc
+
+    # Save Google Drive service-account JSON as a separate credentials file.
+    gdrive_json = form.get("GDRIVE_SERVICE_ACCOUNT_JSON", "").strip()
+    if gdrive_json:
+        _emit(install, "env_writing", "progress", "Saving Drive credentials...")
+        config_dir = install_dir / "config"
+        config_dir.mkdir(exist_ok=True)
+        creds_path = config_dir / "drive_credentials.json"
+        fd, tmp = tempfile.mkstemp(prefix=".gdrive_creds.tmp.", dir=str(config_dir))
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(gdrive_json)
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, creds_path)
+        except Exception as exc:
+            try:
+                os.unlink(tmp)
+            except FileNotFoundError:
+                pass
+            raise ProvisionError(
+                "env_writing",
+                "Could not save Drive credentials file.",
+                hint=str(exc),
+            ) from exc
 
     _emit(install, "env_writing", "ok", "Configuration written.")
 

@@ -126,6 +126,25 @@ services:
       # rclone config with Drive OAuth token — managed by Composio, mounted separately.
       - ./config/rclone.conf:/config/rclone/rclone.conf:ro
 
+  # ─── Drive API MCP Server ─────────────────────────────────────────────────
+  # Python MCP server — uses Composio SDK to upload local files to Google Drive.
+  # Handles the s3key presign flow internally; actor just calls drive_upload_file(path, folder).
+  drive-api-mcp:
+    build:
+      context: ./mcp-tools/drive-api
+      dockerfile: Dockerfile
+    container_name: safeclaw-drive-api-mcp
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["echo 'drive-api-mcp ready; will be invoked via docker exec'; sleep infinity"]
+    networks:
+      - safeclaw_net
+    environment:
+      GDRIVE_CREDENTIALS_PATH: /opt/config/drive_credentials.json
+    volumes:
+      - attachments:/data/attachments
+      - ./config:/opt/config:ro
+
   # ─── Tasks API MCP Server ──────────────────────────────────────────────────
   # Runs the Node.js MCP server that wraps PostgREST for hermes-actor.
   tasks-api-mcp:
@@ -211,10 +230,14 @@ services:
       - attachments:/data/attachments
       # Docker socket — required for stdio MCP servers (brain_api, tasks_api)
       # spawned via `docker exec` from Hermes.
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Init wrapper — chmods docker socket before privilege drop so hermes user
+      # (uid 10000) can run docker exec for MCP servers.
+      - ./scripts/hermes-docker-init.sh:/hermes-init.sh:ro
       # Brain mount is deferred — needs HERMES_UID/GID alignment to avoid
       # chown failure on bind-mount permissions. Agent reads brain via the
       # brain-api-mcp → postgres-obs path until we land the UID work.
+    entrypoint: ["/hermes-init.sh"]
     # Run as the long-lived daemon (gateway). The SafeClaw entrypoint handles
     # config-copy + privilege drop + skill sync, then hands off to hermes.
     command: ["gateway", "run", "--accept-hooks"]
@@ -265,11 +288,14 @@ services:
       - attachments:/data/attachments
       # Docker socket — required for stdio MCP servers (brain_api, tasks_api)
       # spawned via `docker exec` from Hermes.
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Init wrapper — chmods docker socket before privilege drop.
+      - ./scripts/hermes-docker-init.sh:/hermes-init.sh:ro
       # Brain mount — read-only so the file skill can search People/, Companies/,
       # and the rest of the Evolving Brain layout. RO avoids the chown issue
       # (we only need to read; the Reader/embedder writes via DB, not files).
       - ./brain:/opt/brain:ro
+    entrypoint: ["/hermes-init.sh"]
     # Gate: exit cleanly if ACTOR_ENABLED is not true; otherwise run gateway daemon
     # + the Hermes web UI (Mission Control) on port 9119 in parallel.
     # Use full path to `hermes` (the CLI binary), not `hermes-agent` (broken legacy).
@@ -294,10 +320,12 @@ services:
   # tiny HTTP server on :8000 so brain-api can turn queries into vectors.
   embedder:
     image: ghcr.io/vasanth19/safeclaw-embedder:1.0
-    # Dev-only: rebuild from source.
-    # build:
-    #   context: ./services/embedder
-    #   dockerfile: Dockerfile
+    # Dev-only: rebuild from source. Currently uncommented while we validate
+    # the google-api-python-client / google-auth additions before bumping to
+    # :1.1 and pushing to the registry.
+    build:
+      context: ./services/embedder
+      dockerfile: Dockerfile
     container_name: safeclaw-embedder
     restart: unless-stopped
     networks:

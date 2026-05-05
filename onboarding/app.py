@@ -186,6 +186,27 @@ def create_app() -> Flask:
                 results.append({"id": cid, "ok": False, "error": str(exc)})
         return jsonify({"ok": True, "channels": results})
 
+    @app.post("/api/gdrive/validate")
+    def api_gdrive_validate():
+        """Parse a service-account JSON string and return the client_email."""
+        data = request.get_json(silent=True) or {}
+        raw = (data.get("json_str") or "").strip()
+        if not raw:
+            return jsonify({"ok": False, "error": "No JSON provided"}), 400
+        from lib.validator import validate_gdrive
+        errors = validate_gdrive({"GDRIVE_SERVICE_ACCOUNT_JSON": raw})
+        if errors:
+            return jsonify({"ok": False, "error": next(iter(errors.values()))}), 400
+        try:
+            creds = json.loads(raw)
+        except ValueError:
+            return jsonify({"ok": False, "error": "Invalid JSON"}), 400
+        return jsonify({
+            "ok": True,
+            "client_email": creds.get("client_email", ""),
+            "project_id": creds.get("project_id", ""),
+        })
+
     @app.post("/api/provision")
     def api_provision():
         # Reject anything that isn't JSON — keeps form parsers honest.

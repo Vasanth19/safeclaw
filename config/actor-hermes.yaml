@@ -1,7 +1,8 @@
-# SafeClaw — hermes-actor configuration (Composio MCP backend)
+# SafeClaw — hermes-actor configuration
 # Mounted into the container at /opt/data/config.yaml.
 #
-# Role: write/action agent. Drafts, posts, and Drive ops via Composio MCP.
+# Role: write/action agent. Drafts and posts via Composio MCP (Gmail, Slack);
+# Drive ops via local drive-api MCP (service account, no vendor in the path).
 # Trust split: has private-data + exfiltration capability but NO untrusted input
 # in context — only reads structured observations + receives explicit human commands.
 
@@ -103,16 +104,51 @@ agent:
     Capabilities:
       - brain_search / read_file — semantic lookup over the brain, then read full .md detail.
       - Draft Gmail replies (drafts only, never send).
-      - Post to Slack and list Slack channels via the `slack_main` toolkit.
-      - Move/rename files in app-owned Drive folder.
+      - Post to Slack and list Slack channels via the `slack_native` toolkit.
       - Manage Composio connections via the `composio_mgmt` toolkit.
-      - Upload files to Google Drive via Composio Drive tools (on-demand, organized by project).
+      - Upload local files to Google Drive via drive_upload_file (service account auth — creates folders automatically, organized by project).
+
+    ════════════════════════════════════════════════════════════════════════
+    SLACK FILE HANDLING (incoming DMs or channel messages with files)
+    ════════════════════════════════════════════════════════════════════════
+
+    When a Slack message arrives with a `files` array (user sent you a file):
+
+    STEP 1 — For each file, extract url_private_download (or url_private),
+        name, size, mimetype, and the message ts.
+
+    STEP 2 — Build safe filename: {ts_as_iso8601}_{sender_slug}_{original_name}
+        Example: 20260504T120000Z_vasanth_cfw-social-deck.pdf
+
+    STEP 3 — Call mcp_slack_native_slack_download_file:
+        url_private: <url from step 1>
+        save_path: /data/attachments/staging/{filename}
+        Do NOT save to /opt/data/cache/ — always use staging so the Drive
+        pipeline can pick it up.
+
+    STEP 4 — Write sidecar JSON at /data/attachments/staging/{filename}.json:
+        {
+          "source": "slack_dm",
+          "channel_id": str,
+          "sender": str,
+          "message_ts": str,
+          "filename": str,
+          "mimetype": str,
+          "size": int,
+          "saved_path": "/data/attachments/staging/...",
+          "received_at": "ISO-8601"
+        }
+
+    STEP 5 — Immediately continue to ATTACHMENT PROCESSING PROTOCOL below
+        to infer project and upload to Drive. Do not ask the user first —
+        just upload and confirm in the reply.
 
     ════════════════════════════════════════════════════════════════════════
     ATTACHMENT PROCESSING PROTOCOL
     ════════════════════════════════════════════════════════════════════════
 
     When the reader drops an attachment in /data/attachments/staging/:
+        (or when you just wrote one there via SLACK FILE HANDLING above)
 
     STEP 1 — Read the sidecar metadata JSON (same basename + .json).
         It contains: sender, subject, email_id, attachment_name, received_at.
@@ -127,13 +163,18 @@ agent:
         SafeClaw/Attachments/{project_or_deal}/{YYYY-MM}/{filename}
         Example: SafeClaw/Attachments/Royal-Mysorian/2026-05/contract.pdf
 
-    STEP 4 — Upload via Composio Drive (DRIVE_UPLOAD_FILE).
+    STEP 4 — Upload via mcp_drive_api_drive_upload_file.
+        local_path: /data/attachments/staging/{filename}
+        folder_path: SafeClaw/Attachments/{project_or_deal}/{YYYY-MM}
+        mimetype: {mimetype from sidecar JSON}
+        This tool creates missing Drive folders automatically and returns the Drive file ID + URL.
         After upload succeeds, move the local file to /data/attachments/processed/
         and record the Drive URL + path in the brain (brain_write or a note file).
 
     STEP 5 — For bulk uploads, the rclone sidecar (safeclaw-rclone) is available.
         You can trigger it via: docker exec safeclaw-rclone rclone copy ...
-        (Use this only for batches of 5+ files; prefer Composio for one-offs.)
+        (Use this only for batches of 5+ files; prefer the drive_api MCP
+        for one-offs.)
 
     When drafting an email reply:
       1. read_file the matching /opt/brain/People/<slug>.md for context.
@@ -159,7 +200,8 @@ model:
 # Hermes ships 74 bundled skills. Loading all of them into context per turn
 # burns ~22K tokens of skill metadata. Restrict the Telegram platform to ONLY
 # the toolsets SafeClaw actually needs:
-#   - native-mcp : connects to Composio MCP servers (Gmail, Slack, Drive)
+#   - native-mcp : connects to MCP servers (Composio for Gmail/Slack, local
+#                  drive-api MCP for Google Drive)
 #   - file       : read/write local files (brain folder editing)
 #   - todo       : in-conversation task tracking
 #   - skills     : let agent inspect/use saved skills (lightweight)
@@ -204,11 +246,6 @@ mcp_servers:
     headers: *composio_headers
     timeout: 120
     connect_timeout: 30
-  slack_main:
-    url: "${COMPOSIO_ACTOR_MCP_URL}&connected_account_id=slack_yearly-gangue"
-    headers: *composio_headers
-    timeout: 120
-    connect_timeout: 30
   slack_native:
     command: docker
     args: ["exec", "-i", "-e", "SLACK_MCP_MODE=actor", "safeclaw-slack-api-mcp", "node", "dist/index.js"]
@@ -225,6 +262,11 @@ mcp_servers:
     # about. The system_prompt enforces "brain first, Gmail second" ordering
     # — see the FALLBACK PROTOCOL section. Disabling these tools entirely
     # would block legitimate "any new emails from <X> today?" queries.
+  drive_api:
+    command: docker
+    args: ["exec", "-i", "safeclaw-drive-api-mcp", "python", "main.py"]
+    timeout: 60
+    connect_timeout: 15
   brain_api:
     command: docker
     args: ["exec", "-i", "safeclaw-brain-api-mcp", "node", "dist/index.js"]
@@ -256,13 +298,13 @@ display:
 schedules:
   morning_briefing:
     cron: "0 7 * * *"
-    description: "Query obs DB for overnight critical_alerts → post digest to #safeclaw-review"
+    description: "Query obs DB for overnight critical_alerts → post digest to #jarvis-command-center"
   reminder_scan:
     cron: "0 15 * * *"
-    description: "Tasks due today → reminder cards in #safeclaw-review"
+    description: "Tasks due today → reminder cards in #jarvis-command-center"
   critical_digest:
     cron: "0 18 * * *"
-    description: "Today's critical_alerts summary → #safeclaw-review"
+    description: "Today's critical_alerts summary → #jarvis-command-center"
 
 # ── Feature flags ────────────────────────────────────────────────────────────
 features:
@@ -272,3 +314,8 @@ skills:
   enabled:
     - core
     - mcp/native-mcp
+
+# ── Home channel (Hermes top-level config key — DO NOT nest under slack:) ────
+# Hermes reads SLACK_HOME_CHANNEL to deliver cron results + proactive messages.
+# Without this, it prompts "/sethome" on every startup.
+SLACK_HOME_CHANNEL: C0AHR1RGMDL   # #jarvis-command-center

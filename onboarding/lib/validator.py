@@ -106,12 +106,13 @@ def provision_composio_mcps(api_key: str, user_id: str) -> dict[str, str]:
     
     headers = {"x-api-key": api_key, "Content-Type": "application/json"}
     
-    # Tool definitions derived from ARCHITECTURE.md and setup.html
+    # Tool definitions derived from ARCHITECTURE.md and setup.html.
+    # Drive operations have been migrated off Composio — Hermes calls the
+    # local drive-api MCP server (mcp-tools/drive-api/main.py), which uses a
+    # Google service account configured in Step 5 of onboarding.
     READER_TOOLS = ["GMAIL_FETCH_EMAILS", "GMAIL_LIST_THREADS", "GMAIL_GET_PROFILE"]
     ACTOR_TOOLS = [
         "GMAIL_CREATE_EMAIL_DRAFT", "GMAIL_REPLY_TO_THREAD", "SLACK_SEND_MESSAGE",
-        "GOOGLEDRIVE_FIND_FILE", "GOOGLEDRIVE_MOVE_FILE", "GOOGLEDRIVE_UPLOAD_FILE",
-        "GOOGLEDRIVE_CREATE_FOLDER"
     ]
 
     urls = {}
@@ -120,7 +121,7 @@ def provision_composio_mcps(api_key: str, user_id: str) -> dict[str, str]:
         payload = {
             "name": name,
             "user_id": user_id,
-            "app_names": ["gmail", "slack", "googledrive"],
+            "app_names": ["gmail", "slack"],
             "use_composio_auth": True
         }
         
@@ -402,6 +403,39 @@ def validate_telegram(form: dict[str, Any]) -> dict[str, str]:
     return errors
 
 
+# ── Google Drive (service account) ──────────────────────────────────────────
+_GDRIVE_REQUIRED_FIELDS = (
+    "type", "project_id", "private_key_id", "private_key",
+    "client_email", "auth_uri", "token_uri",
+)
+
+
+def validate_gdrive(form: dict[str, Any]) -> dict[str, str]:
+    """Validate the pasted service-account JSON. Returns {field: error}."""
+    errors: dict[str, str] = {}
+    raw = (form.get("GDRIVE_SERVICE_ACCOUNT_JSON") or "").strip()
+    if not raw:
+        errors["GDRIVE_SERVICE_ACCOUNT_JSON"] = "Service account JSON is required"
+        return errors
+    try:
+        creds = json.loads(raw)
+    except (ValueError, TypeError):
+        errors["GDRIVE_SERVICE_ACCOUNT_JSON"] = "Invalid JSON — paste the full contents of the key file"
+        return errors
+    if creds.get("type") != "service_account":
+        errors["GDRIVE_SERVICE_ACCOUNT_JSON"] = (
+            f"Expected type 'service_account', got '{creds.get('type', '?')}' — "
+            "make sure you downloaded a Service Account key, not an OAuth client"
+        )
+        return errors
+    missing = [f for f in _GDRIVE_REQUIRED_FIELDS if not creds.get(f)]
+    if missing:
+        errors["GDRIVE_SERVICE_ACCOUNT_JSON"] = (
+            f"JSON is missing required fields: {', '.join(missing)}"
+        )
+    return errors
+
+
 # ── Aggregator ──────────────────────────────────────────────────────────────
 # LLM provider preset — duplicated from provisioner so validate_all() knows
 # which base_url + model to test the API key against. Keep these in sync;
@@ -454,5 +488,8 @@ def validate_all(form: dict[str, Any]) -> dict[str, str]:
 
     # Telegram (optional)
     errors.update(validate_telegram(form))
+
+    # Google Drive (required — service account for file upload)
+    errors.update(validate_gdrive(form))
 
     return errors

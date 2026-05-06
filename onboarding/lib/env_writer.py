@@ -42,6 +42,9 @@ ALLOWED_KEYS = {
     "COMPOSIO_USER_ID",
     "COMPOSIO_READER_MCP_URL",
     "COMPOSIO_ACTOR_MCP_URL",
+    # Web research (optional)
+    "BRAVE_API_KEY",
+    "FIRECRAWL_API_KEY",
     # Slack (primary chat)
     "SLACK_BOT_TOKEN",
     "SLACK_APP_TOKEN",

@@ -145,39 +145,12 @@ services:
       - attachments:/data/attachments
       - ./config:/opt/config:ro
 
-  # ─── Brave Search MCP Server ──────────────────────────────────────────────
-  # Web search for hermes-actor. $5/mo recurring credit covers ~1k queries.
-  # MCP runs on stdio — container idles, Hermes spawns the MCP per-session via
-  # `docker exec`. BRAVE_API_KEY comes from .env.
-  brave-search-mcp:
-    build:
-      context: ./mcp-tools/brave-search
-      dockerfile: Dockerfile
-    container_name: safeclaw-brave-search-mcp
-    restart: "no"
-    entrypoint: ["/bin/sh", "-c"]
-    command: ["echo 'brave-search-mcp ready; will be invoked via docker exec'; sleep infinity"]
-    networks:
-      - safeclaw_net
-    environment:
-      BRAVE_API_KEY: ${BRAVE_API_KEY}
-
-  # ─── Firecrawl MCP Server ─────────────────────────────────────────────────
-  # Page scraping (URL → clean markdown) + structured extraction for hermes-actor.
-  # Free tier is 500 pages one-time — bump to Hobby ($29/mo, 3k pages) once
-  # Hermes is using it actively. Same docker-exec stdio pattern as brave.
-  firecrawl-mcp:
-    build:
-      context: ./mcp-tools/firecrawl
-      dockerfile: Dockerfile
-    container_name: safeclaw-firecrawl-mcp
-    restart: "no"
-    entrypoint: ["/bin/sh", "-c"]
-    command: ["echo 'firecrawl-mcp ready; will be invoked via docker exec'; sleep infinity"]
-    networks:
-      - safeclaw_net
-    environment:
-      FIRECRAWL_API_KEY: ${FIRECRAWL_API_KEY}
+  # NOTE: brave-search-mcp + firecrawl-mcp sidecars (in mcp-tools/brave-search/
+  # and mcp-tools/firecrawl/) are intentionally NOT defined here. Hermes natively
+  # supports Firecrawl via its built-in `web_search` + `web_extract` skills —
+  # configured by setting FIRECRAWL_API_KEY on hermes-actor's environment (see
+  # below). Brave is not in Hermes's native provider list. Dockerfiles remain
+  # in the repo for emergency rollback if the native skill path ever fails.
 
   # ─── Tasks API MCP Server ──────────────────────────────────────────────────
   # Runs the Node.js MCP server that wraps PostgREST for hermes-actor.

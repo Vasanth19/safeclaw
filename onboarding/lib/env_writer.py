@@ -42,9 +42,12 @@ ALLOWED_KEYS = {
     "COMPOSIO_USER_ID",
     "COMPOSIO_READER_MCP_URL",
     "COMPOSIO_ACTOR_MCP_URL",
-    # Web research (optional)
-    "BRAVE_API_KEY",
+    # Web research (optional — Hermes built-in web_search/web_extract activates
+    # when any one of these provider keys is set).
     "FIRECRAWL_API_KEY",
+    "EXA_API_KEY",
+    "TAVILY_API_KEY",
+    "PARALLEL_API_KEY",
     # Slack (primary chat)
     "SLACK_BOT_TOKEN",
     "SLACK_APP_TOKEN",

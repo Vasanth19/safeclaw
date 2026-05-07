@@ -16,11 +16,11 @@
     <div class="setup-main" style="width:100%;">
       <nav>
         <ol class="stepper" id="stepper">
-          <li class="step active" data-step="1"><span>1</span> LLM</li>
-          <li class="step" data-step="2"><span>2</span> Composio</li>
-          <li class="step" data-step="3"><span>3</span> Slack</li>
-          <li class="step" data-step="4"><span>4</span> Telegram</li>
-          <li class="step" data-step="5"><span>5</span> Google Drive</li>
+          <li class="step active" data-step="1"><span>1</span> LLM <span class="step-saved-badge" hidden>✓</span></li>
+          <li class="step" data-step="2"><span>2</span> Composio <span class="step-saved-badge" hidden>✓</span></li>
+          <li class="step" data-step="3"><span>3</span> Slack <span class="step-saved-badge" hidden>✓</span></li>
+          <li class="step" data-step="4"><span>4</span> Telegram <span class="step-saved-badge" hidden>✓</span></li>
+          <li class="step" data-step="5"><span>5</span> Google Drive <span class="step-saved-badge" hidden>✓</span></li>
         </ol>
       </nav>
 
@@ -54,6 +54,10 @@
             <p class="hint" data-when="llm_provider=anthropic">Starts with <code>sk-ant-</code>. Get from <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Anthropic Console</a>.</p>
             <p class="hint" data-when="llm_provider=openai">Starts with <code>sk-</code>. Get from <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">OpenAI dashboard</a>.</p>
           </div>
+          <div class="step-save-row">
+            <button type="button" class="btn-save-step" data-save-step="1">Save</button>
+            <span class="step-save-status" id="save-status-1"></span>
+          </div>
         </fieldset>
 
         <!-- ── Step 2: Composio ─────────────────────────────────────────── -->
@@ -75,6 +79,10 @@
             <label for="COMPOSIO_USER_ID">Composio user ID</label>
             <input type="text" id="COMPOSIO_USER_ID" name="COMPOSIO_USER_ID"
                    placeholder="user-...">
+          </div>
+          <div class="step-save-row">
+            <button type="button" class="btn-save-step" data-save-step="2">Save</button>
+            <span class="step-save-status" id="save-status-2"></span>
           </div>
         </fieldset>
 
@@ -119,6 +127,10 @@
               <ul id="channel-list"></ul>
             </div>
           </div>
+          <div class="step-save-row">
+            <button type="button" class="btn-save-step" data-save-step="3">Save</button>
+            <span class="step-save-status" id="save-status-3"></span>
+          </div>
         </fieldset>
 
         <!-- ── Step 4: Telegram ─────────────────────────────────────────── -->
@@ -143,6 +155,10 @@
               <input type="text" id="TELEGRAM_ALLOWED_USERS" name="TELEGRAM_ALLOWED_USERS"
                      placeholder="987654321,123456789">
             </div>
+          </div>
+          <div class="step-save-row">
+            <button type="button" class="btn-save-step" data-save-step="4">Save</button>
+            <span class="step-save-status" id="save-status-4"></span>
           </div>
         </fieldset>
 
@@ -199,6 +215,10 @@
               above → set role to <strong>Editor</strong> → click Send.
               SafeClaw will create the folder automatically if it doesn't exist.
             </div>
+          </div>
+          <div class="step-save-row">
+            <button type="button" class="btn-save-step" data-save-step="5">Save</button>
+            <span class="step-save-status" id="save-status-5"></span>
           </div>
         </fieldset>
 

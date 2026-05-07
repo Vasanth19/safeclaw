@@ -648,5 +648,172 @@
     if (field.startsWith("GDRIVE_")) return 5;
     return null;
   }
+
+  // ── Per-step save ────────────────────────────────────────────────────
+
+  // Fields belonging to each step (maps to ALLOWED_KEYS in env_writer).
+  var STEP_FIELDS = {
+    1: ["HERMES_INFERENCE_PROVIDER", "OLLAMA_API_KEY", "OLLAMA_BASE_URL",
+        "HERMES_DEFAULT_MODEL", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"],
+    2: ["COMPOSIO_API_KEY", "COMPOSIO_USER_ID",
+        "COMPOSIO_READER_MCP_URL", "COMPOSIO_ACTOR_MCP_URL"],
+    3: ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_WORKSPACE_ID",
+        "SLACK_BOT_ADMIN_USER_ID", "SLACK_PUBLIC_CHANNELS"],
+    4: ["TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USERS"],
+    5: ["GDRIVE_SERVICE_ACCOUNT_JSON"],
+  };
+
+  function buildStepPayload(step) {
+    var payload = {};
+    if (step === 1) {
+      var provider = (form.querySelector('input[name="llm_provider"]:checked') || {}).value || "ollama-cloud";
+      var apiKey   = (form.LLM_API_KEY ? form.LLM_API_KEY.value.trim() : "");
+      payload.HERMES_INFERENCE_PROVIDER = provider;
+      if (apiKey) {
+        if (provider === "ollama-cloud") payload.OLLAMA_API_KEY = apiKey;
+        else if (provider === "anthropic") payload.ANTHROPIC_API_KEY = apiKey;
+        else if (provider === "openai")    payload.OPENAI_API_KEY = apiKey;
+      }
+      var model = form.HERMES_DEFAULT_MODEL ? form.HERMES_DEFAULT_MODEL.value.trim() : "";
+      if (model) payload.HERMES_DEFAULT_MODEL = model;
+      var baseUrl = form.OLLAMA_BASE_URL ? form.OLLAMA_BASE_URL.value.trim() : "";
+      if (baseUrl) payload.OLLAMA_BASE_URL = baseUrl;
+    } else if (step === 2) {
+      ["COMPOSIO_API_KEY", "COMPOSIO_USER_ID", "COMPOSIO_READER_MCP_URL", "COMPOSIO_ACTOR_MCP_URL"]
+        .forEach(function (k) { if (form[k] && form[k].value.trim()) payload[k] = form[k].value.trim(); });
+    } else if (step === 3) {
+      ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_WORKSPACE_ID",
+       "SLACK_BOT_ADMIN_USER_ID", "SLACK_PUBLIC_CHANNELS"]
+        .forEach(function (k) { if (form[k] && form[k].value.trim()) payload[k] = form[k].value.trim(); });
+    } else if (step === 4) {
+      if (document.getElementById("telegram_enabled") && document.getElementById("telegram_enabled").checked) {
+        ["TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USERS"]
+          .forEach(function (k) { if (form[k] && form[k].value.trim()) payload[k] = form[k].value.trim(); });
+      }
+    } else if (step === 5) {
+      var gdriveEl = document.getElementById("GDRIVE_SERVICE_ACCOUNT_JSON");
+      if (gdriveEl && gdriveEl.value.trim()) payload.GDRIVE_SERVICE_ACCOUNT_JSON = gdriveEl.value.trim();
+    }
+    return payload;
+  }
+
+  function markStepSaved(step) {
+    var li = stepper.querySelector('[data-step="' + step + '"]');
+    if (li) {
+      var badge = li.querySelector(".step-saved-badge");
+      if (badge) badge.hidden = false;
+      li.classList.add("saved");
+    }
+  }
+
+  function showSaveStatus(step, ok, msg) {
+    var el = document.getElementById("save-status-" + step);
+    if (!el) return;
+    el.textContent = msg;
+    el.className = "step-save-status " + (ok ? "save-ok" : "save-err");
+    clearTimeout(el._timer);
+    el._timer = setTimeout(function () { el.textContent = ""; el.className = "step-save-status"; }, 4000);
+  }
+
+  async function saveStep(step) {
+    var btn = form.querySelector('[data-save-step="' + step + '"]');
+    if (btn) { btn.disabled = true; btn.textContent = "Saving…"; }
+    var payload = buildStepPayload(step);
+    if (!Object.keys(payload).length) {
+      showSaveStatus(step, false, "Nothing to save on this step.");
+      if (btn) { btn.disabled = false; btn.textContent = "Save"; }
+      return;
+    }
+    try {
+      var resp = await fetch("/api/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      var body = await resp.json();
+      if (resp.ok && body.success) {
+        markStepSaved(step);
+        showSaveStatus(step, true, "Saved ✓");
+      } else {
+        showSaveStatus(step, false, body.error || "Save failed.");
+      }
+    } catch (err) {
+      showSaveStatus(step, false, "Network error: " + err.message);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = "Save"; }
+    }
+  }
+
+  // Wire up Save buttons
+  form.querySelectorAll(".btn-save-step").forEach(function (btn) {
+    btn.addEventListener("click", function () { saveStep(Number(btn.dataset.saveStep)); });
+  });
+
+  // ── Pre-populate from saved .env on page load ────────────────────────
+  // LLM key lives under provider-specific names in .env; map back to form.
+  var LLM_KEY_MAP = {
+    OLLAMA_API_KEY: "ollama-cloud",
+    ANTHROPIC_API_KEY: "anthropic",
+    OPENAI_API_KEY: "openai",
+  };
+
+  async function loadConfig() {
+    var cfg;
+    try {
+      var resp = await fetch("/api/config");
+      if (!resp.ok) return;
+      cfg = await resp.json();
+    } catch (_) { return; }
+
+    // LLM provider + key
+    var providerSet = false;
+    Object.keys(LLM_KEY_MAP).forEach(function (envKey) {
+      if (cfg[envKey]) {
+        var provider = LLM_KEY_MAP[envKey];
+        var radio = form.querySelector('input[name="llm_provider"][value="' + provider + '"]');
+        if (radio) { radio.checked = true; radio.dispatchEvent(new Event("change")); }
+        if (form.LLM_API_KEY) form.LLM_API_KEY.value = cfg[envKey];
+        providerSet = true;
+      }
+    });
+    if (cfg.HERMES_INFERENCE_PROVIDER && !providerSet) {
+      var r = form.querySelector('input[name="llm_provider"][value="' + cfg.HERMES_INFERENCE_PROVIDER + '"]');
+      if (r) { r.checked = true; r.dispatchEvent(new Event("change")); }
+    }
+
+    // All other plain fields
+    var plainFields = [
+      "COMPOSIO_API_KEY", "COMPOSIO_USER_ID", "COMPOSIO_READER_MCP_URL", "COMPOSIO_ACTOR_MCP_URL",
+      "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_WORKSPACE_ID",
+      "SLACK_BOT_ADMIN_USER_ID", "SLACK_PUBLIC_CHANNELS",
+      "TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USERS",
+    ];
+    plainFields.forEach(function (k) {
+      if (cfg[k] && form[k]) form[k].value = cfg[k];
+    });
+
+    // GDRIVE JSON
+    var gdriveEl = document.getElementById("GDRIVE_SERVICE_ACCOUNT_JSON");
+    if (gdriveEl && cfg.GDRIVE_SERVICE_ACCOUNT_JSON) gdriveEl.value = cfg.GDRIVE_SERVICE_ACCOUNT_JSON;
+
+    // Telegram toggle
+    if (cfg.TELEGRAM_BOT_TOKEN) {
+      var tToggle = document.getElementById("telegram_enabled");
+      if (tToggle) { tToggle.checked = true; tToggle.dispatchEvent(new Event("change")); }
+    }
+
+    // Mark steps that have data as saved
+    var stepHasData = { 1: false, 2: false, 3: false, 4: false, 5: false };
+    if (cfg.OLLAMA_API_KEY || cfg.ANTHROPIC_API_KEY || cfg.OPENAI_API_KEY) stepHasData[1] = true;
+    if (cfg.COMPOSIO_API_KEY) stepHasData[2] = true;
+    if (cfg.SLACK_BOT_TOKEN)  stepHasData[3] = true;
+    if (cfg.TELEGRAM_BOT_TOKEN) stepHasData[4] = true;
+    if (cfg.GDRIVE_SERVICE_ACCOUNT_JSON) stepHasData[5] = true;
+    for (var s = 1; s <= TOTAL_STEPS; s++) {
+      if (stepHasData[s]) markStepSaved(s);
+    }
+  }
+
+  loadConfig();
 })();
 

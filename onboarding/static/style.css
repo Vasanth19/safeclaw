@@ -852,3 +852,39 @@ input[type=radio] {
 .dash-toprow h1 { margin: 0; font-size: 1.4rem; }
 .dash-toprow-right { display: flex; align-items: center; gap: 10px; }
 .last-updated { font-size: 0.78rem; color: var(--text-faint); font-family: var(--mono); }
+
+/* ── Per-step Save button ──────────────────────────────────────────────── */
+.step-save-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.btn-save-step {
+  padding: 7px 20px;
+  font-size: 0.85rem;
+  border-radius: 6px;
+  border: 1px solid var(--accent);
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.btn-save-step:hover:not(:disabled) { background: var(--accent); color: #1a1004; }
+.btn-save-step:disabled { opacity: 0.45; cursor: default; }
+
+.step-save-status { font-size: 0.82rem; }
+.step-save-status.save-ok  { color: var(--ok); }
+.step-save-status.save-err { color: var(--error); }
+
+/* Saved badge on stepper items */
+.step-saved-badge {
+  font-size: 0.7rem;
+  color: var(--ok);
+  font-weight: 700;
+  margin-left: 3px;
+  vertical-align: middle;
+}
+.stepper .step.saved .step-saved-badge { display: inline; }

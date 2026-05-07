@@ -104,6 +104,47 @@ def create_app() -> Flask:
     def healthz():
         return {"ok": True}, 200
 
+    @app.get("/api/config")
+    def api_config():
+        """Return current .env values for form pre-population.
+        Returns actual values so the user can edit them. Only ALLOWED_KEYS
+        are returned — no generated secrets (JWT, DB passwords, etc.)."""
+        from lib import env_writer
+        from lib.env_writer import KEY_LINE_RE, ALLOWED_KEYS, PLACEHOLDERS
+        env_path = Path(INSTALL_DIR) / ".env"
+        if not env_path.is_file():
+            return jsonify({}), 200
+        result: dict[str, str] = {}
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            m = KEY_LINE_RE.match(line)
+            if not m:
+                continue
+            key, val = m.group(1), m.group(2).strip('"').strip("'")
+            if key in ALLOWED_KEYS and val and val not in PLACEHOLDERS:
+                result[key] = val
+        return jsonify(result), 200
+
+    @app.post("/api/save")
+    def api_save():
+        """Persist one or more config fields to .env without provisioning.
+        Merges onto any existing .env so partial saves from different steps
+        don't overwrite each other."""
+        if not request.is_json:
+            return jsonify({"success": False, "error": "JSON body required"}), 400
+        form = request.get_json(force=True, silent=False) or {}
+        from lib import env_writer
+        filtered = {
+            k: str(v) for k, v in form.items()
+            if k in env_writer.ALLOWED_KEYS and v not in (None, "")
+        }
+        if not filtered:
+            return jsonify({"success": False, "error": "No valid fields to save"}), 400
+        try:
+            env_writer.write_env(INSTALL_DIR, filtered)
+            return jsonify({"success": True, "saved": list(filtered.keys())}), 200
+        except Exception as exc:
+            return jsonify({"success": False, "error": str(exc)}), 500
+
     @app.post("/api/slack/lookup")
     def api_slack_lookup():
         """Resolve a bot token → team_id + user_id via Slack auth.test."""

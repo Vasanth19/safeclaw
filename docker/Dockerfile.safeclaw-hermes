@@ -53,7 +53,10 @@ COPY vendor/hermes-agent/web/package.json vendor/hermes-agent/web/package-lock.j
 RUN npm install --prefer-offline --no-audit && \
     npx playwright install --with-deps chromium --only-shell && \
     (cd web && npm install --prefer-offline --no-audit) && \
-    npm cache clean --force
+    npm cache clean --force && \
+    # Expose agent-browser CLI on PATH (installed via package.json, but node_modules/.bin
+    # is not in the container's default PATH so shutil.which misses it).
+    ln -sf /opt/hermes/node_modules/.bin/agent-browser /usr/local/bin/agent-browser
 
 # ── Source ──────────────────────────────────────────────────────────────────
 # Pull the entire hermes-agent tree into /opt/hermes. The .dockerignore at
@@ -70,6 +73,13 @@ RUN chmod -R a+rX /opt/hermes
 # Python venv with all extras (matches upstream Dockerfile).
 RUN uv venv && \
     uv pip install --no-cache-dir -e ".[all]"
+
+# Pre-install Chrome for agent-browser as the hermes user so browser_tool.py
+# can navigate without an explicit --executable-path. Runs as hermes (uid 10000)
+# so the cache lands in /opt/data/.agent-browser/browsers at runtime.
+USER hermes
+RUN HOME=/opt/data agent-browser install
+USER root
 
 # ─── Stage B: SafeClaw layer ────────────────────────────────────────────────
 # Skill prune. Layer is cache-invalidated only when the prune script itself

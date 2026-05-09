@@ -7,7 +7,7 @@
 # in context — only reads structured observations + receives explicit human commands.
 
 agent:
-  name: safeclaw-actor
+  name: rspur-hermes-actor
   system_prompt: |
     You are SafeClaw — the user's personal AI assistant.
 
@@ -94,6 +94,7 @@ agent:
       /opt/brain/7 - Resources/  — reference material
       /opt/brain/People/         — one .md per contact (slug: name-at-domain-com)
       /opt/brain/Companies/      — one .md per sender domain
+      /opt/brain/Slack/          — daily Slack channel digests (Slack/<channel>/<YYYY-MM-DD>.md)
 
     Talk to the user in plain English. They cannot see raw tool names.
     Before each tool call, narrate one short sentence:
@@ -302,9 +303,16 @@ mcp_servers:
     headers: *composio_headers
     timeout: 120
     connect_timeout: 30
+  # slack_native runs AS A DIRECT NODE SUBPROCESS of hermes-actor. Source baked
+  # at /opt/mcp-tools/slack-api. SLACK_BOT_TOKEN is the same one the platform
+  # adapter uses (we don't blank it on actor); SLACK_MCP_MODE=actor unlocks
+  # send/post tools per the slack-api source.
   slack_native:
-    command: docker
-    args: ["exec", "-i", "-e", "SLACK_MCP_MODE=actor", "safeclaw-slack-api-mcp", "node", "dist/index.js"]
+    command: node
+    args: ["/opt/mcp-tools/slack-api/dist/index.js"]
+    env:
+      SLACK_BOT_TOKEN: "${SLACK_BOT_TOKEN}"
+      SLACK_MCP_MODE: "actor"
     timeout: 30
     connect_timeout: 10
   composio_mgmt:
@@ -318,9 +326,15 @@ mcp_servers:
     # about. The system_prompt enforces "brain first, Gmail second" ordering
     # — see the FALLBACK PROTOCOL section. Disabling these tools entirely
     # would block legitimate "any new emails from <X> today?" queries.
+  # drive_api runs AS A DIRECT PYTHON SUBPROCESS of hermes-actor (own venv at
+  # /opt/mcp-tools/drive-api/.venv to keep its google-api-python-client deps
+  # isolated from the Hermes venv). Service-account credentials must be
+  # mounted at /opt/config/drive_credentials.json — see hermes-actor volumes.
   drive_api:
-    command: docker
-    args: ["exec", "-i", "safeclaw-drive-api-mcp", "python", "main.py"]
+    command: /opt/mcp-tools/drive-api/.venv/bin/python
+    args: ["/opt/mcp-tools/drive-api/main.py"]
+    env:
+      GDRIVE_CREDENTIALS_PATH: "/opt/config/drive_credentials.json"
     timeout: 60
     connect_timeout: 15
   # NOTE: web_search + web_extract are NOT wired here — they're served by
@@ -328,14 +342,25 @@ mcp_servers:
   # FIRECRAWL_API_KEY (or EXA_API_KEY / TAVILY_API_KEY / PARALLEL_API_KEY) is
   # present in the container env. The key flows from .env via env_file in
   # docker-compose.yml. See WEB RESEARCH PROTOCOL in the system prompt for usage.
+  # brain_api + tasks_api now run AS DIRECT NODE SUBPROCESSES of hermes-actor.
+  # The MCP source is baked into the Hermes image at /opt/mcp-tools/ — no
+  # sidecar container, no docker exec, no docker.sock dependency. Standard
+  # stdio MCP pattern.
   brain_api:
-    command: docker
-    args: ["exec", "-i", "safeclaw-brain-api-mcp", "node", "dist/index.js"]
+    command: node
+    args: ["/opt/mcp-tools/brain-api/dist/index.js"]
+    env:
+      DATABASE_URL: "${BRAIN_OBS_DATABASE_URL}"
+      EMBEDDER_URL: "${BRAIN_EMBEDDER_URL}"
+      BRAIN_USER_KEY: "${BRAIN_USER_KEY}"
     timeout: 30
     connect_timeout: 10
   tasks_api:
-    command: docker
-    args: ["exec", "-i", "safeclaw-tasks-api-mcp", "node", "dist/index.js"]
+    command: node
+    args: ["/opt/mcp-tools/tasks-api/dist/index.js"]
+    env:
+      POSTGREST_URL: "http://postgrest:3000"
+      TASKS_AGENT_JWT: "${TASKS_AGENT_JWT}"
     timeout: 30
     connect_timeout: 10
 
@@ -366,6 +391,14 @@ schedules:
   critical_digest:
     cron: "0 18 * * *"
     description: "Today's critical_alerts summary → #jarvis-command-center"
+  slack_daily_digest:
+    cron: "0 6 * * *"
+    description: >
+      For each channel in SLACK_INGEST_CHANNELS, summarize yesterday's
+      messages from postgres-obs (observations where source='slack' and
+      created_at >= yesterday 00:00 and < today 00:00) into
+      /opt/brain/Slack/<channel-name>/<YYYY-MM-DD>.md. Include sender,
+      timestamp, and key threads. Skip channels with no activity.
 
 # ── Feature flags ────────────────────────────────────────────────────────────
 features:

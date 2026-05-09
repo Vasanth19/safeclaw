@@ -45,14 +45,9 @@
   <div class="log-panel">
     <div class="log-toolbar">
       <select id="log-container-select">
-        <option value="safeclaw-hermes-reader">Reader Agent</option>
-        <option value="safeclaw-hermes-actor">Actor Agent</option>
-        <option value="safeclaw-postgres-obs">Obs DB</option>
-        <option value="safeclaw-postgres-tasks">Tasks DB</option>
-        <option value="safeclaw-postgrest">PostgREST</option>
-        <option value="safeclaw-embedder">Embedder</option>
-        <option value="safeclaw-reflector">Reflector</option>
-        <option value="safeclaw-brain-api-mcp">Brain MCP</option>
+        {% for opt in container_options %}
+        <option value="{{ opt.value }}">{{ opt.label }}</option>
+        {% endfor %}
       </select>
       <button class="log-btn" id="btn-stream" onclick="toggleStream()">Connect</button>
       <button class="log-btn" onclick="clearLog()">Clear</button>

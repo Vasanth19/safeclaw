@@ -96,8 +96,45 @@ COPY --chmod=0755 docker/safeclaw-entrypoint.sh /opt/hermes/docker/safeclaw-entr
 RUN mkdir -p /safeclaw/config-template && \
     chown -R hermes:hermes /safeclaw
 
+# ─── Stage B (cont): bake brain-api + tasks-api + slack-api + drive-api MCPs ─
+# Previously these were sidecar containers invoked via `docker exec`. Baking
+# the source into the Hermes image lets Hermes spawn them as direct Node /
+# Python subprocesses (standard stdio MCP pattern) — drops 4 containers,
+# removes the docker.sock dependency for these MCPs, and means one image to ship.
+#
+# Two-step COPY (manifests → install → src → build) so npm install stays
+# layer-cached unless package.json/package-lock.json actually changes.
+COPY mcp-tools/brain-api/package.json mcp-tools/brain-api/package-lock.json /opt/mcp-tools/brain-api/
+RUN cd /opt/mcp-tools/brain-api && npm install --no-audit --prefer-offline
+COPY mcp-tools/brain-api/tsconfig.json /opt/mcp-tools/brain-api/
+COPY mcp-tools/brain-api/src/ /opt/mcp-tools/brain-api/src/
+RUN cd /opt/mcp-tools/brain-api && npm run build && npm prune --omit=dev
+
+COPY mcp-tools/tasks-api/package.json mcp-tools/tasks-api/package-lock.json /opt/mcp-tools/tasks-api/
+RUN cd /opt/mcp-tools/tasks-api && npm install --no-audit --prefer-offline
+COPY mcp-tools/tasks-api/tsconfig.json /opt/mcp-tools/tasks-api/
+COPY mcp-tools/tasks-api/src/ /opt/mcp-tools/tasks-api/src/
+RUN cd /opt/mcp-tools/tasks-api && npm run build && npm prune --omit=dev
+
+# slack-api: native Slack MCP (channel history, list, send) — distinct from
+# Composio's SLACK_SEND_MESSAGE; the native tools expose lower-level ops the
+# reader's intake protocol depends on (slack_get_channel_history, slack_list_channels).
+COPY mcp-tools/slack-api/package.json /opt/mcp-tools/slack-api/
+RUN cd /opt/mcp-tools/slack-api && npm install --no-audit --prefer-offline
+COPY mcp-tools/slack-api/tsconfig.json /opt/mcp-tools/slack-api/
+COPY mcp-tools/slack-api/src/ /opt/mcp-tools/slack-api/src/
+RUN cd /opt/mcp-tools/slack-api && npm run build && npm prune --omit=dev
+
+# drive-api: service-account Google Drive uploads (Python). Isolated venv at
+# /opt/mcp-tools/drive-api/.venv so its deps don't bleed into the Hermes venv.
+COPY mcp-tools/drive-api/requirements.txt /opt/mcp-tools/drive-api/
+RUN uv venv /opt/mcp-tools/drive-api/.venv && \
+    uv pip install --python /opt/mcp-tools/drive-api/.venv/bin/python --no-cache-dir \
+        -r /opt/mcp-tools/drive-api/requirements.txt
+COPY mcp-tools/drive-api/main.py /opt/mcp-tools/drive-api/
+
 # Final perms — any HERMES_UID needs traverse + read on our additions.
-RUN chmod -R a+rX /opt/hermes /safeclaw
+RUN chmod -R a+rX /opt/hermes /safeclaw /opt/mcp-tools
 
 ENV HERMES_WEB_DIST=/opt/hermes/hermes_cli/web_dist
 ENV HERMES_HOME=/opt/data
@@ -105,7 +142,7 @@ ENV PATH="/opt/data/.local/bin:${PATH}"
 
 # Sentinel env vars so customers / scripts can detect the SafeClaw-modified image.
 ENV SAFECLAW_IMAGE_VARIANT=hermes
-ENV SAFECLAW_IMAGE_VERSION=1.0
+ENV SAFECLAW_IMAGE_VERSION=1.2
 
 VOLUME [ "/opt/data" ]
 ENTRYPOINT [ "/usr/bin/tini", "-g", "--", "/opt/hermes/docker/safeclaw-entrypoint.sh" ]

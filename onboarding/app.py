@@ -55,15 +55,25 @@ log = logging.getLogger("safeclaw.app")
 
 
 # ── Dashboard ─────────────────────────────────────────────────────────────
+# Container names use a prefix that matches the compose project. Default is
+# unprefixed ("") for the canonical customer deployment (project = "safeclaw");
+# operators running a custom-named project (e.g. "acme-safeclaw") can override
+# via env var.
+#   SAFECLAW_CONTAINER_PREFIX="acme-"  →  acme-safeclaw-hermes-reader, ...
+_CONTAINER_PREFIX = os.environ.get("SAFECLAW_CONTAINER_PREFIX", "")
+
+# brain-api-mcp / tasks-api-mcp / slack-api-mcp / drive-api-mcp were sidecar
+# containers; they are now baked into the Hermes image (see
+# Dockerfile.safeclaw-hermes Stage B) and run as Node/Python subprocesses
+# inside hermes-reader / hermes-actor. No standalone container to track.
 _CONTAINERS = {
-    "safeclaw-hermes-reader":  {"label": "Reader Agent",  "kind": "agent"},
-    "safeclaw-hermes-actor":   {"label": "Actor Agent",   "kind": "agent"},
-    "safeclaw-postgres-obs":   {"label": "Obs DB",        "kind": "infra"},
-    "safeclaw-postgres-tasks": {"label": "Tasks DB",      "kind": "infra"},
-    "safeclaw-postgrest":      {"label": "PostgREST",     "kind": "infra"},
-    "safeclaw-embedder":       {"label": "Embedder",      "kind": "infra"},
-    "safeclaw-reflector":      {"label": "Reflector",     "kind": "infra"},
-    "safeclaw-brain-api-mcp":  {"label": "Brain MCP",     "kind": "infra"},
+    f"{_CONTAINER_PREFIX}safeclaw-hermes-reader":  {"label": "Reader Agent",  "kind": "agent"},
+    f"{_CONTAINER_PREFIX}safeclaw-hermes-actor":   {"label": "Actor Agent",   "kind": "agent"},
+    f"{_CONTAINER_PREFIX}safeclaw-postgres-obs":   {"label": "Obs DB",        "kind": "infra"},
+    f"{_CONTAINER_PREFIX}safeclaw-postgres-tasks": {"label": "Tasks DB",      "kind": "infra"},
+    f"{_CONTAINER_PREFIX}safeclaw-postgrest":      {"label": "PostgREST",     "kind": "infra"},
+    f"{_CONTAINER_PREFIX}safeclaw-embedder":       {"label": "Embedder",      "kind": "infra"},
+    f"{_CONTAINER_PREFIX}safeclaw-reflector":      {"label": "Reflector",     "kind": "infra"},
 }
 
 
@@ -333,18 +343,35 @@ def create_app() -> Flask:
     # ── Dashboard ─────────────────────────────────────────────────────────
     @app.get("/dashboard")
     def dashboard():
-        return render_template("dashboard.html")
+        # Pass the prefixed container list so the log-stream dropdown shows
+        # the correct names for whichever compose project is deployed.
+        return render_template(
+            "dashboard.html",
+            container_options=[
+                {"value": cname, "label": meta["label"]}
+                for cname, meta in _CONTAINERS.items()
+            ],
+        )
 
     @app.get("/api/services")
     def api_services():
         results = []
         names = list(_CONTAINERS.keys())
+        # `docker inspect a b c` returns exit 1 if any one is missing — but
+        # stdout still contains valid JSON for the ones that exist. Parse
+        # stdout regardless of exit code so a single absent container doesn't
+        # mark all of them absent. Anything missing falls through to the
+        # "absent" branch in the per-container loop below.
+        inspected = []
         try:
             raw = subprocess.run(
                 ["docker", "inspect"] + names,
                 capture_output=True, text=True, timeout=8,
             )
-            inspected = json.loads(raw.stdout) if raw.returncode == 0 else []
+            try:
+                inspected = json.loads(raw.stdout) if raw.stdout.strip() else []
+            except json.JSONDecodeError:
+                inspected = []
         except Exception:
             inspected = []
 

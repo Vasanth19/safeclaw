@@ -96,12 +96,8 @@ services:
     depends_on:
       postgres-tasks:
         condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/localhost/3000; echo -e \"GET / HTTP/1.0\\r\\n\\r\\n\" >&3; head -1 <&3 | grep -q 200'"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
+    # postgrest image is fully distroless — no shell or curl available.
+    # Rely on service_started in depends_on; PostgREST is up within 1s of postgres healthy.
 
   # ─── OAuth + per-toolkit MCP — handled off-box by Composio ────────────────
   # OAuth tokens for Gmail/Drive/Slack/etc. live in Composio's vault. Hermes
@@ -126,24 +122,11 @@ services:
       # rclone config with Drive OAuth token — managed by Composio, mounted separately.
       - ./config/rclone.conf:/config/rclone/rclone.conf:ro
 
-  # ─── Drive API MCP Server ─────────────────────────────────────────────────
-  # Python MCP server — uses Composio SDK to upload local files to Google Drive.
-  # Handles the s3key presign flow internally; actor just calls drive_upload_file(path, folder).
-  drive-api-mcp:
-    build:
-      context: ./mcp-tools/drive-api
-      dockerfile: Dockerfile
-    container_name: safeclaw-drive-api-mcp
-    restart: "no"
-    entrypoint: ["/bin/sh", "-c"]
-    command: ["echo 'drive-api-mcp ready; will be invoked via docker exec'; sleep infinity"]
-    networks:
-      - safeclaw_net
-    environment:
-      GDRIVE_CREDENTIALS_PATH: /opt/config/drive_credentials.json
-    volumes:
-      - attachments:/data/attachments
-      - ./config:/opt/config:ro
+  # drive-api MCP — was a sidecar Python container; now baked into the Hermes
+  # image at /opt/mcp-tools/drive-api (own venv at .venv/). Spawned by
+  # hermes-actor as a direct Python subprocess via mcp_servers.drive_api in
+  # actor-hermes.yaml. Service-account credentials are read from
+  # /opt/config/drive_credentials.json — hermes-actor mounts ./config there.
 
   # NOTE: brave-search-mcp + firecrawl-mcp sidecars (in mcp-tools/brave-search/
   # and mcp-tools/firecrawl/) are intentionally NOT defined here. Hermes natively
@@ -152,44 +135,16 @@ services:
   # below). Brave is not in Hermes's native provider list. Dockerfiles remain
   # in the repo for emergency rollback if the native skill path ever fails.
 
-  # ─── Tasks API MCP Server ──────────────────────────────────────────────────
-  # Runs the Node.js MCP server that wraps PostgREST for hermes-actor.
-  tasks-api-mcp:
-    image: ghcr.io/vasanth19/safeclaw-tasks-api:1.0
-    # Dev-only: rebuild from source.
-    # build:
-    #   context: ./mcp-tools/tasks-api
-    #   dockerfile: Dockerfile
-    container_name: safeclaw-tasks-api-mcp
-    # MCP servers run on stdio — Hermes spawns them via `docker exec`, so this
-    # container is not meant to stay running as a standalone daemon.
-    restart: "no"
-    # Keep alive as a shell until Hermes exec's into it.
-    entrypoint: ["/bin/sh", "-c"]
-    command: ["echo 'tasks-api-mcp ready; will be invoked via docker exec'; sleep infinity"]
-    networks:
-      - safeclaw_net
-    environment:
-      POSTGREST_URL: http://postgrest:3000
-      TASKS_AGENT_JWT: ${TASKS_AGENT_JWT}
-    depends_on:
-      postgrest:
-        condition: service_healthy
+  # tasks-api MCP — was a sidecar container; now baked into the Hermes image
+  # (see Dockerfile.safeclaw-hermes Stage B). Spawned by hermes-actor as a
+  # direct Node subprocess via mcp_servers.tasks_api in actor-hermes.yaml.
 
-  # ─── Slack API MCP Server ──────────────────────────────────────────────────
-  # Runs the Node.js MCP server that provides native Slack access.
-  slack-api-mcp:
-    image: safeclaw/slack-api-mcp:latest
-    build:
-      context: ./mcp-tools/slack-api
-    container_name: safeclaw-slack-api-mcp
-    restart: "no"
-    entrypoint: ["/bin/sh", "-c"]
-    command: ["echo 'slack-api-mcp ready; will be invoked via docker exec'; sleep infinity"]
-    networks:
-      - safeclaw_net
-    environment:
-      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN}
+  # slack-api MCP — was a sidecar container; now baked into the Hermes image
+  # (see Dockerfile.safeclaw-hermes Stage B). Spawned by hermes-reader and
+  # hermes-actor as a direct Node subprocess via mcp_servers.slack_native in
+  # their config files. Token is passed through via env block (actor uses its
+  # SLACK_BOT_TOKEN; reader uses SLACK_MCP_BOT_TOKEN since SLACK_BOT_TOKEN is
+  # blanked on the reader container to prevent dual Socket Mode listeners).
 
   # ─── hermes-reader — Read-Only Intake Agent ────────────────────────────────
   # Pulls the pre-built SafeClaw distribution image from GHCR (skill prune,
@@ -197,8 +152,8 @@ services:
   # Devs who want to rebuild from source can comment-toggle the build: block.
   hermes-reader:
     image: ghcr.io/vasanth19/safeclaw-hermes:1.0
-    # Dev-only: rebuild from source instead of pulling from GHCR.
-    # Uncomment to use; the image: tag above still controls the local tag name.
+    # Dev-only: rebuild from source. Uncomment to use; the `image:` tag above
+    # still controls the local tag name. Needed when the baked-MCP layer changed.
     # build:
     #   context: .
     #   dockerfile: docker/Dockerfile.safeclaw-hermes
@@ -226,6 +181,12 @@ services:
       TELEGRAM_BOT_TOKEN: ""
       SLACK_BOT_TOKEN: ""
       SLACK_APP_TOKEN: ""
+      # The baked slack-api MCP (under mcp_servers.slack_native) still needs
+      # the real bot token for Web API calls — but reading from SLACK_BOT_TOKEN
+      # is impossible since we just blanked it. Pass it through under an
+      # alternate name; reader-hermes.yaml maps SLACK_MCP_BOT_TOKEN →
+      # SLACK_BOT_TOKEN inside the MCP subprocess env.
+      SLACK_MCP_BOT_TOKEN: ${SLACK_BOT_TOKEN}
     volumes:
       # Mount the operator config as a READ-ONLY template at a separate path.
       # safeclaw-entrypoint.sh COPIES it into /opt/data/config.yaml on startup
@@ -235,31 +196,37 @@ services:
       - hermes_reader_data:/opt/data
       # Attachment staging — reader downloads Gmail attachments here for actor pickup
       - attachments:/data/attachments
-      # Docker socket — required for stdio MCP servers (brain_api, tasks_api)
-      # spawned via `docker exec` from Hermes.
+      # Docker socket — still required for `docker exec` into the rclone-upload
+      # sidecar (actor-hermes.yaml's prompt references it for Drive uploads).
+      # All 4 stdio MCPs (brain_api, tasks_api, slack_native, drive_api) are
+      # now baked at /opt/mcp-tools/ and run as direct subprocesses of this
+      # container — they no longer need the docker socket.
       - /var/run/docker.sock:/var/run/docker.sock
       # Init wrapper — chmods docker socket before privilege drop so hermes user
-      # (uid 10000) can run docker exec for MCP servers.
+      # (uid 10000) can run docker exec for the rclone sidecar.
       - ./scripts/hermes-docker-init.sh:/hermes-init.sh:ro
-      # Brain mount is deferred — needs HERMES_UID/GID alignment to avoid
-      # chown failure on bind-mount permissions. Agent reads brain via the
-      # brain-api-mcp → postgres-obs path until we land the UID work.
+      # Brain (filesystem vault) mount is deferred — needs HERMES_UID/GID
+      # alignment to avoid chown failure on bind-mount permissions. Agent
+      # reads brain via the baked brain_api MCP → postgres-obs path until
+      # we land the UID work.
     entrypoint: ["/hermes-init.sh"]
     # Run as the long-lived daemon (gateway). The SafeClaw entrypoint handles
     # config-copy + privilege drop + skill sync, then hands off to hermes.
     command: ["gateway", "run", "--accept-hooks"]
     depends_on:
       - postgres-obs
-      # reader also calls brain_recall / brain_get_soul (read-only brain access).
-      - brain-api-mcp
+      # brain_api is now spawned as a direct Node subprocess inside hermes-reader
+      # (baked at /opt/mcp-tools/brain-api). It still needs postgres-obs healthy.
+      - embedder
 
   # ─── hermes-actor — Write/Action Agent (Phase 2+) ─────────────────────────
   # Disabled by default (ACTOR_ENABLED=false). Set ACTOR_ENABLED=true in .env
   # to start this service in Phase 2.
   hermes-actor:
-    # Same pre-built SafeClaw distribution image as hermes-reader.
+    # Same pre-built SafeClaw distribution image as hermes-reader (shared layer cache).
     image: ghcr.io/vasanth19/safeclaw-hermes:1.0
-    # Dev-only: rebuild from source instead of pulling from GHCR.
+    # Dev-only: rebuild from source. Uncomment to use; the `image:` tag above
+    # still controls the local tag name.
     # build:
     #   context: .
     #   dockerfile: docker/Dockerfile.safeclaw-hermes
@@ -293,15 +260,20 @@ services:
       - hermes_actor_data:/opt/data
       # Attachment staging — actor reads pending files and uploads to Drive
       - attachments:/data/attachments
-      # Docker socket — required for stdio MCP servers (brain_api, tasks_api)
-      # spawned via `docker exec` from Hermes.
+      # Service-account credentials for the baked drive_api MCP. Path matches
+      # the previous drive-api-mcp container so main.py's default still works.
+      - ./config:/opt/config:ro
+      # Docker socket — still required for `docker exec` into the rclone-upload
+      # sidecar (actor-hermes.yaml's prompt references it for Drive uploads).
+      # All 4 stdio MCPs (brain_api, tasks_api, slack_native, drive_api) are
+      # now baked at /opt/mcp-tools/ and run as direct subprocesses of this
+      # container — they no longer need the docker socket.
       - /var/run/docker.sock:/var/run/docker.sock
       # Init wrapper — chmods docker socket before privilege drop.
       - ./scripts/hermes-docker-init.sh:/hermes-init.sh:ro
-      # Brain mount — read-only so the file skill can search People/, Companies/,
-      # and the rest of the Evolving Brain layout. RO avoids the chown issue
-      # (we only need to read; the Reader/embedder writes via DB, not files).
-      - ./brain:/opt/brain:ro
+      # Brain mount — read-write so the agent can write back to the vault
+      # (People/, .inbox/manual/, etc.) in addition to searching it.
+      - ./brain:/opt/brain:rw
     entrypoint: ["/hermes-init.sh"]
     # Gate: exit cleanly if ACTOR_ENABLED is not true; otherwise run gateway daemon
     # + the Hermes web UI (Mission Control) on port 9119 in parallel.
@@ -317,9 +289,11 @@ services:
       '
     depends_on:
       - postgrest
-      - tasks-api-mcp
+      # brain_api + tasks_api are now spawned as direct Node subprocesses
+      # inside hermes-actor (baked at /opt/mcp-tools/). Compose dependency on
+      # postgrest + postgres-obs (transitive via embedder) suffices.
       - hermes-reader   # reader pulls the shared image; actor reuses it
-      - brain-api-mcp
+      - embedder
 
   # ─── Brain: Embedder ───────────────────────────────────────────────────────
   # Polls postgres-obs every 30s for rows missing embeddings (observations,
@@ -327,12 +301,11 @@ services:
   # tiny HTTP server on :8000 so brain-api can turn queries into vectors.
   embedder:
     image: ghcr.io/vasanth19/safeclaw-embedder:1.0
-    # Dev-only: rebuild from source. Currently uncommented while we validate
-    # the google-api-python-client / google-auth additions before bumping to
-    # :1.1 and pushing to the registry.
-    build:
-      context: ./services/embedder
-      dockerfile: Dockerfile
+    # Dev-only: rebuild from source. Uncomment to use; the `image:` tag above
+    # still controls the local tag name.
+    # build:
+    #   context: ./services/embedder
+    #   dockerfile: Dockerfile
     container_name: safeclaw-embedder
     restart: unless-stopped
     networks:
@@ -374,31 +347,11 @@ services:
       postgres-obs:
         condition: service_healthy
 
-  # ─── Brain: MCP Server ─────────────────────────────────────────────────────
-  # TypeScript MCP server exposing brain_recall / brain_write / brain_get_soul /
-  # brain_list_relationships to hermes-reader and hermes-actor.
-  brain-api-mcp:
-    image: ghcr.io/vasanth19/safeclaw-brain-api:1.1
-    # Dev-only: rebuild from source.
-    # build:
-    #   context: ./mcp-tools/brain-api
-    #   dockerfile: Dockerfile
-    container_name: safeclaw-brain-api-mcp
-    # Same stdio MCP model as tasks-api-mcp — kept alive for docker exec invocation.
-    restart: "no"
-    entrypoint: ["/bin/sh", "-c"]
-    command: ["echo 'brain-api-mcp ready; will be invoked via docker exec'; sleep infinity"]
-    networks:
-      - safeclaw_net
-    environment:
-      DATABASE_URL: ${BRAIN_OBS_DATABASE_URL}
-      EMBEDDER_URL: ${BRAIN_EMBEDDER_URL}
-      BRAIN_USER_KEY: ${BRAIN_USER_KEY}
-    depends_on:
-      postgres-obs:
-        condition: service_healthy
-      embedder:
-        condition: service_started
+  # brain-api MCP — was a sidecar container; now baked into the Hermes image
+  # (see Dockerfile.safeclaw-hermes Stage B). Spawned by hermes-reader and
+  # hermes-actor as a direct Node subprocess via mcp_servers.brain_api in their
+  # respective config files. Env (DATABASE_URL, EMBEDDER_URL, BRAIN_USER_KEY)
+  # is passed through the MCP env: block in those configs from .env.
 
   # ─── Onboarding webapp ────────────────────────────────────────────────────
   # Customer self-service install UI — Flask + SSE on port 8080. Fronted by
@@ -423,6 +376,11 @@ services:
     environment:
       SAFECLAW_INSTALL_DIR: /safeclaw
       LOG_LEVEL: INFO
+      # When the compose project name is something other than the default
+      # `safeclaw` (e.g. a customer-branded `acme-safeclaw`), set the prefix
+      # so the dashboard targets the correct container names. Default empty
+      # string is correct for canonical customer deployments.
+      SAFECLAW_CONTAINER_PREFIX: "${SAFECLAW_CONTAINER_PREFIX:-}"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8080/api/healthz"]
       interval: 15s

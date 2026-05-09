@@ -17,6 +17,7 @@ dist/
 
 # Brain folder is cloned from upstream template at install time.
 # Per-user populated content stays local — never commit.
+brain
 brain/
 
 # Python

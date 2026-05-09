@@ -1,0 +1,41 @@
+# SafeClaw — gitignore
+.env
+.env.local
+.env.*.local
+
+# Vendored third-party repos (cloned at build time).
+vendor/
+
+# Composio CLI scaffolding (per-install secrets/state).
+composio/
+.composio/
+
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Brain folder is cloned from upstream template at install time.
+# Per-user populated content stays local — never commit.
+brain/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# OS
+.DS_Store
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Agent workspace
+.gg/
+.playwright-mcp/
+
+# Data (watermarks, attachments, caches)
+data/

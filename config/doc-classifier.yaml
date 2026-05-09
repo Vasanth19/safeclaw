@@ -1,0 +1,185 @@
+# Document classifier — maps filename keywords to archive folders
+# Matched case-insensitively against the filename (stem only, no extension)
+# First match wins. Unmatched files land in Inbox/.
+#
+# Structure: category -> subcategory -> list of keywords
+
+Personal:
+  Taxes:
+    - "1099"
+    - "w2"
+    - "w-2"
+    - "tax"
+    - "business tax return"
+    - "individual tax return"
+    - "income statement"
+    - "tax return"
+  Insurance:
+    - "idcard"
+    - "insurance"
+    - "unitedhealthcare"
+    - "myuhc"
+    - "cobra"
+    - "coverage"
+    - "benefits"
+  Identity:
+    - "pan card"
+    - "aadhar"
+    - "passport"
+    - "visa"
+    - "green card"
+    - "gc"
+    - "resume"
+    - "cv"
+  Health:
+    - "medical"
+    - "prescription"
+    - "health"
+
+Vasanth-HQ:
+  B-Vasanth:
+    - "b-vasanth"
+    - "vasanth profile"
+    - "vasanth-profile"
+    - "vasanth standing"
+    - "vasanth sitting"
+    - "vasanth mirrorless"
+  Mr-Growth-Guide:
+    - "mgg"
+    - "mr growth guide"
+    - "mr-growth-guide"
+    - "growth guide"
+  Growth:
+    - "books"
+    - "courses"
+    - "habits"
+    - "journal"
+    - "learning"
+  Health:
+    - "sleep"
+    - "fitness"
+    - "longevity"
+    - "wellbeing"
+
+Growth-Systems-AI:
+  Client-Delivery:
+    - "client"
+    - "delivery"
+    - "sow"
+    - "statement of work"
+  Onboarding:
+    - "onboarding"
+  Video-Apps:
+    - "video app"
+    - "floe"
+    - "kinokraft"
+    - "phoniq"
+  General:
+    - "gsai"
+    - "growth systems"
+
+CFW-Social:
+  CFW-Social:
+    - "cfw-social"
+    - "cfw social"
+    - "cfw dashboard"
+    - "cfw home"
+    - "cfw calendar"
+  CFW-Integrations:
+    - "cfw-integrations"
+    - "cfw integration"
+  CFW-Marketing:
+    - "cfw-marketing"
+    - "cfw marketing"
+    - "cfw content"
+
+PassiveFlow:
+  Hustle-Hub:
+    - "hustle hub"
+    - "hustle-hub"
+  Royal-Mysorian:
+    - "royal mysorian"
+    - "royal-mysorian"
+  Pully:
+    - "pully"
+    - "snugglepaws"
+    - "snuggle paws"
+  Longevity-Lab:
+    - "longevity lab"
+    - "longevity-lab"
+  Mindset-Masters:
+    - "mindset masters"
+    - "mindset-masters"
+  English-Unlocked:
+    - "english unlocked"
+    - "english-unlocked"
+  Retirement-Roadmap:
+    - "retirement roadmap"
+    - "retirement-roadmap"
+  Tamil-Thoza:
+    - "tamil thoza"
+    - "tamil-thoza"
+
+LearnLoop:
+  General:
+    - "learnloop"
+    - "learn loop"
+
+Communities:
+  AI-Creator-Lab:
+    - "ai creator lab"
+    - "ai-creator-lab"
+  Vibe-and-Ship:
+    - "vibe and ship"
+    - "vibe-and-ship"
+    - "vibe"
+
+Clients:
+  Rocking-Spur-Homes:
+    - "rocking spur"
+    - "rspur"
+    - "rspur"
+  NatyaSindhu:
+    - "natyasindhu"
+    - "natya sindhu"
+
+Infrastructure:
+  OpenClaw:
+    - "openclaw"
+  Paperclip:
+    - "paperclip"
+  MemPalace:
+    - "mempalace"
+  General:
+    - "infrastructure"
+    - "infra"
+    - "docker"
+    - "postgres"
+    - "supabase"
+    - "schema"
+
+Tools:
+  Creative-Studio:
+    - "creative studio"
+    - "creative-studio"
+  Upwork:
+    - "upwork"
+  Outbound:
+    - "outbound"
+    - "cold email"
+    - "cold outreach"
+  Job-Hunter:
+    - "job hunter"
+    - "job-hunter"
+    - "career"
+    - "opportunities"
+  Video-Hub:
+    - "video hub"
+    - "video-hub"
+
+Inbox:
+  General:
+    - "misc"
+    - "temp"
+    - "draft"
+    - "untitled"

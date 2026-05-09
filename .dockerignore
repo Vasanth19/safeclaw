@@ -1,0 +1,40 @@
+# Build-context exclusions for the SafeClaw image builds.
+# The build context is the SafeClaw repo root; only ./vendor/hermes-agent/
+# and ./docker/ are needed for Dockerfile.safeclaw-hermes — but excluding
+# everything else keeps the context small.
+
+# Secrets — never ship into an image.
+.env
+.env.*
+.composio/
+
+# Python / Node leftovers anywhere in the tree.
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+**/.venv/
+**/node_modules/
+
+# Git internals — not needed for build, just bloats context.
+.git/
+**/.git/
+**/.gitignore
+**/.github/
+
+# OS noise.
+.DS_Store
+**/.DS_Store
+.vscode/
+.idea/
+
+# Build artifacts.
+**/dist/
+**/*.tsbuildinfo
+
+# Local runtime / data dirs that may exist beside the repo on a dev box.
+data/
+brain/
+
+# Logs.
+*.log
+**/*.log

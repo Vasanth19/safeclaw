@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}SafeClaw{% endblock %}
+
+{% block content %}
+<section class="hero">
+  <h1>Your private AI assistant.<br>Living on your VPS.</h1>
+  <p class="lede">
+    SafeClaw watches your inbox, drafts replies in your voice, and answers
+    questions about your work — all from a Slack channel only you control.
+    Every byte of data stays on this server.
+  </p>
+
+  <div class="cta-row">
+    <a class="cta cta-primary" href="/setup">Start setup</a>
+    <a class="cta cta-secondary" href="/help">First time? Read this</a>
+  </div>
+
+  <div class="bullets">
+    <div class="bullet">
+      <h3>5-minute install</h3>
+      <p>Paste a few API keys, hit Go, watch it boot live in your browser.</p>
+    </div>
+    <div class="bullet">
+      <h3>Slack-first</h3>
+      <p>One bot, one workspace, one boss-only command surface.</p>
+    </div>
+    <div class="bullet">
+      <h3>Drafts only</h3>
+      <p>SafeClaw drafts; you send. Auto-send is locked behind a 30-day clean run.</p>
+    </div>
+  </div>
+</section>
+{% endblock %}

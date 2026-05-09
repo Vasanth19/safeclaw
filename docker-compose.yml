@@ -1,0 +1,396 @@
+# SafeClaw AI Assistant — Docker Compose
+# All services run on the safeclaw_net bridge network.
+# Egress is restricted to *.googleapis.com, *.slack.com, and internal traffic
+# via iptables rules applied at host level (see DEPLOY-RUNBOOK.md §Egress Rules).
+
+name: vasanth-safeclaw
+
+networks:
+  safeclaw_net:
+    driver: bridge
+    # Internal-only flag intentionally NOT set here — egress restriction is handled
+    # by iptables allowlist on the host, giving more precise domain-level control.
+
+volumes:
+  obs_data:
+    name: vasanth_safeclaw_obs_data
+  tasks_data:
+    name: vasanth_safeclaw_tasks_data
+  attachments:
+    name: vasanth_safeclaw_attachments
+  hermes_reader_data:
+    name: vasanth_safeclaw_hermes_reader_data
+  hermes_actor_data:
+    name: vasanth_safeclaw_hermes_actor_data
+
+# ─── Postgres: Observation Database ──────────────────────────────────────────
+services:
+  postgres-obs:
+    # pgvector/pgvector:pg16 = Postgres 16 + pgvector extension preinstalled.
+    # Required for the Brain layer (observation_embeddings, fact_embeddings, style_sample_embeddings).
+    image: pgvector/pgvector:pg16
+    container_name: vasanth-safeclaw-postgres-obs
+    restart: unless-stopped
+    networks:
+      - safeclaw_net
+    environment:
+      POSTGRES_USER: ${POSTGRES_OBS_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_OBS_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_OBS_DB}
+    volumes:
+      - obs_data:/var/lib/postgresql/data
+      - ./db/001_obs_schema.sql:/migrations/001_obs_schema.sql:ro
+      - ./db/003_brain_schema.sql:/migrations/003_brain_schema.sql:ro
+      - ./db/004_brain_docs.sql:/migrations/004_brain_docs.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_OBS_USER} -d ${POSTGRES_OBS_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    # Do NOT expose port 5432 to the host. Internal traffic only.
+
+  # ─── Postgres: Task Database ───────────────────────────────────────────────
+  # Holds the task queue + review queue served by PostgREST. OAuth tokens are
+  # NOT in this cluster — they live off-box at Composio. Keeping the task DB
+  # as its own cluster preserves the "task-side bug cannot read brain" boundary.
+  postgres-tasks:
+    image: postgres:16-alpine
+    container_name: vasanth-safeclaw-postgres-tasks
+    restart: unless-stopped
+    networks:
+      - safeclaw_net
+    environment:
+      POSTGRES_USER: ${POSTGRES_TASKS_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_TASKS_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_TASKS_DB}
+    volumes:
+      - tasks_data:/var/lib/postgresql/data
+      - ./db/002_task_schema.sql:/migrations/002_task_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_TASKS_USER} -d ${POSTGRES_TASKS_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    # Do NOT expose port 5432 to the host.
+
+  # ─── PostgREST — Task API ──────────────────────────────────────────────────
+  postgrest:
+    image: postgrest/postgrest:latest
+    container_name: vasanth-safeclaw-postgrest
+    restart: unless-stopped
+    networks:
+      - safeclaw_net
+    ports:
+      - "127.0.0.1:3002:3000"   # Localhost-only. Do not expose to 0.0.0.0.
+    environment:
+      PGRST_DB_URI: postgres://${POSTGRES_TASKS_USER}:${POSTGRES_TASKS_PASSWORD}@postgres-tasks:5432/${POSTGRES_TASKS_DB}
+      PGRST_DB_SCHEMA: public
+      PGRST_DB_ANON_ROLE: tasks_anon
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      PGRST_SERVER_PORT: "3000"
+      PGRST_DB_POOL: "10"
+      PGRST_LOG_LEVEL: info
+      PGRST_DB_MAX_ROWS: "500"
+    depends_on:
+      postgres-tasks:
+        condition: service_healthy
+    # postgrest image is fully distroless — no shell or curl available.
+    # Rely on service_started in depends_on; PostgREST is up within 1s of postgres healthy.
+
+  # ─── OAuth + per-toolkit MCP — handled off-box by Composio ────────────────
+  # OAuth tokens for Gmail/Drive/Slack/etc. live in Composio's vault. Hermes
+  # reaches them by talking to the Composio MCP servers (HTTP transport).
+  # See COMPOSIO_READER_MCP_URL and COMPOSIO_ACTOR_MCP_URL in .env.
+
+  # ─── rclone-upload: On-demand Drive upload sidecar ─────────────────────────
+  # Hermes-actor calls this via `docker exec` for organized Drive uploads.
+  # No cron — actor triggers uploads only when attachments need pushing.
+  rclone-upload:
+    image: rclone/rclone:latest
+    container_name: vasanth-safeclaw-rclone
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["echo 'rclone-upload ready; will be invoked via docker exec'; sleep infinity"]
+    networks:
+      - safeclaw_net
+    environment:
+      RCLONE_DRIVE_FOLDER_ID: ${RCLONE_DRIVE_FOLDER_ID}
+    volumes:
+      - attachments:/data/attachments
+      # rclone config with Drive OAuth token — managed by Composio, mounted separately.
+      - ./config/rclone.conf:/config/rclone/rclone.conf:ro
+
+  # drive-api MCP — was a sidecar Python container; now baked into the Hermes
+  # image at /opt/mcp-tools/drive-api (own venv at .venv/). Spawned by
+  # hermes-actor as a direct Python subprocess via mcp_servers.drive_api in
+  # actor-hermes.yaml. Service-account credentials are read from
+  # /opt/config/drive_credentials.json — hermes-actor mounts ./config there.
+
+  # NOTE: brave-search-mcp + firecrawl-mcp sidecars (in mcp-tools/brave-search/
+  # and mcp-tools/firecrawl/) are intentionally NOT defined here. Hermes natively
+  # supports Firecrawl via its built-in `web_search` + `web_extract` skills —
+  # configured by setting FIRECRAWL_API_KEY on hermes-actor's environment (see
+  # below). Brave is not in Hermes's native provider list. Dockerfiles remain
+  # in the repo for emergency rollback if the native skill path ever fails.
+
+  # ─── Tasks API MCP Server ──────────────────────────────────────────────────
+  # tasks-api MCP — was a sidecar container; now baked into the Hermes image
+  # (see Dockerfile.safeclaw-hermes Stage B). Spawned by Hermes as a direct
+  # Node subprocess via mcp_servers.tasks_api in actor-hermes.yaml. No service
+  # block needed here.
+
+  # slack-api MCP — was a sidecar container; now baked into the Hermes image
+  # (see Dockerfile.safeclaw-hermes Stage B). Spawned by hermes-reader and
+  # hermes-actor as a direct Node subprocess via mcp_servers.slack_native in
+  # their config files. Token is passed through via env block (actor uses its
+  # SLACK_BOT_TOKEN; reader uses SLACK_MCP_BOT_TOKEN since SLACK_BOT_TOKEN is
+  # blanked on the reader container to prevent dual Socket Mode listeners).
+
+  # ─── hermes-reader — Read-Only Intake Agent ────────────────────────────────
+  # Pulls the pre-built SafeClaw distribution image from GHCR (skill prune,
+  # bind-mount fix, default session reset, and provider auto-pick all baked in).
+  # Devs who want to rebuild from source can comment-toggle the build: block.
+  hermes-reader:
+    image: ghcr.io/vasanth19/safeclaw-hermes:1.0
+    # Build locally from source — needed for the baked-MCP layer (brain_api,
+    # tasks_api, slack_native, drive_api at /opt/mcp-tools/). When you publish
+    # a new GHCR tag, bump SAFECLAW_IMAGE_VERSION in the Dockerfile and the
+    # `image:` tag here, then `docker push`.
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.safeclaw-hermes
+    container_name: vasanth-safeclaw-hermes-reader
+    restart: unless-stopped
+    networks:
+      - safeclaw_net
+    # Linux Docker doesn't resolve host.docker.internal by default. The
+    # extra_hosts shim maps it to the host gateway so Hermes can reach the
+    # Ollama daemon installed by scripts/provision-vps.sh on :11435.
+    # OrbStack on macOS handles this natively, but the entry is harmless there.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # Same env_file approach as hermes-actor — bypass shell env override.
+    env_file:
+      - .env
+    environment:
+      HERMES_INFERENCE_PROVIDER: ollama-cloud
+      OLLAMA_BASE_URL: http://host.docker.internal:11435/v1
+      OLLAMA_API_KEY: ollama-local
+      HERMES_DEFAULT_MODEL: glm-5.1:cloud
+      # Reader is a background ingest agent — it does NOT bind to Telegram or Slack.
+      # The Actor owns the user-facing chat; blanking these tokens here prevents
+      # dual-listener conflicts (two Socket Mode connections = dropped events).
+      TELEGRAM_BOT_TOKEN: ""
+      SLACK_BOT_TOKEN: ""
+      SLACK_APP_TOKEN: ""
+      # The baked slack-api MCP (under mcp_servers.slack_native) still needs
+      # the real bot token for Web API calls — but reading from SLACK_BOT_TOKEN
+      # is impossible since we just blanked it. Pass it through under an
+      # alternate name; reader-hermes.yaml maps SLACK_MCP_BOT_TOKEN →
+      # SLACK_BOT_TOKEN inside the MCP subprocess env.
+      SLACK_MCP_BOT_TOKEN: ${SLACK_BOT_TOKEN}
+    volumes:
+      # Mount the operator config as a READ-ONLY template at a separate path.
+      # safeclaw-entrypoint.sh COPIES it into /opt/data/config.yaml on startup
+      # so the runtime can rewrite the file (/sethome, hermes config set) without
+      # tripping the bind-mount "Device or resource busy" rename failure.
+      - ./config/reader-hermes.yaml:/safeclaw/config-template/config.yaml:ro
+      - hermes_reader_data:/opt/data
+      # Attachment staging — reader downloads Gmail attachments here for actor pickup
+      - attachments:/data/attachments
+      # Docker socket — still required for `docker exec` into the rclone-upload
+      # sidecar (actor-hermes.yaml's prompt references it for Drive uploads).
+      # All 4 stdio MCPs (brain_api, tasks_api, slack_native, drive_api) are
+      # now baked at /opt/mcp-tools/ and run as direct subprocesses of this
+      # container — they no longer need the docker socket.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Init wrapper — chmods docker socket before privilege drop so hermes user
+      # (uid 10000) can run docker exec for MCP servers.
+      - ./scripts/hermes-docker-init.sh:/hermes-init.sh:ro
+      # Brain (filesystem vault) mount is deferred — needs HERMES_UID/GID
+      # alignment to avoid chown failure on bind-mount permissions. Agent
+      # reads brain via the baked brain_api MCP → postgres-obs path until
+      # we land the UID work.
+    entrypoint: ["/hermes-init.sh"]
+    # Run as the long-lived daemon (gateway). The SafeClaw entrypoint handles
+    # config-copy + privilege drop + skill sync, then hands off to hermes.
+    command: ["gateway", "run", "--accept-hooks"]
+    depends_on:
+      - postgres-obs
+      # brain_api is now spawned as a direct Node subprocess inside hermes-reader
+      # (baked at /opt/mcp-tools/brain-api). It still needs postgres-obs healthy.
+      - embedder
+
+  # ─── hermes-actor — Write/Action Agent (Phase 2+) ─────────────────────────
+  # Disabled by default (ACTOR_ENABLED=false). Set ACTOR_ENABLED=true in .env
+  # to start this service in Phase 2.
+  hermes-actor:
+    # Same pre-built SafeClaw distribution image as hermes-reader (shared layer cache).
+    image: ghcr.io/vasanth19/safeclaw-hermes:1.0
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.safeclaw-hermes
+    container_name: vasanth-safeclaw-hermes-actor
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9120:9119"   # Hermes Mission Control UI — localhost only
+    networks:
+      - safeclaw_net
+    # See note on hermes-reader. Required for Linux Docker so the actor
+    # can reach the host's Ollama daemon at host.docker.internal:11435.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # env_file loads ALL .env values directly into the container, bypassing
+    # docker-compose's `${VAR}` interpolation which prefers shell env over
+    # .env file (and operator shells often carry stale values for some keys).
+    env_file:
+      - .env
+    environment:
+      # Hermes inference provider override — these are static, not from .env.
+      HERMES_INFERENCE_PROVIDER: ollama-cloud
+      OLLAMA_BASE_URL: http://host.docker.internal:11435/v1
+      OLLAMA_API_KEY: ollama-local
+      # Kimi K2.5 — Moonshot's agentic model. Better at multi-step tool
+      # routing than glm-5.1; required for the brain-first memory protocol.
+      HERMES_DEFAULT_MODEL: glm-5.1:cloud
+    volumes:
+      # Operator config as read-only template; entrypoint copies it into
+      # /opt/data/config.yaml so /sethome + `hermes config set` can rewrite.
+      - ./config/actor-hermes.yaml:/safeclaw/config-template/config.yaml:ro
+      - hermes_actor_data:/opt/data
+      # Attachment staging — actor reads pending files and uploads to Drive
+      - attachments:/data/attachments
+      # Service-account credentials for the baked drive_api MCP. Path matches
+      # the previous drive-api-mcp container so main.py's default still works.
+      - ./config:/opt/config:ro
+      # Docker socket — still required for `docker exec` into the rclone-upload
+      # sidecar (actor-hermes.yaml's prompt references it for Drive uploads).
+      # All 4 stdio MCPs (brain_api, tasks_api, slack_native, drive_api) are
+      # now baked at /opt/mcp-tools/ and run as direct subprocesses of this
+      # container — they no longer need the docker socket.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Init wrapper — chmods docker socket before privilege drop.
+      - ./scripts/hermes-docker-init.sh:/hermes-init.sh:ro
+      # Brain mount — read-write so the agent can write back to the vault
+      # (People/, .inbox/manual/, etc.) in addition to searching it.
+      - ./brain:/opt/brain:rw
+      # Resumes — read-only mount of the job-hunter career tracks (instance-specific,
+      # NOT in the rspur template). Skips career-ops/ tool source + node_modules.
+      - /Users/vasanth/vasanth-hq/job-hunter/vasanth-cto:/opt/brain/Resumes/cto:ro
+      - /Users/vasanth/vasanth-hq/job-hunter/vasanth-architect:/opt/brain/Resumes/architect:ro
+    entrypoint: ["/hermes-init.sh"]
+    # Gate: exit cleanly if ACTOR_ENABLED is not true; otherwise run gateway daemon
+    # + the Hermes web UI (Mission Control) on port 9119 in parallel.
+    # Use full path to `hermes` (the CLI binary), not `hermes-agent` (broken legacy).
+    command: >
+      sh -c '
+        if [ "${ACTOR_ENABLED:-false}" != "true" ]; then
+          echo "hermes-actor is disabled (ACTOR_ENABLED=${ACTOR_ENABLED:-false}). Set ACTOR_ENABLED=true to enable.";
+          exit 0;
+        fi;
+        /opt/hermes/.venv/bin/hermes dashboard --port 9119 --host 0.0.0.0 --no-open --insecure &
+        exec /opt/hermes/.venv/bin/hermes gateway run --accept-hooks
+      '
+    depends_on:
+      - postgrest
+      # brain_api + tasks_api are now spawned as direct Node subprocesses
+      # inside hermes-actor (baked at /opt/mcp-tools/). Compose dependency on
+      # postgrest + postgres-obs (transitive via embedder) suffices.
+      - hermes-reader   # reader pulls the shared image; actor reuses it
+      - embedder
+
+  # ─── Brain: Embedder ───────────────────────────────────────────────────────
+  # Polls postgres-obs every 30s for rows missing embeddings (observations,
+  # facts, style_samples) and writes 384-dim vectors via pgvector. Also runs a
+  # tiny HTTP server on :8000 so brain-api can turn queries into vectors.
+  embedder:
+    image: ghcr.io/vasanth19/safeclaw-embedder:1.0
+    # Dev-only: rebuild from source. Currently uncommented while we validate
+    # the google-api-python-client / google-auth additions before bumping to
+    # :1.1 and pushing to the registry.
+    build:
+      context: ./services/embedder
+      dockerfile: Dockerfile
+    container_name: vasanth-safeclaw-embedder
+    restart: unless-stopped
+    networks:
+      - safeclaw_net
+    ports:
+      - "127.0.0.1:8001:8000"   # Localhost-only; internal clients use http://embedder:8000.
+    environment:
+      DATABASE_URL: ${BRAIN_OBS_DATABASE_URL}
+      BRAIN_EMBEDDING_MODEL: ${BRAIN_EMBEDDING_MODEL}
+    depends_on:
+      postgres-obs:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request,sys; sys.exit(0 if urllib.request.urlopen(\"http://localhost:8000/health\", timeout=3).status==200 else 1)'"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  # ─── Brain: Reflector ──────────────────────────────────────────────────────
+  # Runs at startup, then weekly (Mon 06:00 UTC). Reads observations + review
+  # feedback, proposes Soul + preference updates to soul_revisions / review_queue.
+  reflector:
+    build:
+      context: ./services/reflector
+      dockerfile: Dockerfile
+    image: safeclaw/reflector:local
+    container_name: vasanth-safeclaw-reflector
+    restart: unless-stopped
+    networks:
+      - safeclaw_net
+    environment:
+      DATABASE_URL: ${BRAIN_OBS_DATABASE_URL}
+      HERMES_LLM_API_KEY: ${HERMES_LLM_API_KEY}
+      HERMES_LLM_BASE_URL: ${HERMES_LLM_BASE_URL}
+      HERMES_MODEL: ${HERMES_MODEL}
+      BRAIN_USER_KEY: ${BRAIN_USER_KEY}
+    depends_on:
+      postgres-obs:
+        condition: service_healthy
+
+  # brain-api MCP — was a sidecar container; now baked into the Hermes image
+  # (see Dockerfile.safeclaw-hermes Stage B). Spawned by hermes-reader and
+  # hermes-actor as a direct Node subprocess via mcp_servers.brain_api in their
+  # respective config files. Env (DATABASE_URL, EMBEDDER_URL, BRAIN_USER_KEY)
+  # is passed through the MCP env: block in those configs from .env.
+
+  # ─── Onboarding webapp ────────────────────────────────────────────────────
+  # Customer self-service install UI — Flask + SSE on port 8080. Fronted by
+  # Caddy on the host (provision-vps.sh sets up the reverse proxy + SSL).
+  # The webapp IS the installer: writes .env, runs init-secrets, drives
+  # `docker compose up -d` to boot the rest of the stack on customer Submit.
+  onboarding:
+    build: ./onboarding
+    image: safeclaw/onboarding:1.0
+    container_name: vasanth-safeclaw-onboarding
+    restart: unless-stopped
+    networks:
+      - safeclaw_net
+    ports:
+      # Localhost-only — Caddy on the host terminates TLS at 443 and proxies here.
+      - "127.0.0.1:8082:8080"
+      - "[::1]:8082:8080"
+    volumes:
+      - .:/safeclaw:rw
+      - ./onboarding:/app:rw
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      SAFECLAW_INSTALL_DIR: /safeclaw
+      LOG_LEVEL: INFO
+      # When the compose project name is something other than the default
+      # `safeclaw` (e.g. Vasanth's local `vasanth-safeclaw`), set the prefix
+      # so the dashboard targets the correct container names. Default empty
+      # string is correct for canonical customer deployments.
+      SAFECLAW_CONTAINER_PREFIX: "${SAFECLAW_CONTAINER_PREFIX:-}"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/api/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s

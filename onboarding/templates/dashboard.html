@@ -1,0 +1,237 @@
+{% extends "base.html" %}
+{% block title %}SafeClaw — Dashboard{% endblock %}
+
+{% block content %}
+<div class="dash-toprow">
+  <h1>Control Panel</h1>
+  <div class="dash-toprow-right">
+    <span class="last-updated" id="last-updated">–</span>
+    <button class="dash-refresh-btn" onclick="loadServices()">Refresh</button>
+  </div>
+</div>
+
+<!-- ── Agents ─────────────────────────────────────────────── -->
+<div class="dash-section">
+  <div class="dash-section-title">Agents</div>
+  <div class="agents-grid" id="agents-grid">
+    <div class="agent-card" id="skeleton-reader">
+      <div class="agent-header">
+        <span class="status-dot"></span>
+        <span class="agent-name">Reader Agent</span>
+      </div>
+      <div class="agent-meta">loading…</div>
+    </div>
+    <div class="agent-card" id="skeleton-actor">
+      <div class="agent-header">
+        <span class="status-dot"></span>
+        <span class="agent-name">Actor Agent</span>
+      </div>
+      <div class="agent-meta">loading…</div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Infrastructure ─────────────────────────────────────── -->
+<div class="dash-section">
+  <div class="dash-section-title">Infrastructure</div>
+  <div class="infra-grid" id="infra-grid">
+    <!-- populated by JS -->
+  </div>
+</div>
+
+<!-- ── Live Logs ──────────────────────────────────────────── -->
+<div class="dash-section">
+  <div class="dash-section-title">Live Logs</div>
+  <div class="log-panel">
+    <div class="log-toolbar">
+      <select id="log-container-select">
+        {% for opt in container_options %}
+        <option value="{{ opt.value }}">{{ opt.label }}</option>
+        {% endfor %}
+      </select>
+      <button class="log-btn" id="btn-stream" onclick="toggleStream()">Connect</button>
+      <button class="log-btn" onclick="clearLog()">Clear</button>
+      <button class="log-btn" id="btn-scroll" onclick="toggleScroll()" title="Auto-scroll">↓ Auto</button>
+    </div>
+    <div class="log-output" id="log-output"><span style="color:var(--text-faint)">Select a container and click Connect.</span></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ── State ─────────────────────────────────────────────────────────────
+let _es = null;          // active EventSource
+let _autoScroll = true;
+let _streaming = false;
+
+// ── Services polling ─────────────────────────────────────────────────
+async function loadServices() {
+  try {
+    const res = await fetch('/api/services');
+    if (!res.ok) throw new Error(res.statusText);
+    const services = await res.json();
+    renderServices(services);
+    document.getElementById('last-updated').textContent =
+      'updated ' + new Date().toLocaleTimeString();
+  } catch (e) {
+    console.error('loadServices:', e);
+  }
+}
+
+function statusDotClass(s) {
+  if (s === 'running') return 'running';
+  if (s === 'stopped') return 'stopped';
+  return 'absent';
+}
+
+function statusLabel(s, health) {
+  if (s === 'running' && health && health !== 'healthy') return health;
+  return s === 'running' ? 'running' : s === 'stopped' ? 'stopped' : 'absent';
+}
+
+function renderServices(services) {
+  const agents = services.filter(s => s.kind === 'agent');
+  const infra  = services.filter(s => s.kind === 'infra');
+
+  // Agents
+  const agentGrid = document.getElementById('agents-grid');
+  agentGrid.innerHTML = agents.map(s => `
+    <div class="agent-card ${statusDotClass(s.status)}">
+      <div class="agent-header">
+        <span class="status-dot ${statusDotClass(s.status)} ${s.status==='running'?'pulse':''}"></span>
+        <span class="agent-name">${s.label}</span>
+        <span style="margin-left:auto;font-size:0.75rem;font-family:var(--mono);color:${s.status==='running'?'var(--ok)':'var(--error)'}">
+          ${statusLabel(s.status, s.health)}
+        </span>
+      </div>
+      ${s.uptime ? `<div class="agent-uptime">up ${s.uptime}</div>` : ''}
+      <div class="agent-actions">
+        <button onclick="restartService('${s.container}',this)">Restart</button>
+        <button onclick="attachLog('${s.container}')">Logs</button>
+      </div>
+    </div>
+  `).join('');
+
+  // Infra
+  const infraGrid = document.getElementById('infra-grid');
+  infraGrid.innerHTML = infra.map(s => `
+    <div class="infra-card ${statusDotClass(s.status)}">
+      <div style="display:flex;align-items:center;gap:7px;">
+        <span class="status-dot ${statusDotClass(s.status)}"></span>
+        <span class="infra-name">${s.label}</span>
+      </div>
+      <div class="infra-uptime">${s.uptime ? 'up ' + s.uptime : s.status}</div>
+    </div>
+  `).join('');
+}
+
+// ── Log stream ────────────────────────────────────────────────────────
+function attachLog(container) {
+  document.getElementById('log-container-select').value = container;
+  stopStream();
+  startStream();
+}
+
+function toggleStream() {
+  if (_streaming) stopStream();
+  else startStream();
+}
+
+function startStream() {
+  stopStream();
+  const container = document.getElementById('log-container-select').value;
+  if (!container) return;
+
+  _es = new EventSource(`/api/logs/${container}?tail=200`);
+  _streaming = true;
+  document.getElementById('btn-stream').textContent = 'Disconnect';
+  document.getElementById('btn-stream').classList.add('active');
+  clearLog();
+
+  _es.onmessage = e => {
+    try {
+      appendLine(JSON.parse(e.data));
+    } catch(_) {
+      appendLine(e.data);
+    }
+  };
+  _es.onerror = () => {
+    appendLine('[connection error — reconnecting…]');
+  };
+}
+
+function stopStream() {
+  if (_es) { _es.close(); _es = null; }
+  _streaming = false;
+  document.getElementById('btn-stream').textContent = 'Connect';
+  document.getElementById('btn-stream').classList.remove('active');
+}
+
+function clearLog() {
+  document.getElementById('log-output').innerHTML = '';
+}
+
+function appendLine(raw) {
+  const out = document.getElementById('log-output');
+
+  // Detect timestamp prefix (docker --timestamps format: 2025-04-29T...)
+  let ts = '', msg = raw;
+  const m = raw.match(/^(\d{4}-\d{2}-\d{2}T[\d:.]+Z)\s+(.*)$/);
+  if (m) { ts = m[1].replace('T',' ').replace('Z',''); msg = m[2]; }
+
+  // Colour by content
+  let cls = '';
+  const lower = msg.toLowerCase();
+  if (/error|exception|traceback|fatal/.test(lower)) cls = 'log-line-err';
+  else if (/warn/.test(lower)) cls = 'log-line-warn';
+  else if (/\bsuccess\b|✓|started|ready|ok\b/.test(lower)) cls = 'log-line-ok';
+
+  const span = document.createElement('span');
+  span.className = `log-line ${cls}`;
+  span.innerHTML = ts
+    ? `<span class="log-line-ts">${escHtml(ts)}</span>${escHtml(msg)}`
+    : escHtml(raw);
+  out.appendChild(span);
+
+  if (_autoScroll) out.scrollTop = out.scrollHeight;
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function toggleScroll() {
+  _autoScroll = !_autoScroll;
+  const btn = document.getElementById('btn-scroll');
+  btn.classList.toggle('active', _autoScroll);
+}
+
+// ── Restart ───────────────────────────────────────────────────────────
+async function restartService(container, btn) {
+  btn.disabled = true;
+  btn.textContent = 'Restarting…';
+  try {
+    const res = await fetch(`/api/services/${container}/restart`, { method: 'POST' });
+    const data = await res.json();
+    if (data.ok) {
+      btn.textContent = 'Done';
+      setTimeout(() => loadServices(), 3000);
+    } else {
+      btn.textContent = 'Error';
+      console.error(data.error);
+    }
+  } catch(e) {
+    btn.textContent = 'Error';
+  }
+  setTimeout(() => { btn.textContent = 'Restart'; btn.disabled = false; }, 4000);
+}
+
+// ── Init ──────────────────────────────────────────────────────────────
+loadServices();
+setInterval(loadServices, 15000);  // refresh every 15s
+
+// Auto-scroll button starts active
+document.getElementById('btn-scroll').classList.add('active');
+</script>
+{% endblock %}

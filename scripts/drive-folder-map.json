@@ -1,0 +1,14 @@
+{
+  "_comment": "Project/deal → Drive folder path mapping. Actor reads this to decide upload destination.",
+  "default_root": "SafeClaw/Attachments",
+  "projects": {
+    "Royal Mysorian": "SafeClaw/Attachments/Royal-Mysorian",
+    "SnugglePaws": "SafeClaw/Attachments/SnugglePaws",
+    "PassiveFlow": "SafeClaw/Attachments/PassiveFlow",
+    "GrowthSystems.AI": "SafeClaw/Attachments/GrowthSystems-AI",
+    "Vesper": "SafeClaw/Attachments/Vesper",
+    "Rocking Spur Homes": "SafeClaw/Attachments/Rocking-Spur-Homes",
+    "Panhandle Home Buyer": "SafeClaw/Attachments/Panhandle-Home-Buyer"
+  },
+  "fallback": "SafeClaw/Attachments/Uncategorized"
+}

@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}SafeClaw — Live{% endblock %}
+
+{% block content %}
+<section class="done">
+  <h1>You're live.</h1>
+  <p class="lede">
+    Your SafeClaw assistant is running. Here's what to do next.
+  </p>
+
+  <ol class="next-steps">
+    <li>
+      <h3>Open Slack &mdash; check your DMs</h3>
+      <p>Your bot just messaged you. Reply with <code>help</code> to see commands.</p>
+    </li>
+    <li>
+      <h3>Try a question in a public channel</h3>
+      <p>Anything like <code>@bot what did I get from acme this week?</code></p>
+    </li>
+    <li>
+      <h3>Watch the brain warm up</h3>
+      <p>The first 90 days of email are being scraped now. Style mimicking gets sharper as more samples land.</p>
+    </li>
+    <li>
+      <h3>Auto-send is locked</h3>
+      <p>Drafts only for the first 30 days. After a clean run, you can flip <code>AUTO_SEND_ENABLED=true</code> in <code>.env</code>.</p>
+    </li>
+  </ol>
+
+  <div class="cta-row">
+    <a class="cta cta-secondary" href="/help">Troubleshooting</a>
+  </div>
+</section>
+{% endblock %}

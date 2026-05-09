@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <meta name="referrer" content="no-referrer">
+  <title>{% block title %}SafeClaw — Setup{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">
+      <span class="brand-mark">SAFE<span class="brand-mark-accent">CLAW</span></span>
+    </a>
+    <nav>
+      <a href="/dashboard">Dashboard</a>
+      <a href="/setup">Setup</a>
+      <a href="/help">Help</a>
+    </nav>
+  </header>
+
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="footer">
+    <span>SafeClaw &middot; runs on your VPS &middot; secrets never leave this box</span>
+  </footer>
+
+  {% block scripts %}{% endblock %}
+</body>
+</html>

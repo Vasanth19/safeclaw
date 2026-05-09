@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+{% block title %}SafeClaw — Help{% endblock %}
+
+{% block content %}
+<section class="help">
+  <h1>Setup help</h1>
+  <p class="lede">Where to grab each value, and what to do if something goes wrong.</p>
+
+  <nav class="help-toc">
+    <a href="#llm">LLM keys</a>
+    <a href="#composio">Composio</a>
+    <a href="#slack">Slack app</a>
+    <a href="#telegram">Telegram</a>
+    <a href="#troubleshooting">Troubleshooting</a>
+  </nav>
+
+  <article id="llm">
+    <h2>LLM keys</h2>
+    <p>Pick whichever model provider you already have a key for. The form
+    defaults to Ollama Cloud &mdash; cheapest path to live.</p>
+    <ul>
+      <li><strong>Ollama Cloud (default)</strong> &mdash; sign up at
+        <a href="https://ollama.com" target="_blank" rel="noopener">ollama.com</a>,
+        then create a key at
+        <a href="https://ollama.com/settings/keys" target="_blank" rel="noopener">ollama.com/settings/keys</a>.
+        Starts with <code>ollama_</code>.</li>
+      <li><strong>Anthropic Claude</strong> &mdash; get a key at
+        <a href="https://console.anthropic.com" target="_blank" rel="noopener">console.anthropic.com</a>.
+        Starts with <code>sk-ant-</code>.</li>
+      <li><strong>OpenAI</strong> &mdash;
+        <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">platform.openai.com/api-keys</a>.
+        Starts with <code>sk-</code>.</li>
+    </ul>
+  </article>
+
+  <article id="composio">
+    <h2>Composio &mdash; 5-minute walkthrough</h2>
+    <p>Composio is the OAuth + integration layer SafeClaw uses to reach your
+    Gmail, Drive, and Slack workspace. <strong>You do this part on your
+    own machine</strong> &mdash; SafeClaw never sees your Google or Slack
+    OAuth tokens; Composio holds them and we call Composio's MCP servers
+    to act on your behalf.</p>
+
+    <p>The output of this walkthrough is <strong>four strings</strong>
+    you'll paste into Step 2 of the setup form:
+    <code>COMPOSIO_API_KEY</code>, <code>COMPOSIO_USER_ID</code>,
+    <code>COMPOSIO_READER_MCP_URL</code>, <code>COMPOSIO_ACTOR_MCP_URL</code>.</p>
+
+    <ol>
+      <li><strong>Sign up at <a href="https://app.composio.dev" target="_blank" rel="noopener">app.composio.dev</a></strong>
+        &mdash; the free tier is plenty for getting started.</li>
+
+      <li><strong>Initialize a Composio dev context.</strong> In any local
+        directory on your machine, run:
+        <pre><code>composio dev init</code></pre>
+        This writes <code>.env.local</code> with your <code>ak_</code>
+        API key. (Don't have the CLI? <code>npm i -g composio-cli@latest</code>
+        first.) The same key is also visible at
+        <a href="https://app.composio.dev/settings/api-keys" target="_blank" rel="noopener">app.composio.dev/settings/api-keys</a>.
+        Save it &mdash; this is your <strong>COMPOSIO_API_KEY</strong>.</li>
+
+      <li><strong>Connect Gmail.</strong> In the Composio dashboard:
+        <em>+ Add Connection</em> &rarr; <em>Gmail</em> &rarr; complete the
+        OAuth flow with your Google account. The dashboard will show a
+        <em>user_id</em> for this connection &mdash; save it as your
+        <strong>COMPOSIO_USER_ID</strong>.</li>
+
+      <li><strong>Connect Drive and Slack the same way.</strong>
+        Use the SAME user_id for all three connections so a single MCP
+        server can reach all of them.</li>
+
+      <li><strong>Create the Reader MCP server.</strong> Composio dashboard
+        &rarr; <em>MCP Servers</em> &rarr; <em>Create new</em>. Give it a
+        name like <code>safeclaw-reader</code> and add EXACTLY these tools
+        (read-only boundary &mdash; do not add any write tools here):
+        <ul>
+          <li><code>GMAIL_FETCH_EMAILS</code></li>
+          <li><code>GMAIL_LIST_THREADS</code></li>
+          <li><code>GMAIL_GET_PROFILE</code></li>
+        </ul>
+        Save and copy the URL.</li>
+
+      <li><strong>Create the Actor MCP server.</strong> Same flow, name it
+        <code>safeclaw-actor</code>, and add EXACTLY these tools (the
+        write boundary &mdash; can draft / send but cannot read raw inboxes):
+        <ul>
+          <li><code>GMAIL_CREATE_EMAIL_DRAFT</code></li>
+          <li><code>GMAIL_REPLY_TO_THREAD</code></li>
+          <li><code>SLACK_SEND_MESSAGE</code></li>
+        </ul>
+        Save and copy the URL. <em>Drive uploads are handled by a local
+        service account configured in Step 5 &mdash; not via Composio.</em></li>
+
+      <li><strong>Critical: append <code>/mcp?user_id=&lt;your_user_id&gt;</code></strong>
+        to each MCP URL before pasting it into the form. Composio's
+        dashboard shows you the BASE URL only; you have to add the
+        <code>/mcp?user_id=...</code> suffix yourself. Final URLs look like:
+        <pre><code>https://backend.composio.dev/v3/mcp/&lt;mcp-id&gt;/mcp?user_id=&lt;your-user-id&gt;</code></pre></li>
+
+      <li><strong>Paste the four values into Step 2 of the setup form</strong>
+        and click Next. The webapp validates the API key (one cheap call to
+        <code>backend.composio.dev/api/v3/toolkits</code>) and lists the
+        tools on each MCP server before submission &mdash; you'll see an
+        error there if anything's wrong, before any containers boot.</li>
+    </ol>
+
+    <p>Why split Reader and Actor? It's a security boundary: a bug in the
+    actor agent cannot exfiltrate your raw inbox because it doesn't have
+    that tool. A bug in the reader cannot send mail. The split is the
+    whole reason SafeClaw can hold customer data without us pretending
+    "trust the model."</p>
+  </article>
+
+  <article id="slack">
+    <h2>Slack app — 10-step walkthrough</h2>
+    <ol>
+      <li>Go to <a href="https://api.slack.com/apps" target="_blank" rel="noopener">api.slack.com/apps</a> and click <em>Create New App</em> &rarr; <em>From scratch</em>.</li>
+      <li>Pick a name (e.g. <em>SafeClaw</em>) and your workspace. Click create.</li>
+      <li>In the left sidebar, open <em>Socket Mode</em> and toggle it ON. Generate an <em>App-level token</em> with the <code>connections:write</code> scope. Copy the <code>xapp-...</code> token &mdash; this is your <strong>App Token</strong>.</li>
+      <li>Open <em>OAuth &amp; Permissions</em>. Under <em>Bot Token Scopes</em>, add: <code>app_mentions:read</code>, <code>channels:history</code>, <code>chat:write</code>, <code>commands</code>, <code>im:history</code>, <code>im:write</code>, <code>users:read</code>.</li>
+      <li>At the top of the same page, click <em>Install to Workspace</em>. Approve. Copy the <code>xoxb-...</code> token &mdash; this is your <strong>Bot Token</strong>.</li>
+      <li>Open <em>Event Subscriptions</em>, toggle ON. Under <em>Subscribe to bot events</em>, add: <code>app_mention</code>, <code>message.channels</code>, <code>message.im</code>.</li>
+      <li>Open <em>App Home</em>. Enable the Messages tab and check "Allow users to send Slash commands and messages from the messages tab".</li>
+      <li>In Slack, click your workspace name &rarr; <em>Settings &amp; administration</em> &rarr; <em>Workspace settings</em>. Find the <strong>Workspace ID</strong> (starts with <code>T</code>) in the URL of the admin page.</li>
+      <li>To find your <strong>User ID</strong> (starts with <code>U</code>): click your avatar &rarr; <em>Profile</em> &rarr; the <em>...</em> menu &rarr; <em>Copy member ID</em>.</li>
+      <li>Invite the bot to each channel you want it to listen in: <code>/invite @SafeClaw</code>. Then right-click each channel &rarr; <em>Copy link</em> and pull the channel ID (starts with <code>C</code>) out of the URL.</li>
+    </ol>
+  </article>
+
+  <article id="telegram">
+    <h2>Telegram (optional)</h2>
+    <p>Skip this whole section if you only want Slack.</p>
+    <ol>
+      <li>On Telegram, message <a href="https://t.me/BotFather" target="_blank" rel="noopener">@BotFather</a> with <code>/newbot</code>. Pick a name and username.</li>
+      <li>Copy the token BotFather gives you. Looks like <code>123456:ABC-DEF...</code>.</li>
+      <li>Message <a href="https://t.me/userinfobot" target="_blank" rel="noopener">@userinfobot</a> to find your numeric Telegram user ID.</li>
+      <li>Paste both into the form. Telegram is boss-only by design &mdash; only IDs you list here can talk to the bot.</li>
+    </ol>
+  </article>
+
+  <article id="troubleshooting">
+    <h2>Troubleshooting</h2>
+    <h3>"Composio rejected the API key"</h3>
+    <p>Most often this means you pasted the key with extra whitespace, or
+    you regenerated the key in the dashboard after copying. Open
+    <a href="https://app.composio.dev/settings/api-keys" target="_blank" rel="noopener">app.composio.dev/settings/api-keys</a>,
+    copy a fresh one, and try again. The key starts with <code>ak_</code>.</p>
+
+    <h3>"Reader/Actor MCP returned no tools"</h3>
+    <p>This means the <code>user_id</code> in your MCP URL doesn't match
+    the user_id that owns the Gmail/Drive/Slack connections. Re-check that
+    the MCP URL ends with <code>/mcp?user_id=&lt;same id you connected
+    Gmail under&gt;</code>. The Composio dashboard sometimes shows the URL
+    without the <code>/mcp?user_id=</code> suffix &mdash; you have to add it
+    yourself.</p>
+
+    <h3>"Slack rejected the bot token"</h3>
+    <p>Re-run the install-to-workspace step. The bot token only becomes valid AFTER the install. The first <code>xoxb-...</code> Slack shows you in the OAuth page is a draft until you click install.</p>
+
+    <h3>The progress bar is stuck on "Bootstrapping brain"</h3>
+    <p>This step pulls the last 90 days of email through the Reader MCP and embeds every message. On a busy inbox it can take 5-10 minutes. Check <code>docker compose logs embedder</code> to see live progress.</p>
+
+    <h3>I refreshed the page mid-install</h3>
+    <p>Your install ID is in the URL. Visit <code>/progress/&lt;id&gt;</code> to rejoin the SSE stream. If the webapp container restarted, you'll need to retry from the form.</p>
+  </article>
+</section>
+{% endblock %}

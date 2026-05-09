@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}SafeClaw — Provisioning{% endblock %}
+
+{% block content %}
+<section class="progress-page">
+  <h1>Provisioning your assistant</h1>
+  <p class="lede">
+    This takes 5-10 minutes. Keep this tab open — if you close it,
+    you can come back to <code>/progress/{{ install_id }}</code>.
+  </p>
+
+  <ul class="phase-list" id="phase-list" data-install-id="{{ install_id }}">
+    <li data-phase="validating"><span class="dot"></span><span class="label">Validating credentials</span><span class="msg"></span></li>
+    <li data-phase="env_writing"><span class="dot"></span><span class="label">Writing configuration</span><span class="msg"></span></li>
+    <li data-phase="secrets"><span class="dot"></span><span class="label">Generating secrets</span><span class="msg"></span></li>
+    <li data-phase="compose_pull"><span class="dot"></span><span class="label">Pulling Docker images</span><span class="msg"></span></li>
+    <li data-phase="compose_up"><span class="dot"></span><span class="label">Booting the stack</span><span class="msg"></span></li>
+    <li data-phase="waiting_health"><span class="dot"></span><span class="label">Waiting for services</span><span class="msg"></span></li>
+    <li data-phase="bootstrap"><span class="dot"></span><span class="label">Bootstrapping brain</span><span class="msg"></span></li>
+    <li data-phase="welcome"><span class="dot"></span><span class="label">Sending welcome message</span><span class="msg"></span></li>
+    <li data-phase="done"><span class="dot"></span><span class="label">Done</span><span class="msg"></span></li>
+  </ul>
+
+  <div class="error-card hidden" id="error-card" role="alert">
+    <h2>A step failed</h2>
+    <p id="error-msg"></p>
+    <pre id="error-hint" class="hint-block"></pre>
+    <div class="error-actions">
+      <button type="button" id="retry-btn">Retry from this phase</button>
+      <a href="/setup">Re-edit form</a>
+    </div>
+  </div>
+
+  <div class="success-card hidden" id="success-card">
+    <h2>Live.</h2>
+    <p>Your SafeClaw assistant is up. Check your Slack DMs for the welcome message.</p>
+    <a class="cta cta-primary" href="/done/{{ install_id }}">What's next</a>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+  const list = document.getElementById('phase-list');
+  const installId = list.dataset.installId;
+  const errorCard = document.getElementById('error-card');
+  const errorMsg = document.getElementById('error-msg');
+  const errorHint = document.getElementById('error-hint');
+  const successCard = document.getElementById('success-card');
+
+  function setPhase(phase, status, message) {
+    const li = list.querySelector('[data-phase="' + phase + '"]');
+    if (!li) return;
+    li.classList.remove('start', 'ok', 'error', 'warn', 'progress');
+    li.classList.add(status);
+    const msgEl = li.querySelector('.msg');
+    if (msgEl && message) msgEl.textContent = message;
+  }
+
+  function handleEvent(ev) {
+    let data;
+    try { data = JSON.parse(ev.data); } catch { return; }
+    const { phase, status, message, hint } = data;
+    setPhase(phase, status, message);
+
+    if (status === 'error') {
+      errorMsg.textContent = (phase + ': ' + (message || 'failed'));
+      errorHint.textContent = hint || '';
+      errorCard.classList.remove('hidden');
+    }
+    if (phase === 'done' && status === 'ok') {
+      successCard.classList.remove('hidden');
+    }
+  }
+
+  // Try SSE first; fall back to polling /api/status if EventSource is missing
+  // or fails repeatedly.
+  if (typeof EventSource !== 'undefined') {
+    const src = new EventSource('/api/progress/' + installId);
+    src.onmessage = handleEvent;
+    // Phase-specific named events also fire; route them through the same handler.
+    ['validating','env_writing','secrets','compose_pull','compose_up',
+     'waiting_health','bootstrap','welcome','done','progress'].forEach(function(name) {
+      src.addEventListener(name, handleEvent);
+    });
+    src.onerror = function() {
+      // Browsers will auto-reconnect; nothing to do unless we also want polling.
+    };
+  } else {
+    let lastSeen = 0;
+    setInterval(async function() {
+      const r = await fetch('/api/status/' + installId);
+      if (!r.ok) return;
+      const body = await r.json();
+      (body.events || []).slice(lastSeen).forEach(function(ev) {
+        handleEvent({ data: JSON.stringify(ev) });
+      });
+      lastSeen = (body.events || []).length;
+    }, 3000);
+  }
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,452 @@
+{% extends "base.html" %}
+{% block title %}SafeClaw — Setup{% endblock %}
+
+{% block content %}
+<section class="setup">
+  <header class="setup-header">
+    <h1>Setup</h1>
+    <p>Configure your assistant. All data stays local.</p>
+  </header>
+
+  <button type="button" class="instructions-toggle" id="instructions-toggle">
+    <span>Show Instructions</span>
+  </button>
+
+  <div class="setup-container">
+    <div class="setup-main" style="width:100%;">
+      <nav>
+        <ol class="stepper" id="stepper">
+          <li class="step active" data-step="1"><span>1</span> LLM <span class="step-saved-badge" hidden>✓</span></li>
+          <li class="step" data-step="2"><span>2</span> Composio <span class="step-saved-badge" hidden>✓</span></li>
+          <li class="step" data-step="3"><span>3</span> Slack <span class="step-saved-badge" hidden>✓</span></li>
+          <li class="step" data-step="4"><span>4</span> Telegram <span class="step-saved-badge" hidden>✓</span></li>
+          <li class="step" data-step="5"><span>5</span> Google Drive <span class="step-saved-badge" hidden>✓</span></li>
+        </ol>
+      </nav>
+
+      <form id="setup-form" class="setup-form" autocomplete="off" novalidate>
+        <!-- ── Step 1: LLM ──────────────────────────────────────────────── -->
+        <fieldset class="step-panel" data-step="1">
+          <legend>Model Selection</legend>
+
+          <div class="field">
+            <label>
+              <input type="radio" name="llm_provider" value="ollama-cloud" checked>
+              <span class="radio-title">Ollama Cloud <small>(default, fastest path to live)</small></span>
+            </label>
+            <label>
+              <input type="radio" name="llm_provider" value="anthropic">
+              <span class="radio-title">Anthropic Claude</span>
+            </label>
+            <label>
+              <input type="radio" name="llm_provider" value="openai">
+              <span class="radio-title">OpenAI gpt-4o</span>
+            </label>
+          </div>
+
+          <div class="field">
+            <label for="LLM_API_KEY">
+              <span class="api-key-label-text">Ollama API key</span>
+            </label>
+            <input type="password" id="LLM_API_KEY" name="LLM_API_KEY" autocomplete="new-password"
+                   placeholder="ollama_...">
+            <p class="hint" data-when="llm_provider=ollama-cloud">Get from <a href="https://ollama.com/settings/keys" target="_blank" rel="noopener">ollama.com/settings/keys</a></p>
+            <p class="hint" data-when="llm_provider=anthropic">Starts with <code>sk-ant-</code>. Get from <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Anthropic Console</a>.</p>
+            <p class="hint" data-when="llm_provider=openai">Starts with <code>sk-</code>. Get from <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">OpenAI dashboard</a>.</p>
+          </div>
+          <div class="step-save-row">
+            <button type="button" class="btn-save-step" data-save-step="1">Save</button>
+            <span class="step-save-status" id="save-status-1"></span>
+          </div>
+        </fieldset>
+
+        <!-- ── Step 2: Composio ─────────────────────────────────────────── -->
+        <fieldset class="step-panel hidden" data-step="2">
+          <legend>Composio (OAuth & MCP)</legend>
+
+          <p class="hint" style="margin-bottom: 20px; color: var(--text-dim);">
+            Provide your API key and User ID. SafeClaw will automatically provision the 
+            <code>safeclaw-reader</code> and <code>safeclaw-actor</code> MCP servers for you.
+          </p>
+
+          <div class="field">
+            <label for="COMPOSIO_API_KEY">Composio API key</label>
+            <input type="password" id="COMPOSIO_API_KEY" name="COMPOSIO_API_KEY"
+                   autocomplete="new-password" placeholder="ak_...">
+          </div>
+
+          <div class="field">
+            <label for="COMPOSIO_USER_ID">Composio user ID</label>
+            <input type="text" id="COMPOSIO_USER_ID" name="COMPOSIO_USER_ID"
+                   placeholder="user-...">
+          </div>
+          <div class="step-save-row">
+            <button type="button" class="btn-save-step" data-save-step="2">Save</button>
+            <span class="step-save-status" id="save-status-2"></span>
+          </div>
+        </fieldset>
+
+        <!-- ── Step 3: Slack ────────────────────────────────────────────── -->
+        <fieldset class="step-panel hidden" data-step="3">
+          <legend>Slack Configuration</legend>
+
+          <div class="field">
+            <label for="SLACK_BOT_TOKEN">Bot Token</label>
+            <input type="password" id="SLACK_BOT_TOKEN" name="SLACK_BOT_TOKEN"
+                   autocomplete="new-password" placeholder="xoxb-...">
+          </div>
+
+          <div class="field">
+            <label for="SLACK_APP_TOKEN">App Token (Socket Mode)</label>
+            <input type="password" id="SLACK_APP_TOKEN" name="SLACK_APP_TOKEN"
+                   autocomplete="new-password" placeholder="xapp-...">
+          </div>
+
+          <div class="field-row">
+            <div class="field">
+              <label for="SLACK_WORKSPACE_ID">Workspace ID</label>
+              <input type="text" id="SLACK_WORKSPACE_ID" name="SLACK_WORKSPACE_ID"
+                     placeholder="T...">
+            </div>
+            <div class="field">
+              <label for="SLACK_BOT_ADMIN_USER_ID">Admin User ID</label>
+              <input type="text" id="SLACK_BOT_ADMIN_USER_ID" name="SLACK_BOT_ADMIN_USER_ID"
+                     placeholder="U...">
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="SLACK_PUBLIC_CHANNELS">Listen in (Channel IDs)</label>
+            <div class="channel-input-row">
+              <input type="text" id="SLACK_PUBLIC_CHANNELS" name="SLACK_PUBLIC_CHANNELS"
+                     placeholder="C012ABCD,C098WXYZ">
+              <button type="button" id="slack-browse-channels" class="btn-ghost" disabled>Browse</button>
+            </div>
+            <div id="channel-browser" class="channel-browser hidden">
+              <input type="text" id="channel-search" placeholder="Search channels…" autocomplete="off">
+              <ul id="channel-list"></ul>
+            </div>
+          </div>
+          <div class="step-save-row">
+            <button type="button" class="btn-save-step" data-save-step="3">Save</button>
+            <span class="step-save-status" id="save-status-3"></span>
+          </div>
+        </fieldset>
+
+        <!-- ── Step 4: Telegram ─────────────────────────────────────────── -->
+        <fieldset class="step-panel hidden" data-step="4">
+          <legend>Telegram (Optional)</legend>
+
+          <div class="field checkbox-field">
+            <label>
+              <input type="checkbox" id="telegram_enabled" name="telegram_enabled">
+              <span>Enable Telegram bot assistant</span>
+            </label>
+          </div>
+
+          <div id="telegram-fields" class="hidden">
+            <div class="field">
+              <label for="TELEGRAM_BOT_TOKEN">Bot Token</label>
+              <input type="password" id="TELEGRAM_BOT_TOKEN" name="TELEGRAM_BOT_TOKEN"
+                     autocomplete="new-password" placeholder="123456:ABC-...">
+            </div>
+            <div class="field">
+              <label for="TELEGRAM_ALLOWED_USERS">Allowed User IDs</label>
+              <input type="text" id="TELEGRAM_ALLOWED_USERS" name="TELEGRAM_ALLOWED_USERS"
+                     placeholder="987654321,123456789">
+            </div>
+          </div>
+          <div class="step-save-row">
+            <button type="button" class="btn-save-step" data-save-step="4">Save</button>
+            <span class="step-save-status" id="save-status-4"></span>
+          </div>
+        </fieldset>
+
+        <!-- ── Step 5: Google Drive ─────────────────────────────────────── -->
+        <fieldset class="step-panel hidden" data-step="5">
+          <legend>Google Drive (File Upload)</legend>
+
+          <p class="hint" style="margin-bottom: 16px; color: var(--text-dim);">
+            SafeClaw uses a <strong>service account</strong> to upload Slack attachments
+            directly to your Google Drive. Paste your service account key JSON below,
+            then share your Drive folder with the displayed email.
+          </p>
+
+          <div class="field">
+            <label for="GDRIVE_SERVICE_ACCOUNT_JSON">Service Account Key JSON</label>
+            <div class="gdrive-drop-zone" id="gdrive-drop-zone">
+              <textarea
+                id="GDRIVE_SERVICE_ACCOUNT_JSON"
+                name="GDRIVE_SERVICE_ACCOUNT_JSON"
+                class="gdrive-json-textarea"
+                rows="10"
+                placeholder='Paste your service account JSON here, or drag-and-drop the .json file onto this area…
+
+{
+  "type": "service_account",
+  "project_id": "my-project",
+  "private_key_id": "...",
+  ...
+}'
+                spellcheck="false"
+                autocomplete="off"
+              ></textarea>
+              <div class="gdrive-drop-overlay" id="gdrive-drop-overlay">
+                <span>Drop .json file here</span>
+              </div>
+            </div>
+            <div class="gdrive-file-row">
+              <button type="button" class="btn-ghost" id="gdrive-file-btn">Upload .json file</button>
+              <input type="file" id="gdrive-file-input" accept=".json,application/json" style="display:none">
+              <span class="gdrive-status" id="gdrive-status"></span>
+            </div>
+            <div id="gdrive-email-badge" class="gdrive-email-badge hidden">
+              <span class="badge-icon">✓</span>
+              <span>Share your Drive folder with: </span>
+              <code id="gdrive-email-value"></code>
+              <button type="button" class="btn-copy-email" id="gdrive-copy-email" title="Copy email">Copy</button>
+            </div>
+          </div>
+
+          <div class="field gdrive-share-hint hidden" id="gdrive-share-hint">
+            <div class="info-box">
+              <strong>One last step:</strong> Open Google Drive, right-click your
+              <code>SafeClaw</code> folder → <strong>Share</strong> → paste the email
+              above → set role to <strong>Editor</strong> → click Send.
+              SafeClaw will create the folder automatically if it doesn't exist.
+            </div>
+          </div>
+          <div class="step-save-row">
+            <button type="button" class="btn-save-step" data-save-step="5">Save</button>
+            <span class="step-save-status" id="save-status-5"></span>
+          </div>
+        </fieldset>
+
+        <div class="step-actions">
+          <button type="submit" class="btn-submit">Provision now</button>
+        </div>
+
+        <p class="error-banner hidden" id="form-error" role="alert"></p>
+      </form>
+    </div>
+  </div>
+</section>
+
+<div class="instr-backdrop" id="instr-backdrop"></div>
+<aside class="setup-instructions" id="setup-instructions">
+      <div class="instructions-header">
+        <h2>Instructions</h2>
+        <button type="button" class="instr-close" id="instr-close" aria-label="Close">&times;</button>
+      </div>
+      <div class="instructions-content">
+        <!-- ── LLM Instructions ─────────────────────────────────────────── -->
+        <div id="instr-step-1" class="instr-panel">
+          <h3>1. LLM Provider Setup</h3>
+          <p>Choose the model provider for your assistant's intelligence.</p>
+
+          <div class="step-guide">
+            <p><strong>Ollama Cloud (Fastest)</strong></p>
+            <ol>
+              <li>Go to <a href="https://ollama.com/settings/keys" target="_blank">ollama.com/settings/keys</a></li>
+              <li>Sign in and generate a new API key.</li>
+              <li>Copy the key starting with <code>ollama_</code>.</li>
+            </ol>
+
+            <p><strong>Anthropic Claude</strong></p>
+            <ol>
+              <li>Log in to <a href="https://console.anthropic.com/" target="_blank">console.anthropic.com</a></li>
+              <li>Go to <strong>Settings</strong> → <strong>API Keys</strong>.</li>
+              <li>Generate a key starting with <code>sk-ant-</code>.</li>
+            </ol>
+
+            <p><strong>OpenAI GPT-4o</strong></p>
+            <ol>
+              <li>Log in to <a href="https://platform.openai.com/" target="_blank">platform.openai.com</a></li>
+              <li>Go to <strong>Dashboard</strong> → <strong>API keys</strong>.</li>
+              <li>Generate a key starting with <code>sk-</code>.</li>
+            </ol>
+          </div>
+          <p><a href="/help#llm" target="_blank" class="help-link">View full LLM help &rarr;</a></p>
+        </div>
+
+        <!-- ── Composio Instructions ────────────────────────────────────── -->
+        <div id="instr-step-2" class="instr-panel hidden">
+          <h3>2. Composio (Google Auth)</h3>
+          <p>Composio securely handles your Gmail and Drive connections.</p>
+
+          <div class="step-guide">
+            <ol>
+              <li><strong>Sign up:</strong> Create an account at <a href="https://app.composio.dev" target="_blank">app.composio.dev</a>.</li>
+              <li><strong>Connect Tools:</strong> Go to <strong>Tools</strong> in the sidebar.
+                <ul>
+                  <li>Add <strong>Gmail</strong> (Connect your Google account).</li>
+                  <li>Add <strong>Google Drive</strong> (Same account).</li>
+                </ul>
+              </li>
+              <li><strong>Get API Key:</strong> Navigate to <a href="https://app.composio.dev/settings/api-keys" target="_blank">Settings → API Keys</a> and copy your <code>ak_...</code> key.</li>
+              <li><strong>User ID:</strong> This can be your email or any unique string you used when connecting tools. SafeClaw uses this to group your connections.</li>
+            </ol>
+            <p><em>SafeClaw will automatically provision the necessary MCP servers once you submit the form.</em></p>
+          </div>
+          <p><a href="/help#composio" target="_blank" class="help-link">View 5-minute walkthrough &rarr;</a></p>
+        </div>
+
+        <!-- ── Slack Instructions ───────────────────────────────────────── -->
+        <div id="instr-step-3" class="instr-panel hidden">
+          <h3>3. Slack Native Bot</h3>
+          <p>The fastest way to set up Slack is to use an <strong>App Manifest</strong>.</p>
+
+          <div class="step-guide">
+            <ol>
+              <li><strong>Create:</strong> Go to <a href="https://api.slack.com/apps" target="_blank">api.slack.com/apps</a> → <strong>Create New App</strong> → <strong>From Manifest</strong>.</li>
+              <li>Select your workspace, then paste this JSON into the <strong>JSON</strong> tab:</li>
+            </ol>
+            <div class="json-copy-wrapper">
+              <button type="button" class="json-copy-btn" id="slack-manifest-copy" title="Copy JSON">Copy</button>
+            <div class="scope-list-small" id="slack-manifest" style="white-space: pre; overflow-x: auto;">{
+        "display_information": {
+        "name": "SafeClaw"
+        },
+        "features": {
+        "app_home": {
+        "home_tab_enabled": true,
+        "messages_tab_enabled": true,
+        "messages_tab_read_only_enabled": false
+        },
+        "bot_user": {
+        "display_name": "SafeClaw",
+        "always_online": true
+        }
+        },
+        "oauth_config": {
+        "scopes": {
+        "bot": [
+        "app_mentions:read",
+        "channels:history",
+        "channels:read",
+        "chat:write",
+        "chat:write.public",
+        "commands",
+        "groups:history",
+        "groups:read",
+        "im:history",
+        "im:read",
+        "im:write",
+        "mpim:history",
+        "mpim:read",
+        "reactions:read",
+        "reactions:write",
+        "users:read",
+        "users:read.email"
+        ]
+        }
+        },
+        "settings": {
+        "event_subscriptions": {
+        "bot_events": [
+        "app_mention",
+        "message.channels",
+        "message.groups",
+        "message.im",
+        "message.mpim"
+        ]
+        },
+        "org_deploy_enabled": false,
+        "socket_mode_enabled": true,
+        "is_hosted": false,
+        "token_rotation_enabled": false
+        }
+        }</div>
+            </div>
+            <ol start="3">
+              <li><strong>Install:</strong> Sidebar → <strong>Install App</strong>. Install to workspace and copy the <strong>Bot User OAuth Token</strong> (<code>xoxb-...</code>).</li>
+              <li><strong>Socket Mode:</strong> Sidebar → <strong>Basic Information</strong>. Scroll down to <strong>App-Level Tokens</strong> and copy your <code>xapp-...</code> token (scope: <code>connections:write</code>).</li>
+              <li><strong>Admin ID:</strong> In Slack, click your Profile → <strong>More (...)</strong> → <strong>Copy member ID</strong>. This ID (<code>U...</code>) will be the only one allowed to approve email sends.</li>
+            </ol>
+          </div>
+          <p><a href="/help#slack" target="_blank" class="help-link">View 10-step walkthrough &rarr;</a></p>
+        </div>
+        <!-- ── Telegram Instructions ────────────────────────────────────── -->
+        <div id="instr-step-4" class="instr-panel hidden">
+          <h3>4. Telegram Pocket Assistant</h3>
+          <p>Optional: Control your assistant from Telegram.</p>
+
+          <div class="step-guide">
+            <ol>
+              <li><strong>Message @BotFather:</strong> Open <a href="https://t.me/BotFather" target="_blank">t.me/BotFather</a>.</li>
+              <li><strong>Create Bot:</strong> Send <code>/newbot</code> and follow instructions to get your <strong>API Token</strong>.</li>
+              <li><strong>Get Your ID:</strong> Message <a href="https://t.me/userinfobot" target="_blank">t.me/userinfobot</a> to find your numeric User ID. SafeClaw uses this to ensure only you can talk to the bot.</li>
+            </ol>
+          </div>
+          <p><a href="/help#telegram" target="_blank" class="help-link">View Telegram help &rarr;</a></p>
+        </div>
+
+        <!-- ── Google Drive Instructions ────────────────────────────────── -->
+        <div id="instr-step-5" class="instr-panel hidden">
+          <h3>5. Google Drive — Service Account Setup</h3>
+          <p>A service account lets SafeClaw upload files to Drive on your behalf
+             without requiring you to re-authorise. You set it up once.</p>
+
+          <div class="step-guide">
+            <p><strong>Step A — Create a GCP project (skip if you have one)</strong></p>
+            <ol>
+              <li>Go to <a href="https://console.cloud.google.com/" target="_blank">console.cloud.google.com</a>.</li>
+              <li>Click the project dropdown → <strong>New Project</strong>.</li>
+              <li>Name it <code>safeclaw</code> and click <strong>Create</strong>.</li>
+            </ol>
+
+            <p><strong>Step B — Enable the Google Drive API</strong></p>
+            <ol>
+              <li>In the GCP console, go to <strong>APIs &amp; Services → Library</strong>.</li>
+              <li>Search for <strong>Google Drive API</strong> → click it → click <strong>Enable</strong>.</li>
+            </ol>
+
+            <p><strong>Step C — Create a service account</strong></p>
+            <ol>
+              <li>Go to <strong>IAM &amp; Admin → Service Accounts</strong>.</li>
+              <li>Click <strong>+ Create Service Account</strong>.</li>
+              <li>Name it <code>safeclaw-drive</code> → click <strong>Create and Continue</strong>.</li>
+              <li>Skip role assignment → click <strong>Done</strong>.</li>
+            </ol>
+
+            <p><strong>Step D — Download the JSON key</strong></p>
+            <ol>
+              <li>Click the service account you just created.</li>
+              <li>Go to the <strong>Keys</strong> tab → <strong>Add Key → Create new key</strong>.</li>
+              <li>Select <strong>JSON</strong> → click <strong>Create</strong>.</li>
+              <li>A <code>.json</code> file downloads automatically — keep it safe.</li>
+            </ol>
+
+            <p><strong>Step E — Paste the key here</strong></p>
+            <ol>
+              <li>Open the downloaded <code>.json</code> file in any text editor.</li>
+              <li>Select all (<kbd>Cmd+A</kbd> / <kbd>Ctrl+A</kbd>) → copy.</li>
+              <li>Paste into the text area on this step.</li>
+              <li>The setup page will extract and display the service account email
+                  (format: <code>safeclaw-drive@your-project.iam.gserviceaccount.com</code>).</li>
+            </ol>
+
+            <p><strong>Step F — Share your Drive folder with the service account</strong></p>
+            <ol>
+              <li>Open <a href="https://drive.google.com" target="_blank">Google Drive</a>.</li>
+              <li>Find or create a folder named <code>SafeClaw</code>.</li>
+              <li>Right-click the folder → <strong>Share</strong>.</li>
+              <li>Paste the service account email (shown in the green badge after you paste the JSON).</li>
+              <li>Set the role to <strong>Editor</strong> → click <strong>Send</strong>.</li>
+            </ol>
+
+            <p class="hint" style="margin-top: 12px;">
+              <em>The service account only has access to folders you explicitly share with it —
+              it cannot see the rest of your Drive.</em>
+            </p>
+          </div>
+          <p><a href="/help#gdrive" target="_blank" class="help-link">View full Drive setup walkthrough &rarr;</a></p>
+        </div>
+      </div>
+</aside>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='setup.js') }}"></script>
+{% endblock %}

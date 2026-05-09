@@ -94,21 +94,21 @@ def test_rejects_placeholder_input():
 def test_quotes_values_with_special_chars():
     d = make_tempdir()
     env_writer.write_env(d, {
-        "SLACK_PUBLIC_CHANNELS": "C123,C456 and a space",
+        "SLACK_INGEST_CHANNELS": "C123,C456 and a space",
     })
     text = (d / ".env").read_text()
-    assert 'SLACK_PUBLIC_CHANNELS="C123,C456 and a space"' in text
+    assert 'SLACK_INGEST_CHANNELS="C123,C456 and a space"' in text
 
 
 def test_appends_keys_not_in_template():
     d = make_tempdir()
     env_writer.write_env(d, {
         "SLACK_WORKSPACE_ID": "T12345",
-        "SLACK_PUBLIC_CHANNELS": "C111,C222",
+        "SLACK_INGEST_CHANNELS": "C111,C222",
     })
     text = (d / ".env").read_text()
     assert "SLACK_WORKSPACE_ID=T12345" in text
-    assert "SLACK_PUBLIC_CHANNELS=" in text
+    assert "SLACK_INGEST_CHANNELS=" in text
 
 
 def test_unknown_keys_are_dropped():

@@ -113,11 +113,14 @@
   });
   refreshLLMVisibility();
 
-  // ── Slack auto-populate: workspace ID + admin user ID ───────────────────
+  // ── Slack auto-populate: workspace ID + admin user ID + channels + users ─
   (function () {
     const botTokenEl  = form.SLACK_BOT_TOKEN;
     const workspaceEl = form.SLACK_WORKSPACE_ID;
     const adminUserEl = form.SLACK_BOT_ADMIN_USER_ID;
+    const homeChEl    = form.SLACK_HOME_CHANNEL;
+    const ingestEl    = form.SLACK_INGEST_CHANNELS;
+    const allowedEl   = form.SLACK_ALLOWED_USERS;
     if (!botTokenEl || !workspaceEl) return;
 
     let _lastToken = "";
@@ -143,6 +146,8 @@
           if (body.user_id && adminUserEl && !adminUserEl.value) {
             adminUserEl.value = body.user_id;
           }
+          // Auto-discover channels and users now that the token is valid
+          await autoDiscover(token);
         } else {
           const hint = body.error === "invalid_auth" || body.error === "not_found"
             ? "token invalid or revoked"
@@ -157,6 +162,57 @@
       }
     }
 
+    async function autoDiscover(token) {
+      // 1. Fetch channels
+      try {
+        const chResp = await fetch("/api/slack/list-channels?bot_token=" + encodeURIComponent(token));
+        const chBody = await chResp.json();
+        if (chBody.ok && chBody.channels && chBody.channels.length) {
+          const publicChannels = chBody.channels.filter(function (c) { return !c.is_private; });
+          const ids = publicChannels.map(function (c) { return c.id; });
+          const names = publicChannels.map(function (c) { return c.name; });
+
+          if (ingestEl && !ingestEl.value) {
+            ingestEl.value = ids.join(", ");
+          }
+
+          // Default home channel to #general if present, otherwise first public channel
+          if (homeChEl && !homeChEl.value) {
+            const generalIdx = names.indexOf("general");
+            if (generalIdx >= 0) {
+              homeChEl.value = ids[generalIdx];
+            } else if (ids.length) {
+              homeChEl.value = ids[0];
+            }
+          }
+
+          // Enable browse button
+          const browseBtn = document.getElementById("slack-browse-channels");
+          if (browseBtn) browseBtn.disabled = false;
+        }
+      } catch (_) {
+        // silent fail — user can still type IDs manually
+      }
+
+      // 2. Fetch users
+      try {
+        const uResp = await fetch("/api/slack/list-users?bot_token=" + encodeURIComponent(token));
+        const uBody = await uResp.json();
+        if (uBody.ok && uBody.users && uBody.users.length) {
+          const userIds = uBody.users.map(function (u) { return u.id; });
+          if (allowedEl && !allowedEl.value) {
+            allowedEl.value = userIds.join(", ");
+          }
+          // Also set admin if empty (prefer the bot's own user_id from lookup, but fallback)
+          if (adminUserEl && !adminUserEl.value && uBody.users.length) {
+            // Don't override if lookup already filled it
+          }
+        }
+      } catch (_) {
+        // silent fail
+      }
+    }
+
     botTokenEl.addEventListener("blur", function () { lookupToken(botTokenEl.value.trim()); });
     botTokenEl.addEventListener("paste", function (e) {
       const pasted = (e.clipboardData || window.clipboardData).getData("text").trim();
@@ -167,7 +223,7 @@
   // ── Slack channel ID validation ──────────────────────────────────────────
   (function () {
     const botTokenEl   = form.SLACK_BOT_TOKEN;
-    const channelsEl   = form.SLACK_PUBLIC_CHANNELS;
+    const channelsEl   = form.SLACK_INGEST_CHANNELS;
     if (!channelsEl) return;
 
     let _badgesEl = null;
@@ -510,8 +566,12 @@
         setFieldError("SLACK_BOT_ADMIN_USER_ID", "Must start with U");
         ok = false;
       }
-      if (!form.SLACK_PUBLIC_CHANNELS.value.trim()) {
-        setFieldError("SLACK_PUBLIC_CHANNELS", "At least one channel ID");
+      if (!form.SLACK_HOME_CHANNEL.value.trim()) {
+        setFieldError("SLACK_HOME_CHANNEL", "Home channel is required");
+        ok = false;
+      }
+      if (!form.SLACK_INGEST_CHANNELS.value.trim()) {
+        setFieldError("SLACK_INGEST_CHANNELS", "At least one ingest channel is required");
         ok = false;
       }
     }
@@ -567,7 +627,9 @@
       SLACK_APP_TOKEN: form.SLACK_APP_TOKEN.value.trim(),
       SLACK_WORKSPACE_ID: form.SLACK_WORKSPACE_ID.value.trim(),
       SLACK_BOT_ADMIN_USER_ID: form.SLACK_BOT_ADMIN_USER_ID.value.trim(),
-      SLACK_PUBLIC_CHANNELS: form.SLACK_PUBLIC_CHANNELS.value.trim(),
+      SLACK_HOME_CHANNEL: form.SLACK_HOME_CHANNEL.value.trim(),
+      SLACK_INGEST_CHANNELS: form.SLACK_INGEST_CHANNELS.value.trim(),
+      SLACK_ALLOWED_USERS: form.SLACK_ALLOWED_USERS.value.trim(),
       telegram_enabled: telegramToggle.checked,
       LLM_API_KEY: apiKey,
     };
@@ -658,7 +720,8 @@
     2: ["COMPOSIO_API_KEY", "COMPOSIO_USER_ID",
         "COMPOSIO_READER_MCP_URL", "COMPOSIO_ACTOR_MCP_URL"],
     3: ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_WORKSPACE_ID",
-        "SLACK_BOT_ADMIN_USER_ID", "SLACK_PUBLIC_CHANNELS"],
+        "SLACK_BOT_ADMIN_USER_ID", "SLACK_HOME_CHANNEL",
+        "SLACK_INGEST_CHANNELS", "SLACK_ALLOWED_USERS"],
     4: ["TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USERS"],
     5: ["GDRIVE_SERVICE_ACCOUNT_JSON"],
   };
@@ -683,7 +746,8 @@
         .forEach(function (k) { if (form[k] && form[k].value.trim()) payload[k] = form[k].value.trim(); });
     } else if (step === 3) {
       ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_WORKSPACE_ID",
-       "SLACK_BOT_ADMIN_USER_ID", "SLACK_PUBLIC_CHANNELS"]
+       "SLACK_BOT_ADMIN_USER_ID", "SLACK_HOME_CHANNEL",
+       "SLACK_INGEST_CHANNELS", "SLACK_ALLOWED_USERS"]
         .forEach(function (k) { if (form[k] && form[k].value.trim()) payload[k] = form[k].value.trim(); });
     } else if (step === 4) {
       if (document.getElementById("telegram_enabled") && document.getElementById("telegram_enabled").checked) {
@@ -785,7 +849,8 @@
     var plainFields = [
       "COMPOSIO_API_KEY", "COMPOSIO_USER_ID", "COMPOSIO_READER_MCP_URL", "COMPOSIO_ACTOR_MCP_URL",
       "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_WORKSPACE_ID",
-      "SLACK_BOT_ADMIN_USER_ID", "SLACK_PUBLIC_CHANNELS",
+      "SLACK_BOT_ADMIN_USER_ID", "SLACK_HOME_CHANNEL",
+      "SLACK_INGEST_CHANNELS", "SLACK_ALLOWED_USERS",
       "TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USERS",
     ];
     plainFields.forEach(function (k) {

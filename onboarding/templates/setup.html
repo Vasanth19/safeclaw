@@ -116,9 +116,16 @@
           </div>
 
           <div class="field">
-            <label for="SLACK_PUBLIC_CHANNELS">Listen in (Channel IDs)</label>
+            <label for="SLACK_HOME_CHANNEL">Home Channel <small>(cron results + proactive messages)</small></label>
+            <input type="text" id="SLACK_HOME_CHANNEL" name="SLACK_HOME_CHANNEL"
+                   placeholder="C0123456789">
+            <p class="hint">Channel where daily digests and proactive messages are posted.</p>
+          </div>
+
+          <div class="field">
+            <label for="SLACK_INGEST_CHANNELS">Ingest Channels <small>(auto-discovered from workspace)</small></label>
             <div class="channel-input-row">
-              <input type="text" id="SLACK_PUBLIC_CHANNELS" name="SLACK_PUBLIC_CHANNELS"
+              <input type="text" id="SLACK_INGEST_CHANNELS" name="SLACK_INGEST_CHANNELS"
                      placeholder="C012ABCD,C098WXYZ">
               <button type="button" id="slack-browse-channels" class="btn-ghost" disabled>Browse</button>
             </div>
@@ -126,6 +133,14 @@
               <input type="text" id="channel-search" placeholder="Search channels…" autocomplete="off">
               <ul id="channel-list"></ul>
             </div>
+            <p class="hint">Comma-separated channel IDs to monitor and summarize daily. Populated automatically when you paste your bot token above.</p>
+          </div>
+
+          <div class="field">
+            <label for="SLACK_ALLOWED_USERS">Allowed Users <small>(auto-discovered from workspace)</small></label>
+            <input type="text" id="SLACK_ALLOWED_USERS" name="SLACK_ALLOWED_USERS"
+                   placeholder="U0123456789,U0987654321">
+            <p class="hint">Comma-separated user IDs allowed to interact with the bot. Populated automatically when you paste your bot token.</p>
           </div>
           <div class="step-save-row">
             <button type="button" class="btn-save-step" data-save-step="3">Save</button>

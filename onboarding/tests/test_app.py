@@ -18,25 +18,26 @@ def test_landing_renders():
     assert b"SafeClaw" in r.data or b"SAFE" in r.data
 
 
-def test_setup_form_renders_with_four_steps():
+def test_setup_form_renders_with_five_steps():
     c = make_client()
     r = c.get("/setup")
     assert r.status_code == 200
     body = r.data.decode()
-    # Exactly 4 steps — Composio is back as Step 2.
+    # 5 steps — LLM, Composio, Slack, Telegram, Google Drive
     assert 'data-step="1"' in body
     assert 'data-step="2"' in body
     assert 'data-step="3"' in body
     assert 'data-step="4"' in body
-    assert 'data-step="5"' not in body
-    # All four Composio fields are present, customer-facing.
+    assert 'data-step="5"' in body
+    # Composio fields are present, customer-facing.
     assert "COMPOSIO_API_KEY" in body
     assert "COMPOSIO_USER_ID" in body
-    assert "COMPOSIO_READER_MCP_URL" in body
-    assert "COMPOSIO_ACTOR_MCP_URL" in body
     # Slack fields still present
     assert "SLACK_BOT_TOKEN" in body
     assert "SLACK_APP_TOKEN" in body
+    assert "SLACK_HOME_CHANNEL" in body
+    assert "SLACK_INGEST_CHANNELS" in body
+    assert "SLACK_ALLOWED_USERS" in body
 
 
 def test_help_renders_with_composio_section():
@@ -84,7 +85,8 @@ def test_provision_rejects_missing_composio_fields():
         "SLACK_APP_TOKEN": "wrong",
         "SLACK_WORKSPACE_ID": "x",
         "SLACK_BOT_ADMIN_USER_ID": "x",
-        "SLACK_PUBLIC_CHANNELS": "",
+        "SLACK_HOME_CHANNEL": "",
+        "SLACK_INGEST_CHANNELS": "",
         # No COMPOSIO_* fields at all.
     }
     r = c.post("/api/provision", json=payload)
@@ -92,11 +94,9 @@ def test_provision_rejects_missing_composio_fields():
     body = r.get_json()
     assert body["success"] is False
     errs = body["errors"]
-    # All four Composio errors must be reported.
+    # Composio errors must be reported.
     assert "COMPOSIO_API_KEY" in errs
     assert "COMPOSIO_USER_ID" in errs
-    assert "COMPOSIO_READER_MCP_URL" in errs
-    assert "COMPOSIO_ACTOR_MCP_URL" in errs
     # Slack errors should also be reported in the same response.
     assert "SLACK_BOT_TOKEN" in errs
 
@@ -115,7 +115,8 @@ def test_provision_returns_validation_errors_for_bad_creds():
         "SLACK_APP_TOKEN": "wrong",
         "SLACK_WORKSPACE_ID": "x",
         "SLACK_BOT_ADMIN_USER_ID": "x",
-        "SLACK_PUBLIC_CHANNELS": "",
+        "SLACK_HOME_CHANNEL": "",
+        "SLACK_INGEST_CHANNELS": "",
     }
     r = c.post("/api/provision", json=payload)
     assert r.status_code == 400
@@ -128,7 +129,6 @@ def test_provision_returns_validation_errors_for_bad_creds():
     assert "SLACK_WORKSPACE_ID" in errs
     assert "COMPOSIO_API_KEY" in errs
     assert "COMPOSIO_USER_ID" in errs
-    assert "COMPOSIO_READER_MCP_URL" in errs
 
 
 def test_progress_404_for_unknown_install():

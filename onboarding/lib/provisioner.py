@@ -301,7 +301,7 @@ def _phase_welcome(install: Install, install_dir: Path, form: dict) -> None:
 
     bot_token = form.get("SLACK_BOT_TOKEN", "")
     admin = form.get("SLACK_BOT_ADMIN_USER_ID", "")
-    channels = form.get("SLACK_PUBLIC_CHANNELS", "")
+    channels = form.get("SLACK_INGEST_CHANNELS", "")
 
     if not bot_token or not admin:
         # Soft-fail: the install is up, we just couldn't DM the user.

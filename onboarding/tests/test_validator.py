@@ -106,13 +106,11 @@ def test_composio_mcp_url_live_empty_tools():
 
 # ── Composio aggregator ─────────────────────────────────────────────────────
 def test_validate_composio_missing_all_fields():
-    """Empty form must surface errors for all four Composio fields."""
+    """Empty form must surface errors for all validated Composio fields."""
     # API key validator hits the network — short-circuit format check first.
     errors = validator.validate_composio({})
     assert "COMPOSIO_API_KEY" in errors
     assert "COMPOSIO_USER_ID" in errors
-    assert "COMPOSIO_READER_MCP_URL" in errors
-    assert "COMPOSIO_ACTOR_MCP_URL" in errors
 
 
 # ── Slack ───────────────────────────────────────────────────────────────────
@@ -137,7 +135,8 @@ def test_validate_slack_aggregates():
     assert "SLACK_BOT_TOKEN" in errs
     assert "SLACK_WORKSPACE_ID" in errs
     assert "SLACK_BOT_ADMIN_USER_ID" in errs
-    assert "SLACK_PUBLIC_CHANNELS" in errs
+    assert "SLACK_HOME_CHANNEL" in errs
+    assert "SLACK_INGEST_CHANNELS" in errs
 
 
 # ── Telegram ────────────────────────────────────────────────────────────────
@@ -165,8 +164,6 @@ def test_validate_all_includes_composio():
     errors = validator.validate_all({})
     assert "COMPOSIO_API_KEY" in errors
     assert "COMPOSIO_USER_ID" in errors
-    assert "COMPOSIO_READER_MCP_URL" in errors
-    assert "COMPOSIO_ACTOR_MCP_URL" in errors
     assert "SLACK_BOT_TOKEN" in errors
 
 

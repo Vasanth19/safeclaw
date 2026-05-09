@@ -237,6 +237,47 @@ def create_app() -> Flask:
                 results.append({"id": cid, "ok": False, "error": str(exc)})
         return jsonify({"ok": True, "channels": results})
 
+    @app.get("/api/slack/list-users")
+    def api_slack_list_users():
+        """Return workspace members via users.list."""
+        token = (request.args.get("bot_token") or "").strip()
+        if not token.startswith("xoxb-"):
+            return jsonify({"ok": False, "error": "invalid token format"}), 400
+        import requests as _req
+        users = []
+        cursor = None
+        try:
+            while True:
+                params = {"limit": 200}
+                if cursor:
+                    params["cursor"] = cursor
+                r = _req.get(
+                    "https://slack.com/api/users.list",
+                    params=params,
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=10,
+                )
+                body = r.json()
+                if not body.get("ok"):
+                    return jsonify({"ok": False, "error": body.get("error", "slack_error")}), 400
+                for u in body.get("members", []):
+                    # Skip bots, deleted accounts, and the Slackbot
+                    if u.get("deleted") or u.get("is_bot") or u.get("id") == "USLACKBOT":
+                        continue
+                    users.append({
+                        "id": u["id"],
+                        "name": u.get("name", u["id"]),
+                        "real_name": u.get("real_name", ""),
+                        "email": u.get("profile", {}).get("email", ""),
+                    })
+                cursor = body.get("response_metadata", {}).get("next_cursor")
+                if not cursor:
+                    break
+        except Exception as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 502
+        users.sort(key=lambda u: u.get("real_name", u["name"]).lower())
+        return jsonify({"ok": True, "users": users})
+
     @app.post("/api/gdrive/validate")
     def api_gdrive_validate():
         """Parse a service-account JSON string and return the client_email."""

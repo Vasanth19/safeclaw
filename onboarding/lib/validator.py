@@ -353,8 +353,13 @@ def validate_slack(form: dict[str, Any]) -> dict[str, str]:
     if not admin.startswith("U"):
         errors["SLACK_BOT_ADMIN_USER_ID"] = "Admin user ID must start with 'U'"
 
-    if not form.get("SLACK_PUBLIC_CHANNELS", "").strip():
-        errors["SLACK_PUBLIC_CHANNELS"] = "At least one channel ID is required"
+    home = form.get("SLACK_HOME_CHANNEL", "").strip()
+    if not home:
+        errors["SLACK_HOME_CHANNEL"] = "Home channel is required (e.g. C0123456789)"
+
+    ingest = form.get("SLACK_INGEST_CHANNELS", "").strip()
+    if not ingest:
+        errors["SLACK_INGEST_CHANNELS"] = "At least one ingest channel is required"
 
     return errors
 

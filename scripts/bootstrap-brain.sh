@@ -2,9 +2,10 @@
 # SafeClaw — bootstrap the brain
 #
 # What this does:
-#   1. Clones the public Evolving Brain Template (MIT, by Samin Yasar) into
-#      ./brain/ if it isn't there yet. Strips the template's .git so the
-#      operator owns their own brain folder going forward.
+#   1. Seeds the PARA-style markdown brain folder into ./brain/ if it isn't
+#      there yet. Creates the standard vault layout (Identity, Aspirations,
+#      Live Logs, Daily Journal, Meetings, Projects, Areas, Resources,
+#      Operations, People, Companies).
 #   2. Execs scripts/lib/bootstrap_brain.py inside the embedder container
 #      (which already has Python + psycopg). The Python script pulls Gmail
 #      history through the Composio Reader MCP, populates People/, Companies/,
@@ -27,7 +28,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 BRAIN_DIR="${REPO_ROOT}/brain"
 PY_SCRIPT="${SCRIPT_DIR}/lib/bootstrap_brain.py"
-TEMPLATE_REPO="https://github.com/Samin12/Evolving-Brain-Template"
+# No external template repo — layout is generated locally below.
 
 cd "${REPO_ROOT}"
 
@@ -104,16 +105,23 @@ for v in "${required_env[@]}"; do
   fi
 done
 
-# ── Step 1: clone the Evolving Brain Template if missing ──────────────────
+# ── Step 1: seed the brain folder if missing ──────────────────────────────
 if [[ ! -d "${BRAIN_DIR}" ]]; then
-  echo "Cloning Evolving Brain Template (MIT, by Samin Yasar)..."
-  echo "  source: ${TEMPLATE_REPO}"
-  git clone --depth 1 "${TEMPLATE_REPO}" "${BRAIN_DIR}"
-  # Strip upstream's .git so the operator's brain has no remote and is theirs.
-  rm -rf "${BRAIN_DIR}/.git"
-  echo "Brain template installed at ${BRAIN_DIR}"
+  echo "Seeding PARA-style brain folder..."
+  mkdir -p "${BRAIN_DIR}/0 - Identity"
+  mkdir -p "${BRAIN_DIR}/1 - Aspirations"
+  mkdir -p "${BRAIN_DIR}/2 - Live Logs"
+  mkdir -p "${BRAIN_DIR}/3 - Daily Journal"
+  mkdir -p "${BRAIN_DIR}/4 - Meetings"
+  mkdir -p "${BRAIN_DIR}/5 - Projects"
+  mkdir -p "${BRAIN_DIR}/6 - Areas"
+  mkdir -p "${BRAIN_DIR}/7 - Resources"
+  mkdir -p "${BRAIN_DIR}/9 - Operations"
+  mkdir -p "${BRAIN_DIR}/People"
+  mkdir -p "${BRAIN_DIR}/Companies"
+  echo "Brain folder seeded at ${BRAIN_DIR}"
 else
-  echo "brain/ already exists — skipping clone."
+  echo "brain/ already exists — skipping seed."
 fi
 
 # ── Step 2: run the Python script inside an ephemeral embedder container ──

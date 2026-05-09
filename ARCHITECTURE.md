@@ -270,8 +270,7 @@ Paths are shown relative to the install directory (the cloned repo root).
 ├── .env.example             # template — safe to commit, uses __FILL_IN__ / __GENERATE__ placeholders
 ├── .gitignore               # excludes .env, vendored repos, populated brain files
 ├── brain/                   # human-readable PARA-style markdown layer (gitignored;
-│                            # cloned at install time from the Evolving Brain Template
-│                            # — github.com/Samin12/Evolving-Brain-Template, MIT)
+│                            # seeded at install time by the bootstrap script)
 │                            #   ├── 0 - Identity/   (soul.md + identity scaffolds)
 │                            #   ├── 5 - Projects/   (one file per active project)
 │                            #   ├── People/         (one file per person — populated by bootstrap-brain.sh)

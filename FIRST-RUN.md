@@ -140,9 +140,7 @@ bash scripts/verify-stack.sh --phase 0
 
 The brain folder is empty by design. The bootstrap script:
 
-1. Clones the public **Evolving Brain Template**
-   (https://github.com/Samin12/Evolving-Brain-Template, MIT licensed by
-   Samin Yasar) into `./brain/`.
+1. Seeds the PARA-style markdown brain folder into `./brain/`.
 2. Pulls 90 days of Gmail history through the Composio Reader MCP, extracts
    unique senders into `brain/People/`, sender domains into
    `brain/Companies/`, and sent-mail bodies into `postgres-obs.style_samples`.

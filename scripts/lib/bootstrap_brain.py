@@ -64,8 +64,7 @@ Attribution
 -----------
 
 The brain folder layout this script populates (``People/``, ``Companies/``,
-``2 - Live Logs/``, etc.) follows Samin Yasar's **Evolving Brain Template**
-(MIT licensed) — https://github.com/Samin12/Evolving-Brain-Template.
+``2 - Live Logs/``, etc.) follows a PARA-style markdown vault structure.
 """
 
 from __future__ import annotations
@@ -1463,8 +1462,7 @@ def run(
         report_lines.append("- (none seen)")
     report_lines.extend([
         "",
-        "*Brain folder layout based on Samin Yasar's Evolving Brain Template (MIT) —*",
-        "*https://github.com/Samin12/Evolving-Brain-Template*",
+        "*Brain folder layout: PARA-style markdown vault*",
         "",
     ])
     report_path.write_text("\n".join(report_lines), encoding="utf-8")
@@ -1502,7 +1500,7 @@ def run(
     print("   3. Create People/ entries manually only for key relationships")
     print(bar)
     print(f"  Report: {report_path.relative_to(brain_dir.parent)}")
-    print(f"  Brain layout: Evolving Brain Template (MIT) by Samin Yasar")
+    print(f"  Brain layout: PARA-style markdown vault")
     print(bar)
     return 0
 

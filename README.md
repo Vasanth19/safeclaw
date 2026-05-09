@@ -49,9 +49,8 @@ ai-assistant/
 ├── DEPLOY-RUNBOOK.md           Day-2 operations runbook
 ├── IMPLEMENTATION-PLAN.md      Phased rollout plan + rollback procedures
 ├── brain/                      Human-readable PARA-style markdown layer
-│                               (gitignored — cloned at install time from the
-│                                Evolving Brain Template by Samin Yasar, MIT;
-│                                github.com/Samin12/Evolving-Brain-Template)
+│                               (gitignored — seeded at install time by the
+│                                bootstrap script)
 │   ├── 0 - Identity/           soul.md + identity scaffolds
 │   ├── 1 - Aspirations/        long-horizon goals
 │   ├── 2 - Live Logs/          per-day activity log (auto-populated in v2)

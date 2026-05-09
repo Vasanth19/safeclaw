@@ -198,10 +198,9 @@ bash scripts/bootstrap-brain.sh
 ```
 
 What this does:
-1. Clones the public **Evolving Brain Template**
-   (https://github.com/Samin12/Evolving-Brain-Template, MIT-licensed by
-   Samin Yasar) into `./brain/` if not already present. Strips the upstream
-   `.git` so you own the folder going forward.
+1. Seeds the PARA-style markdown brain folder into `./brain/` if not already
+   present. Creates the standard vault layout (Identity, Aspirations, Live Logs,
+   Daily Journal, Meetings, Projects, Areas, Resources, Operations, People, Companies).
 2. Pulls Gmail history for the last 90 days through the Composio Reader MCP.
 3. Extracts unique senders → upserts into `brain/People/<slug>.md` and the
    `entities` table in postgres-obs.
@@ -288,7 +287,7 @@ After changing, `docker compose restart hermes-reader hermes-actor`.
 | Re-bootstrap (full reset) | `bash scripts/bootstrap-brain.sh --reset` |
 | Stop everything | `docker compose down` |
 | Start again | `docker compose up -d` |
-| Pull latest brain template updates | `cd brain && git init && git remote add upstream https://github.com/Samin12/Evolving-Brain-Template && git fetch upstream && git merge upstream/main` (advanced; the bootstrap script doesn't handle re-clones) |
+| Re-seed brain folder | `bash scripts/bootstrap-brain.sh --reset` (backs up existing brain/ to brain-backup-{timestamp}) |
 
 ---
 
@@ -440,16 +439,11 @@ Migrations are forward-compatible — no manual SQL needed.
 ### Updating the brain template
 
 The `brain/` folder is a copy of the upstream template at clone time, with
-its `.git` stripped. To pull upstream changes:
+its `.git` stripped. To re-seed from the bootstrap script:
 
 ```bash
-cd brain
-git init
-git remote add upstream https://github.com/Samin12/Evolving-Brain-Template
-git fetch upstream
-git merge upstream/main --allow-unrelated-histories
-# review the merge — your populated People/Companies stay untouched
-rm -rf .git
+bash scripts/bootstrap-brain.sh --reset
+# review the output — your populated People/Companies stay untouched
 ```
 
 Or — easier — let new SafeClaw versions ship with an updated bootstrap
@@ -607,7 +601,7 @@ If all four pass, the install is shippable.
 │   ├── lib/bootstrap_brain.py    ← the actual brain-population logic
 │   └── verify-stack.sh           ← phase-gated PASS/FAIL acceptance checks
 │
-├── brain/                        ← cloned at install (gitignored), Samin Yasar's MIT template
+├── brain/                        ← seeded at install (gitignored), PARA-style markdown vault
 │   ├── 0 - Identity/             ← who the operator is
 │   ├── 1 - Aspirations/
 │   ├── 2 - Live Logs/            ← bootstrap reports + daily logs
@@ -630,7 +624,7 @@ If all four pass, the install is shippable.
 ## Credits
 
 - **Hermes Agent runtime** — NousResearch (https://github.com/NousResearch/hermes-agent)
-- **Evolving Brain Template** — Samin Yasar (https://github.com/Samin12/Evolving-Brain-Template, MIT)
+- **PARA-style markdown vault layout** — inspired by Tiago Forte's PARA method
 - **Composio** — OAuth + MCP integration platform (https://composio.dev)
 - **Ollama Cloud** — `:cloud` model routing (https://ollama.com)
 - **pgvector** — Postgres vector extension

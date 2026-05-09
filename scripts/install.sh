@@ -56,3 +56,16 @@ echo
 echo "For the full walkthrough:  https://github.com/Vasanth19/safeclaw/blob/main/FIRST-RUN.md"
 echo "For day-2 operations:       https://github.com/Vasanth19/safeclaw/blob/main/DEPLOY-RUNBOOK.md"
 echo
+
+# ── Optional: auto-start and open dashboards if .env is complete ──────────
+if ! grep -q "__FILL_IN__" .env; then
+    echo "Detected: .env appears fully configured."
+    echo "Starting the stack and opening dashboards..."
+    docker compose up -d
+    bash scripts/verify-stack.sh --phase 0
+    bash scripts/open-dashboards.sh
+else
+    echo "Note: After you finish editing .env and run 'docker compose up -d',"
+    echo "      run 'bash scripts/open-dashboards.sh' to auto-open the control surfaces."
+    echo
+fi

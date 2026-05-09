@@ -17,6 +17,8 @@ content filter — is what defends against prompt-injection attacks.
 - [Architecture: Template vs Instance](#architecture-template-vs-instance)
 - [System Requirements](#system-requirements)
 - [Quick Start](#quick-start)
+- [Control Surfaces](#control-surfaces)
+- [For AI Agents](#for-ai-agents)
 - [Folder Map](#folder-map)
 - [Documentation](#documentation)
 - [Contributing](#contributing)
@@ -130,6 +132,51 @@ For the full operator walkthrough (Composio MCP setup, Slack/Telegram bot creati
 day-2 commands) see **[FIRST-RUN.md](FIRST-RUN.md)**. For the phased rollout plan
 see **[IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md)**. For deployment to a VPS
 see **[HOSTINGER-DEPLOY.md](HOSTINGER-DEPLOY.md)** or **[DEPLOY-RUNBOOK.md](DEPLOY-RUNBOOK.md)**.
+
+---
+
+## Control Surfaces
+
+After `docker compose up -d` starts the stack, two web UIs are available locally:
+
+| URL | What it is | When to use |
+|-----|-----------|-------------|
+| `http://localhost:8080/dashboard` | **SafeClaw Dashboard** — live container status, log streams, service health, and a log viewer for every container | Day-to-day monitoring |
+| `http://localhost:9119` | **Hermes Mission Control** — agent configuration, scheduled automations, feature flags, chat history, and system prompts | Admin / debugging |
+
+**Auto-open after first run**
+
+The install script and the Quick Start steps above automatically open both URLs in your default browser once the stack is healthy:
+
+```bash
+# macOS
+open http://localhost:8080/dashboard
+open http://localhost:9119
+
+# Linux
+xdg-open http://localhost:8080/dashboard
+xdg-open http://localhost:9119
+```
+
+If you are installing on a remote VPS/VM, use SSH port forwarding:
+
+```bash
+ssh -L 8080:localhost:8080 -L 9119:localhost:9119 user@vps-host
+```
+
+Then open the URLs locally.
+
+---
+
+## For AI Agents
+
+If you are an AI agent (Claude, Cursor, Copilot, etc.) assisting a human with this install, use **[AI-AGENTS.md](AI-AGENTS.md)**. It includes:
+
+- Automated prerequisite detection (macOS, Linux, or Windows/WSL2)
+- Auto-installation attempts via Homebrew, apt, or official scripts
+- Step-by-step `.env` configuration prompts
+- Health-check verification
+- Auto-opening of the control surfaces
 
 ---
 

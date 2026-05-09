@@ -412,4 +412,4 @@ skills:
 # ── Home channel (Hermes top-level config key — DO NOT nest under slack:) ────
 # Hermes reads SLACK_HOME_CHANNEL to deliver cron results + proactive messages.
 # Without this, it prompts "/sethome" on every startup.
-SLACK_HOME_CHANNEL: C0AHR1RGMDL   # #jarvis-command-center
+SLACK_HOME_CHANNEL: "${SLACK_HOME_CHANNEL}"   # Set in .env — channel where cron results + proactive messages are posted

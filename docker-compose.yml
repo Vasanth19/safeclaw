@@ -151,7 +151,7 @@ services:
   # bind-mount fix, default session reset, and provider auto-pick all baked in).
   # Devs who want to rebuild from source can comment-toggle the build: block.
   hermes-reader:
-    image: ghcr.io/vasanth19/safeclaw-hermes:1.0
+    image: ghcr.io/vasanth19/safeclaw-hermes:1.2
     # Dev-only: rebuild from source. Uncomment to use; the `image:` tag above
     # still controls the local tag name. Needed when the baked-MCP layer changed.
     # build:
@@ -224,7 +224,7 @@ services:
   # to start this service in Phase 2.
   hermes-actor:
     # Same pre-built SafeClaw distribution image as hermes-reader (shared layer cache).
-    image: ghcr.io/vasanth19/safeclaw-hermes:1.0
+    image: ghcr.io/vasanth19/safeclaw-hermes:1.2
     # Dev-only: rebuild from source. Uncomment to use; the `image:` tag above
     # still controls the local tag name.
     # build:

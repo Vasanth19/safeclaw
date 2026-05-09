@@ -32,6 +32,14 @@ log() {
 
 # ─── Step 1: Ensure HERMES_HOME exists and is writable ──────────────────────
 mkdir -p "${HERMES_HOME}"
+# When the container starts as root (default), fix volume ownership so the
+# hermes user (uid 10000) can write cron/jobs.json, sessions, logs, etc.
+# In rootless Podman this may silently fail — that's okay because the mapped
+# host UID already owns the volume.
+if [ "$(id -u)" = "0" ]; then
+    chown -R hermes:hermes "${HERMES_HOME}" 2>/dev/null || \
+        log "Warning: chown of ${HERMES_HOME} failed (rootless container?) — continuing anyway"
+fi
 
 # ─── Step 2: Seed config.yaml from template ─────────────────────────────────
 # Resolve which template to use:

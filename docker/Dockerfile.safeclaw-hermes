@@ -77,8 +77,12 @@ RUN uv venv && \
 # Pre-install Chrome for agent-browser as the hermes user so browser_tool.py
 # can navigate without an explicit --executable-path. Runs as hermes (uid 10000)
 # so the cache lands in /opt/data/.agent-browser/browsers at runtime.
+# NOTE: agent-browser install may fail on ARM64 or under QEMU emulation where
+# Chrome for Testing has no compatible build. Playwright's Chromium (installed
+# earlier via `npx playwright install --with-deps chromium`) is still available
+# and browser_tool.py will fall back to it.
 USER hermes
-RUN HOME=/opt/data agent-browser install
+RUN HOME=/opt/data agent-browser install || true
 USER root
 
 # ─── Stage B: SafeClaw layer ────────────────────────────────────────────────

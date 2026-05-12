@@ -12,8 +12,6 @@ networks:
     # by iptables allowlist on the host, giving more precise domain-level control.
 
 volumes:
-  obs_data:
-    name: vasanth_safeclaw_obs_data
   tasks_data:
     name: vasanth_safeclaw_tasks_data
   attachments:
@@ -23,33 +21,7 @@ volumes:
   hermes_actor_data:
     name: vasanth_safeclaw_hermes_actor_data
 
-# ─── Postgres: Observation Database ──────────────────────────────────────────
 services:
-  postgres-obs:
-    # pgvector/pgvector:pg16 = Postgres 16 + pgvector extension preinstalled.
-    # Required for the Brain layer (observation_embeddings, fact_embeddings, style_sample_embeddings).
-    image: pgvector/pgvector:pg16
-    container_name: vasanth-safeclaw-postgres-obs
-    restart: unless-stopped
-    networks:
-      - safeclaw_net
-    environment:
-      POSTGRES_USER: ${POSTGRES_OBS_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_OBS_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_OBS_DB}
-    volumes:
-      - obs_data:/var/lib/postgresql/data
-      - ./db/001_obs_schema.sql:/migrations/001_obs_schema.sql:ro
-      - ./db/003_brain_schema.sql:/migrations/003_brain_schema.sql:ro
-      - ./db/004_brain_docs.sql:/migrations/004_brain_docs.sql:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_OBS_USER} -d ${POSTGRES_OBS_DB}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
-    # Do NOT expose port 5432 to the host. Internal traffic only.
-
   # ─── Postgres: Task Database ───────────────────────────────────────────────
   # Holds the task queue + review queue served by PostgREST. OAuth tokens are
   # NOT in this cluster — they live off-box at Composio. Keeping the task DB
@@ -154,8 +126,8 @@ services:
   # Devs who want to rebuild from source can comment-toggle the build: block.
   hermes-reader:
     image: ghcr.io/vasanth19/safeclaw-hermes:1.0
-    # Build locally from source — needed for the baked-MCP layer (brain_api,
-    # tasks_api, slack_native, drive_api at /opt/mcp-tools/). When you publish
+    # Build locally from source — needed for the baked-MCP layer (tasks_api,
+    # slack_native, drive_api at /opt/mcp-tools/). When you publish
     # a new GHCR tag, bump SAFECLAW_IMAGE_VERSION in the Dockerfile and the
     # `image:` tag here, then `docker push`.
     build:
@@ -202,26 +174,18 @@ services:
       - attachments:/data/attachments
       # Docker socket — still required for `docker exec` into the rclone-upload
       # sidecar (actor-hermes.yaml's prompt references it for Drive uploads).
-      # All 4 stdio MCPs (brain_api, tasks_api, slack_native, drive_api) are
-      # now baked at /opt/mcp-tools/ and run as direct subprocesses of this
-      # container — they no longer need the docker socket.
       - /var/run/docker.sock:/var/run/docker.sock
       # Init wrapper — chmods docker socket before privilege drop so hermes user
       # (uid 10000) can run docker exec for MCP servers.
       - ./scripts/hermes-docker-init.sh:/hermes-init.sh:ro
-      # Brain (filesystem vault) mount is deferred — needs HERMES_UID/GID
-      # alignment to avoid chown failure on bind-mount permissions. Agent
-      # reads brain via the baked brain_api MCP → postgres-obs path until
-      # we land the UID work.
+      # Brain reads go via the gbrain HTTP MCP sidecar (http://gbrain:3131/mcp).
     entrypoint: ["/hermes-init.sh"]
     # Run as the long-lived daemon (gateway). The SafeClaw entrypoint handles
     # config-copy + privilege drop + skill sync, then hands off to hermes.
     command: ["gateway", "run", "--accept-hooks"]
     depends_on:
-      - postgres-obs
-      # brain_api is now spawned as a direct Node subprocess inside hermes-reader
-      # (baked at /opt/mcp-tools/brain-api). It still needs postgres-obs healthy.
-      - embedder
+      gbrain:
+        condition: service_healthy
 
   # ─── hermes-actor — Write/Action Agent (Phase 2+) ─────────────────────────
   # Disabled by default (ACTOR_ENABLED=false). Set ACTOR_ENABLED=true in .env
@@ -267,14 +231,11 @@ services:
       - ./config:/opt/config:ro
       # Docker socket — still required for `docker exec` into the rclone-upload
       # sidecar (actor-hermes.yaml's prompt references it for Drive uploads).
-      # All 4 stdio MCPs (brain_api, tasks_api, slack_native, drive_api) are
-      # now baked at /opt/mcp-tools/ and run as direct subprocesses of this
-      # container — they no longer need the docker socket.
       - /var/run/docker.sock:/var/run/docker.sock
       # Init wrapper — chmods docker socket before privilege drop.
       - ./scripts/hermes-docker-init.sh:/hermes-init.sh:ro
-      # Brain mount — read-write so the agent can write back to the vault
-      # (People/, .inbox/manual/, etc.) in addition to searching it.
+      # Brain vault still mounted for reference; gbrain HTTP MCP is the
+      # primary search + write interface (http://gbrain:3131/mcp).
       - ./brain:/opt/brain:rw
       # Resumes — read-only mount of the job-hunter career tracks (instance-specific,
       # NOT in the rspur template). Skips career-ops/ tool source + node_modules.
@@ -294,71 +255,55 @@ services:
         exec /opt/hermes/.venv/bin/hermes gateway run --accept-hooks
       '
     depends_on:
-      - postgrest
-      # brain_api + tasks_api are now spawned as direct Node subprocesses
-      # inside hermes-actor (baked at /opt/mcp-tools/). Compose dependency on
-      # postgrest + postgres-obs (transitive via embedder) suffices.
-      - hermes-reader   # reader pulls the shared image; actor reuses it
-      - embedder
+      postgrest:
+        condition: service_started
+      hermes-reader:
+        condition: service_started
+      gbrain:
+        condition: service_healthy
 
-  # ─── Brain: Embedder ───────────────────────────────────────────────────────
-  # Polls postgres-obs every 30s for rows missing embeddings (observations,
-  # facts, style_samples) and writes 384-dim vectors via pgvector. Also runs a
-  # tiny HTTP server on :8000 so brain-api can turn queries into vectors.
-  embedder:
-    image: ghcr.io/vasanth19/safeclaw-embedder:1.0
-    # Dev-only: rebuild from source. Currently uncommented while we validate
-    # the google-api-python-client / google-auth additions before bumping to
-    # :1.1 and pushing to the registry.
+  # ─── GBrain — Hybrid Brain MCP (vector + knowledge graph) ────────────────
+  # Replaces: brain_api MCP subprocess + embedder container + reflector container.
+  # Serves 30+ MCP tools at http://gbrain:3131/mcp (HTTP Bearer auth).
+  # Brain data lives in ${HOME}/.gbrain (PGLite) — shared bind-mount so the
+  # host `gbrain` CLI and this container access the same data.
+  # Admin ops while stack is up: docker exec vasanth-safeclaw-gbrain gbrain <cmd>
+  # PREREQUISITE: run on host before first `docker compose up`:
+  #   git clone https://github.com/garrytan/gbrain ~/gbrain && cd ~/gbrain && bun install && bun link
+  #   gbrain init && gbrain import <safeclaw-dir>/brain/ --no-embed && gbrain embed --stale
+  #   gbrain extract links --source db && gbrain auth create  → paste token into GBRAIN_TOKEN
+  gbrain:
     build:
-      context: ./services/embedder
-      dockerfile: Dockerfile
-    container_name: vasanth-safeclaw-embedder
+      context: .
+      dockerfile: docker/Dockerfile.gbrain
+    image: safeclaw/gbrain:local
+    container_name: vasanth-safeclaw-gbrain
     restart: unless-stopped
     networks:
       - safeclaw_net
     ports:
-      - "127.0.0.1:8001:8000"   # Localhost-only; internal clients use http://embedder:8000.
+      - "127.0.0.1:3131:3131"   # Admin dashboard + CLI access from host
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # Mount at the same absolute path as the host so config.json's database_path
+      # ("/Users/vasanth/.gbrain/brain.pglite") resolves identically inside the container.
+      - ${HOME}/.gbrain:${HOME}/.gbrain
     environment:
-      DATABASE_URL: ${BRAIN_OBS_DATABASE_URL}
-      BRAIN_EMBEDDING_MODEL: ${BRAIN_EMBEDDING_MODEL}
-    depends_on:
-      postgres-obs:
-        condition: service_healthy
+      # Tell gbrain where to find its config dir (mirrors the host path).
+      GBRAIN_HOME: ${HOME}
+      # Ollama for embeddings (OpenAI quota exhausted; nomic-embed-text at 768d).
+      OLLAMA_BASE_URL: http://host.docker.internal:11434/v1
+      GBRAIN_EMBEDDING_MODEL: ollama:nomic-embed-text
+      GBRAIN_EMBEDDING_DIMENSIONS: "768"
+      # Anthropic for optional query expansion (reuses ANTHROPIC_API_KEY from .env).
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
     healthcheck:
-      test: ["CMD-SHELL", "python -c 'import urllib.request,sys; sys.exit(0 if urllib.request.urlopen(\"http://localhost:8000/health\", timeout=3).status==200 else 1)'"]
+      test: ["CMD-SHELL", "bun -e 'fetch(\"http://localhost:3131/health\").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))'"]
       interval: 30s
-      timeout: 5s
+      timeout: 10s
       retries: 3
-      start_period: 60s
-
-  # ─── Brain: Reflector ──────────────────────────────────────────────────────
-  # Runs at startup, then weekly (Mon 06:00 UTC). Reads observations + review
-  # feedback, proposes Soul + preference updates to soul_revisions / review_queue.
-  reflector:
-    build:
-      context: ./services/reflector
-      dockerfile: Dockerfile
-    image: safeclaw/reflector:local
-    container_name: vasanth-safeclaw-reflector
-    restart: unless-stopped
-    networks:
-      - safeclaw_net
-    environment:
-      DATABASE_URL: ${BRAIN_OBS_DATABASE_URL}
-      HERMES_LLM_API_KEY: ${HERMES_LLM_API_KEY}
-      HERMES_LLM_BASE_URL: ${HERMES_LLM_BASE_URL}
-      HERMES_MODEL: ${HERMES_MODEL}
-      BRAIN_USER_KEY: ${BRAIN_USER_KEY}
-    depends_on:
-      postgres-obs:
-        condition: service_healthy
-
-  # brain-api MCP — was a sidecar container; now baked into the Hermes image
-  # (see Dockerfile.safeclaw-hermes Stage B). Spawned by hermes-reader and
-  # hermes-actor as a direct Node subprocess via mcp_servers.brain_api in their
-  # respective config files. Env (DATABASE_URL, EMBEDDER_URL, BRAIN_USER_KEY)
-  # is passed through the MCP env: block in those configs from .env.
+      start_period: 30s
 
   # ─── Onboarding webapp ────────────────────────────────────────────────────
   # Customer self-service install UI — Flask + SSE on port 8080. Fronted by

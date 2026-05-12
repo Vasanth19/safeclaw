@@ -23,18 +23,17 @@ agent:
     you MUST follow this ordering. Skipping STEP 1 is a failure.
 
     STEP 1 — Search the brain. Always. First.
-        brain_search(query="<natural language description of what you're looking for>")
-        This performs SEMANTIC search over every markdown file in the brain.
+        mcp_gbrain_search(query="<natural language description of what you're looking for>")
+        This performs HYBRID search (vector + knowledge graph) over the brain.
         It returns up to 5 results, each with:
-          file_path  → the full path to the .md file (e.g. /opt/brain/People/asha-at-absiusa-com.md)
-          title      → document title from frontmatter
-          doc_type   → category (people, company, meeting, project, journal, resource, identity, other)
-          summary    → 400-char excerpt of the document
-          score      → relevance (0–1, higher is better)
-        Optional filters: doc_type="people" to narrow scope, limit=N for more/fewer results.
+          slug    → page identifier (e.g. people/asha-at-absiusa-com)
+          title   → document title from frontmatter
+          summary → 400-char excerpt of the document
+          score   → relevance (0–1, higher is better)
+        Optional: limit=N for more/fewer results.
 
     STEP 2 — Read full detail for promising matches.
-        Use read_file on the file_path returned by brain_search.
+        Use mcp_gbrain_get_page(slug=<slug>) on the slug returned by mcp_gbrain_search.
         Then answer from the brain if it has enough.
         If the brain returned a People file, a meeting note, a project doc,
         or a journal entry that answers the question — answer from THAT.
@@ -52,10 +51,10 @@ agent:
         This is non-negotiable: state your reason, then fetch.
 
     Worked example — "what do you know about Asha Saini?":
-        1. brain_search(query="Asha Saini")
-           -> result: file_path="/opt/brain/People/asha-at-absiusa-com.md",
-                      title="Asha Saini", doc_type="people", summary="...", score=0.92
-        2. read_file("/opt/brain/People/asha-at-absiusa-com.md")
+        1. mcp_gbrain_search(query="Asha Saini")
+           -> result: slug="people/asha-at-absiusa-com",
+                      title="Asha Saini", summary="...", score=0.92
+        2. mcp_gbrain_get_page(slug="people/asha-at-absiusa-com")
            -> frontmatter has: company, contact_frequency, first_seen, last_contact
            -> body has these sections — INCLUDE ALL of them in your answer:
                 # Topics
@@ -75,8 +74,8 @@ agent:
     the whole point of the brain.
 
     Worked example — "any new emails from Asha today?" (explicit fresh-info ask):
-        1. brain_search(query="Asha Saini")
-           -> read_file the People file for context (who Asha is)
+        1. mcp_gbrain_search(query="Asha Saini")
+           -> mcp_gbrain_get_page the People page for context (who Asha is)
         2. Say: "Asha is your ABSI USA recruiter (3 prior emails on file).
                  Pulling today's personal inbox for new threads."
         3. THEN call mcp_gmail_personal_GMAIL_FETCH_EMAILS with query "from:asha@absiusa.com newer_than:1d"
@@ -85,18 +84,19 @@ agent:
     For "tell me about X" questions, the answer is almost always in there.
     ════════════════════════════════════════════════════════════════════════
 
-    Brain layout (PARA, 11+ folders — never assume content is only in one):
-      /opt/brain/0 - Identity/   — SOUL.md, blueprints, principles (about user)
-      /opt/brain/3 - Daily Journal/  — daily entries
-      /opt/brain/4 - Meetings/   — meeting & interview notes (YYYY-MM-DD - X.md)
-      /opt/brain/5 - Projects/   — active project notes
-      /opt/brain/6 - Areas/      — ongoing areas of life
-      /opt/brain/7 - Resources/  — reference material
-      /opt/brain/People/         — one .md per contact (slug: name-at-domain-com)
-      /opt/brain/Companies/      — one .md per sender domain
-      /opt/brain/Slack/          — daily Slack channel digests (Slack/<channel>/<YYYY-MM-DD>.md)
-      /opt/brain/Resumes/cto/    — CTO/Fractional/VP/Startup-CTO resumes, cover letters, interview prep, application tracker
-      /opt/brain/Resumes/architect/ — Architect-track resumes (enterprise + state-proj flavors) + formatting guide
+    Brain layout (PARA — gbrain search spans all areas automatically via slug prefix):
+      identity/          — soul, blueprints, principles (about user)
+      journal/           — daily entries
+      meetings/          — meeting & interview notes
+      projects/          — active project notes
+      areas/             — ongoing areas of life
+      resources/         — reference material
+      people/            — one page per contact (slug: name-at-domain-com)
+      companies/         — one page per sender domain
+      slack/<channel>/   — daily Slack channel digests
+      resumes/cto/       — CTO/Fractional/VP/Startup-CTO resumes, cover letters, interview prep, application tracker
+      resumes/architect/ — Architect-track resumes (enterprise + state-proj flavors) + formatting guide
+      observations/      — inbox observations (is_critical, category, sender, summary)
 
     Talk to the user in plain English. They cannot see raw tool names.
     Before each tool call, narrate one short sentence:
@@ -105,7 +105,11 @@ agent:
       ✗ "Calling brain_search..."  ✗ "Invoking GMAIL_FETCH_EMAILS..."
 
     Capabilities:
-      - brain_search / read_file — semantic lookup over the brain, then read full .md detail.
+      - mcp_gbrain_search — hybrid lookup (vector + graph) over the brain.
+      - mcp_gbrain_get_page(slug=...) — read full page content.
+      - mcp_gbrain_put_page(slug=..., content=...) — write or update a brain page.
+      - mcp_gbrain_traverse_graph(slug=..., depth=2) — relationship traversal ("who does X work with?")
+      - mcp_gbrain_think(question=...) — multi-hop synthesis across pages + graph for complex questions.
       - Draft Gmail replies (drafts only, never send).
       - Post to Slack and list Slack channels via the `slack_native` toolkit.
       - Manage Composio connections via the `composio_mgmt` toolkit.
@@ -236,8 +240,8 @@ agent:
         for one-offs.)
 
     When drafting an email reply:
-      1. read_file the matching /opt/brain/People/<slug>.md for context.
-      2. read_file /opt/brain/0 - Identity/SOUL.md for tone cues.
+      1. mcp_gbrain_get_page(slug="people/<slug>") for context.
+      2. mcp_gbrain_get_page(slug="identity/soul") for tone cues.
       3. Match the user's voice (terse, opens with the ask).
 
 model:
@@ -254,6 +258,18 @@ model:
   temperature: 0.2
   # Cap output to prevent runaway truncation/continuation loops on small-output models.
   max_tokens: 4096
+
+# ── Auxiliary vision model (separate from main text model) ─────────────────────
+# glm-5.1:cloud is fast for text but has no vision support. Route image
+# analysis through kimi-k2:cloud so SafeClaw can "see" attachments without
+# slowing down every text reply.
+auxiliary:
+  vision:
+    provider: custom
+    model: kimi-k2.6:cloud
+    base_url: http://host.docker.internal:11435/v1
+    api_key: ollama-local
+    timeout: 120
 
 # ── Toolset pruning ──────────────────────────────────────────────────────────
 # Hermes ships 74 bundled skills. Loading all of them into context per turn
@@ -344,17 +360,13 @@ mcp_servers:
   # FIRECRAWL_API_KEY (or EXA_API_KEY / TAVILY_API_KEY / PARALLEL_API_KEY) is
   # present in the container env. The key flows from .env via env_file in
   # docker-compose.yml. See WEB RESEARCH PROTOCOL in the system prompt for usage.
-  # brain_api + tasks_api now run AS DIRECT NODE SUBPROCESSES of hermes-actor.
-  # The MCP source is baked into the Hermes image at /opt/mcp-tools/ — no
-  # sidecar container, no docker exec, no docker.sock dependency. Standard
-  # stdio MCP pattern.
-  brain_api:
-    command: node
-    args: ["/opt/mcp-tools/brain-api/dist/index.js"]
-    env:
-      DATABASE_URL: "${BRAIN_OBS_DATABASE_URL}"
-      EMBEDDER_URL: "${BRAIN_EMBEDDER_URL}"
-      BRAIN_USER_KEY: "${BRAIN_USER_KEY}"
+  # gbrain — hybrid brain MCP (vector + knowledge graph).
+  # Replaces brain_api. Runs as a Docker sidecar (http://gbrain:3131/mcp).
+  # 30+ tools: search, get_page, put_page, traverse_graph, get_links, think, etc.
+  gbrain:
+    url: "http://gbrain:3131/mcp"
+    headers:
+      Authorization: "Bearer ${GBRAIN_TOKEN}"
     timeout: 30
     connect_timeout: 10
   tasks_api:
@@ -386,7 +398,7 @@ display:
 schedules:
   morning_briefing:
     cron: "0 7 * * *"
-    description: "Query obs DB for overnight critical_alerts → post digest to #jarvis-command-center"
+    description: "mcp_gbrain_search(query='critical observations last 24 hours', limit=20) filtering is_critical:true → post digest to #jarvis-command-center"
   reminder_scan:
     cron: "0 15 * * *"
     description: "Tasks due today → reminder cards in #jarvis-command-center"
@@ -396,11 +408,11 @@ schedules:
   slack_daily_digest:
     cron: "0 6 * * *"
     description: >
-      For each channel in SLACK_INGEST_CHANNELS, summarize yesterday's
-      messages from postgres-obs (observations where source='slack' and
-      created_at >= yesterday 00:00 and < today 00:00) into
-      /opt/brain/Slack/<channel-name>/<YYYY-MM-DD>.md. Include sender,
-      timestamp, and key threads. Skip channels with no activity.
+      For each channel in SLACK_INGEST_CHANNELS, mcp_gbrain_search for
+      yesterday's Slack observations (type:observation source:slack for
+      each channel), summarize into a digest page, then
+      mcp_gbrain_put_page(slug='slack/<channel>/<YYYY-MM-DD>', content=...).
+      Include sender, timestamp, and key threads. Skip channels with no activity.
 
 # ── Feature flags ────────────────────────────────────────────────────────────
 features:

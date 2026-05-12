@@ -1,0 +1,20 @@
+FROM oven/bun:latest
+
+RUN apt-get update -qq && \
+    apt-get install -y --no-install-recommends git ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+RUN git clone --depth=1 https://github.com/garrytan/gbrain.git . && \
+    bun install --frozen-lockfile
+
+# Entrypoint: clear any stale PGLite lock (container PID 1 always looks alive
+# on the bind-mounted host FS), then exec gbrain serve.
+COPY docker/gbrain-entrypoint.sh /gbrain-entrypoint.sh
+RUN chmod +x /gbrain-entrypoint.sh
+
+EXPOSE 3131
+
+ENTRYPOINT ["/gbrain-entrypoint.sh"]
+CMD ["serve", "--http", "--port", "3131"]

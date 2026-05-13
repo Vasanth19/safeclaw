@@ -265,13 +265,8 @@ services:
   # ─── GBrain — Hybrid Brain MCP (vector + knowledge graph) ────────────────
   # Replaces: brain_api MCP subprocess + embedder container + reflector container.
   # Serves 30+ MCP tools at http://gbrain:3131/mcp (HTTP Bearer auth).
-  # Brain data lives in ${HOME}/.gbrain (PGLite) — shared bind-mount so the
-  # host `gbrain` CLI and this container access the same data.
+  # Brain: /Users/vasanth/Code/Infra/brain-personal (Postgres at host:5433).
   # Admin ops while stack is up: docker exec vasanth-safeclaw-gbrain gbrain <cmd>
-  # PREREQUISITE: run on host before first `docker compose up`:
-  #   git clone https://github.com/garrytan/gbrain ~/gbrain && cd ~/gbrain && bun install && bun link
-  #   gbrain init && gbrain import <safeclaw-dir>/brain/ --no-embed && gbrain embed --stale
-  #   gbrain extract links --source db && gbrain auth create  → paste token into GBRAIN_TOKEN
   gbrain:
     build:
       context: .
@@ -286,17 +281,19 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      # Mount at the same absolute path as the host so config.json's database_path
-      # ("/Users/vasanth/.gbrain/brain.pglite") resolves identically inside the container.
-      - ${HOME}/.gbrain:${HOME}/.gbrain
+      # Mount brain-personal at the same path so GBRAIN_HOME resolves correctly.
+      - /Users/vasanth/Code/Infra/brain-personal:/Users/vasanth/Code/Infra/brain-personal
     environment:
-      # Tell gbrain where to find its config dir (mirrors the host path).
-      GBRAIN_HOME: ${HOME}
-      # Ollama for embeddings (OpenAI quota exhausted; nomic-embed-text at 768d).
+      # Point gbrain at the brain-personal config dir.
+      GBRAIN_HOME: /Users/vasanth/Code/Infra/brain-personal
+      # Override localhost → host.docker.internal so the container can reach
+      # the host's Postgres at port 5433.
+      GBRAIN_DATABASE_URL: postgresql://vasanth@host.docker.internal:5433/brain_personal
+      # Ollama for embeddings (nomic-embed-text at 768d).
       OLLAMA_BASE_URL: http://host.docker.internal:11434/v1
       GBRAIN_EMBEDDING_MODEL: ollama:nomic-embed-text
       GBRAIN_EMBEDDING_DIMENSIONS: "768"
-      # Anthropic for optional query expansion (reuses ANTHROPIC_API_KEY from .env).
+      # Anthropic for optional query expansion.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
     healthcheck:
       test: ["CMD-SHELL", "bun -e 'fetch(\"http://localhost:3131/health\").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))'"]

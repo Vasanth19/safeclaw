@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.safeclaw.hermes-reader</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/vasanth/vasanth-hq/safeclaw/scripts/run-hermes-reader.sh</string>
+  </array>
+
+  <!-- Restart automatically on crash -->
+  <key>KeepAlive</key>
+  <true/>
+
+  <!-- Wait 5 s before restarting to avoid tight crash loops -->
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+
+  <key>StandardOutPath</key>
+  <string>/Users/vasanth/.safeclaw/reader-home/logs/stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/vasanth/.safeclaw/reader-home/logs/stderr.log</string>
+
+  <!-- Start at login -->
+  <key>RunAtLoad</key>
+  <true/>
+</dict>
+</plist>

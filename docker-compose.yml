@@ -12,87 +12,21 @@ networks:
     # by iptables allowlist on the host, giving more precise domain-level control.
 
 volumes:
-  tasks_data:
-    name: vasanth_safeclaw_tasks_data
-  attachments:
-    name: vasanth_safeclaw_attachments
   hermes_reader_data:
     name: vasanth_safeclaw_hermes_reader_data
   hermes_actor_data:
     name: vasanth_safeclaw_hermes_actor_data
 
 services:
-  # ─── Postgres: Task Database ───────────────────────────────────────────────
-  # Holds the task queue + review queue served by PostgREST. OAuth tokens are
-  # NOT in this cluster — they live off-box at Composio. Keeping the task DB
-  # as its own cluster preserves the "task-side bug cannot read brain" boundary.
-  postgres-tasks:
-    image: postgres:16-alpine
-    container_name: vasanth-safeclaw-postgres-tasks
-    restart: unless-stopped
-    networks:
-      - safeclaw_net
-    environment:
-      POSTGRES_USER: ${POSTGRES_TASKS_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_TASKS_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_TASKS_DB}
-    volumes:
-      - tasks_data:/var/lib/postgresql/data
-      - ./db/002_task_schema.sql:/migrations/002_task_schema.sql:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_TASKS_USER} -d ${POSTGRES_TASKS_DB}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
-    # Do NOT expose port 5432 to the host.
-
-  # ─── PostgREST — Task API ──────────────────────────────────────────────────
-  postgrest:
-    image: postgrest/postgrest:latest
-    container_name: vasanth-safeclaw-postgrest
-    restart: unless-stopped
-    networks:
-      - safeclaw_net
-    ports:
-      - "127.0.0.1:3002:3000"   # Localhost-only. Do not expose to 0.0.0.0.
-    environment:
-      PGRST_DB_URI: postgres://${POSTGRES_TASKS_USER}:${POSTGRES_TASKS_PASSWORD}@postgres-tasks:5432/${POSTGRES_TASKS_DB}
-      PGRST_DB_SCHEMA: public
-      PGRST_DB_ANON_ROLE: tasks_anon
-      PGRST_JWT_SECRET: ${JWT_SECRET}
-      PGRST_SERVER_PORT: "3000"
-      PGRST_DB_POOL: "10"
-      PGRST_LOG_LEVEL: info
-      PGRST_DB_MAX_ROWS: "500"
-    depends_on:
-      postgres-tasks:
-        condition: service_healthy
-    # postgrest image is fully distroless — no shell or curl available.
-    # Rely on service_started in depends_on; PostgREST is up within 1s of postgres healthy.
-
   # ─── OAuth + per-toolkit MCP — handled off-box by Composio ────────────────
   # OAuth tokens for Gmail/Drive/Slack/etc. live in Composio's vault. Hermes
   # reaches them by talking to the Composio MCP servers (HTTP transport).
   # See COMPOSIO_READER_MCP_URL and COMPOSIO_ACTOR_MCP_URL in .env.
 
-  # ─── rclone-upload: On-demand Drive upload sidecar ─────────────────────────
-  # Hermes-actor calls this via `docker exec` for organized Drive uploads.
-  # No cron — actor triggers uploads only when attachments need pushing.
-  rclone-upload:
-    image: rclone/rclone:latest
-    container_name: vasanth-safeclaw-rclone
-    restart: "no"
-    entrypoint: ["/bin/sh", "-c"]
-    command: ["echo 'rclone-upload ready; will be invoked via docker exec'; sleep infinity"]
-    networks:
-      - safeclaw_net
-    environment:
-      RCLONE_DRIVE_FOLDER_ID: ${RCLONE_DRIVE_FOLDER_ID}
-    volumes:
-      - attachments:/data/attachments
-      # rclone config with Drive OAuth token — managed by Composio, mounted separately.
-      - ./config/rclone.conf:/config/rclone/rclone.conf:ro
+  # NOTE: postgres-tasks, postgrest, rclone-upload have been retired for the
+  # native macOS deployment. Tasks (todo/reminders) are no longer tracked via
+  # a separate DB — use gbrain pages (observations/tasks/*) or Paperclip instead.
+  # Drive uploads are handled by the drive_api MCP subprocess on the native actor.
 
   # drive-api MCP — was a sidecar Python container; now baked into the Hermes
   # image at /opt/mcp-tools/drive-api (own venv at .venv/). Spawned by
@@ -170,22 +104,11 @@ services:
       # tripping the bind-mount "Device or resource busy" rename failure.
       - ./config/reader-hermes.yaml:/safeclaw/config-template/config.yaml:ro
       - hermes_reader_data:/opt/data
-      # Attachment staging — reader downloads Gmail attachments here for actor pickup
-      - attachments:/data/attachments
-      # Docker socket — still required for `docker exec` into the rclone-upload
-      # sidecar (actor-hermes.yaml's prompt references it for Drive uploads).
-      - /var/run/docker.sock:/var/run/docker.sock
-      # Init wrapper — chmods docker socket before privilege drop so hermes user
-      # (uid 10000) can run docker exec for MCP servers.
       - ./scripts/hermes-docker-init.sh:/hermes-init.sh:ro
-      # Brain reads go via the gbrain HTTP MCP sidecar (http://gbrain:3131/mcp).
     entrypoint: ["/hermes-init.sh"]
     # Run as the long-lived daemon (gateway). The SafeClaw entrypoint handles
     # config-copy + privilege drop + skill sync, then hands off to hermes.
     command: ["gateway", "run", "--accept-hooks"]
-    depends_on:
-      gbrain:
-        condition: service_healthy
 
   # ─── hermes-actor — Write/Action Agent (Phase 2+) ─────────────────────────
   # Disabled by default (ACTOR_ENABLED=false). Set ACTOR_ENABLED=true in .env
@@ -224,18 +147,12 @@ services:
       # /opt/data/config.yaml so /sethome + `hermes config set` can rewrite.
       - ./config/actor-hermes.yaml:/safeclaw/config-template/config.yaml:ro
       - hermes_actor_data:/opt/data
-      # Attachment staging — actor reads pending files and uploads to Drive
-      - attachments:/data/attachments
       # Service-account credentials for the baked drive_api MCP. Path matches
       # the previous drive-api-mcp container so main.py's default still works.
       - ./config:/opt/config:ro
       # Docker socket — still required for `docker exec` into the rclone-upload
       # sidecar (actor-hermes.yaml's prompt references it for Drive uploads).
-      - /var/run/docker.sock:/var/run/docker.sock
-      # Init wrapper — chmods docker socket before privilege drop.
       - ./scripts/hermes-docker-init.sh:/hermes-init.sh:ro
-      # Brain vault still mounted for reference; gbrain HTTP MCP is the
-      # primary search + write interface (http://gbrain:3131/mcp).
       - ./brain:/opt/brain:rw
       # Resumes — read-only mount of the job-hunter career tracks (instance-specific,
       # NOT in the rspur template). Skips career-ops/ tool source + node_modules.
@@ -255,52 +172,8 @@ services:
         exec /opt/hermes/.venv/bin/hermes gateway run --accept-hooks
       '
     depends_on:
-      postgrest:
-        condition: service_started
       hermes-reader:
         condition: service_started
-      gbrain:
-        condition: service_healthy
-
-  # ─── GBrain — Hybrid Brain MCP (vector + knowledge graph) ────────────────
-  # Replaces: brain_api MCP subprocess + embedder container + reflector container.
-  # Serves 30+ MCP tools at http://gbrain:3131/mcp (HTTP Bearer auth).
-  # Brain: /Users/vasanth/Code/Infra/brain-personal (Postgres at host:5433).
-  # Admin ops while stack is up: docker exec vasanth-safeclaw-gbrain gbrain <cmd>
-  gbrain:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.gbrain
-    image: safeclaw/gbrain:local
-    container_name: vasanth-safeclaw-gbrain
-    restart: unless-stopped
-    networks:
-      - safeclaw_net
-    ports:
-      - "127.0.0.1:3131:3131"   # Admin dashboard + CLI access from host
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    volumes:
-      # Mount brain-personal at the same path so GBRAIN_HOME resolves correctly.
-      - /Users/vasanth/Code/Infra/brain-personal:/Users/vasanth/Code/Infra/brain-personal
-    environment:
-      # Point gbrain at the brain-personal config dir.
-      GBRAIN_HOME: /Users/vasanth/Code/Infra/brain-personal
-      # Override localhost → host.docker.internal so the container can reach
-      # the host's Postgres at port 5433.
-      GBRAIN_DATABASE_URL: postgresql://vasanth@host.docker.internal:5433/brain_personal
-      # Ollama for embeddings (nomic-embed-text at 768d).
-      OLLAMA_BASE_URL: http://host.docker.internal:11434/v1
-      GBRAIN_EMBEDDING_MODEL: ollama:nomic-embed-text
-      GBRAIN_EMBEDDING_DIMENSIONS: "768"
-      # Anthropic for optional query expansion.
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-    healthcheck:
-      test: ["CMD-SHELL", "bun -e 'fetch(\"http://localhost:3131/health\").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))'"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
 
   # ─── Onboarding webapp ────────────────────────────────────────────────────
   # Customer self-service install UI — Flask + SSE on port 8080. Fronted by

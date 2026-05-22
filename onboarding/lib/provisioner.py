@@ -121,7 +121,9 @@ def _phase_env(install: Install, install_dir: Path, form: dict) -> None:
     LLM_PRESETS = {
         "ollama-cloud": {
             "HERMES_INFERENCE_PROVIDER": "ollama-cloud",
-            "OLLAMA_BASE_URL": "http://host.docker.internal:11435/v1",
+            # Ollama Cloud direct API (the :11435 local-daemon routing fails
+            # headless). Matches config/*-hermes.yaml.
+            "OLLAMA_BASE_URL": "https://ollama.com/v1",
             "HERMES_DEFAULT_MODEL": "glm-5.1:cloud",
         },
         "anthropic": {

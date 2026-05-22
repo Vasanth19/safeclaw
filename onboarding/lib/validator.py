@@ -447,7 +447,10 @@ def validate_gdrive(form: dict[str, Any]) -> dict[str, str]:
 # provisioner.LLM_PRESETS is the source of truth at write time.
 _LLM_DEFAULTS = {
     "ollama-cloud": (
-        "http://host.docker.internal:11435/v1",
+        # Ollama Cloud DIRECT API (OpenAI-compatible). The local-daemon :cloud
+        # routing on :11435 fails headless; this endpoint + API key works and
+        # matches the Hermes config (config/*-hermes.yaml).
+        "https://ollama.com/v1",
         "glm-5.1:cloud",
     ),
     "anthropic": (

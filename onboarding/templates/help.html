@@ -158,7 +158,7 @@
     <p>Re-run the install-to-workspace step. The bot token only becomes valid AFTER the install. The first <code>xoxb-...</code> Slack shows you in the OAuth page is a draft until you click install.</p>
 
     <h3>The progress bar is stuck on "Bootstrapping brain"</h3>
-    <p>This step pulls the last 90 days of email through the Reader MCP and embeds every message. On a busy inbox it can take 5-10 minutes. Check <code>docker compose logs embedder</code> to see live progress.</p>
+    <p>This step pulls the last 90 days of email through the Reader MCP and writes pages into the brain (which embeds them via the local Ollama model). On a busy inbox it can take 5-10 minutes. Check <code>docker compose logs safeclaw-brain</code> to see live progress.</p>
 
     <h3>I refreshed the page mid-install</h3>
     <p>Your install ID is in the URL. Visit <code>/progress/&lt;id&gt;</code> to rejoin the SSE stream. If the webapp container restarted, you'll need to retry from the form.</p>

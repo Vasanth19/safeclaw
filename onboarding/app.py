@@ -67,13 +67,16 @@ _CONTAINER_PREFIX = os.environ.get("SAFECLAW_CONTAINER_PREFIX", "")
 # containers; they are now baked into the Hermes image (see
 # Dockerfile.safeclaw-hermes Stage B) and run as Node/Python subprocesses
 # inside hermes-reader / hermes-actor. No standalone container to track.
+# Brain: the bespoke postgres-obs + embedder were retired; the brain is now the
+# GBrain-backed safeclaw-brain service (HTTP MCP, embeddings via host Ollama)
+# backed by its own postgres-brain. embedder no longer exists (GBrain embeds).
 _CONTAINERS = {
     f"{_CONTAINER_PREFIX}safeclaw-hermes-reader":  {"label": "Reader Agent",  "kind": "agent"},
     f"{_CONTAINER_PREFIX}safeclaw-hermes-actor":   {"label": "Actor Agent",   "kind": "agent"},
-    f"{_CONTAINER_PREFIX}safeclaw-postgres-obs":   {"label": "Obs DB",        "kind": "infra"},
+    f"{_CONTAINER_PREFIX}safeclaw-brain":          {"label": "Brain (GBrain)", "kind": "infra"},
+    f"{_CONTAINER_PREFIX}safeclaw-postgres-brain": {"label": "Brain DB",      "kind": "infra"},
     f"{_CONTAINER_PREFIX}safeclaw-postgres-tasks": {"label": "Tasks DB",      "kind": "infra"},
     f"{_CONTAINER_PREFIX}safeclaw-postgrest":      {"label": "PostgREST",     "kind": "infra"},
-    f"{_CONTAINER_PREFIX}safeclaw-embedder":       {"label": "Embedder",      "kind": "infra"},
     f"{_CONTAINER_PREFIX}safeclaw-reflector":      {"label": "Reflector",     "kind": "infra"},
 }
 

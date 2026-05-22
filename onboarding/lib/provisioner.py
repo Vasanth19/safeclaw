@@ -159,17 +159,24 @@ def _phase_env(install: Install, install_dir: Path, form: dict) -> None:
     # using the customer's API key.
     composio_api_key = form.get("COMPOSIO_API_KEY", "").strip()
     composio_user_id = form.get("COMPOSIO_USER_ID", "").strip()
-    if composio_api_key and composio_user_id:
+    reader_url = form.get("COMPOSIO_READER_MCP_URL", "").strip()
+    actor_url = form.get("COMPOSIO_ACTOR_MCP_URL", "").strip()
+    if reader_url and actor_url:
+        # URLs supplied directly — use them, skip auto-creation.
+        values["COMPOSIO_READER_MCP_URL"] = reader_url
+        values["COMPOSIO_ACTOR_MCP_URL"] = actor_url
+    elif composio_api_key and composio_user_id:
         try:
             _emit(install, "env_writing", "progress", "Provisioning Composio MCP servers...")
             mcp_urls = validator.provision_composio_mcps(composio_api_key, composio_user_id)
             values.update(mcp_urls)
         except Exception as exc:
-            raise ProvisionError(
-                "env_writing",
-                "Composio provisioning failed.",
-                hint=str(exc)
-            )
+            # Non-fatal (Composio is optional). The stack still provisions and
+            # both Hermes instances start; Gmail/Slack ingestion stays off until
+            # the reader/actor MCP URLs are supplied (auto-create may fail if
+            # Composio's API changed).
+            _emit(install, "env_writing", "progress",
+                  f"Composio MCP auto-provision skipped ({exc}); agents will start without it.")
 
     try:
         env_writer.write_env(install_dir, values)

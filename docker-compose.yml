@@ -70,12 +70,13 @@ services:
     networks:
       - safeclaw_net
     # Linux Docker doesn't resolve host.docker.internal by default. Map it to
-    # the host gateway so GBrain can reach the host Ollama daemon on :11435.
+    # the host gateway so GBrain can reach the host Ollama daemon on :11434
+    # (where provision-vps.sh installs Ollama and pulls nomic-embed-text).
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
       DATABASE_URL: postgres://${BRAIN_DB_USER}:${BRAIN_DB_PASSWORD}@postgres-brain:5432/${BRAIN_DB_NAME}
-      OLLAMA_BASE_URL: http://host.docker.internal:11435/v1
+      OLLAMA_BASE_URL: http://host.docker.internal:11434/v1
       GBRAIN_HOME: /data/safeclaw-brain
     volumes:
       - safeclaw_brain_data:/data/safeclaw-brain

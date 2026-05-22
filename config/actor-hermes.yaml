@@ -251,6 +251,68 @@ agent:
         (Use this only for batches of 5+ files; prefer the drive_api MCP
         for one-offs.)
 
+    ════════════════════════════════════════════════════════════════════════
+    REVIEW-QUEUE APPROVALS — applying approved soul_update / preference_update
+    ════════════════════════════════════════════════════════════════════════
+
+    The reflector (weekly cron) proposes changes to the user's identity and
+    preferences by inserting rows into the `review_queue` table (postgres-tasks)
+    with action_type='soul_update' or action_type='preference_update'. It NEVER
+    writes the brain itself — a human approves the proposal in this chat surface
+    (the ✅ reaction / approve action on the card), and ONLY THEN do you apply it
+    to the brain. Rejected proposals are never applied.
+
+    You apply an approved proposal by writing the brain page with
+    mcp_safeclaw_brain_put_page. Treat the proposal payload as the source of
+    truth for what to write — do not paraphrase or "improve" it; the human
+    approved THAT body, so write exactly THAT body.
+
+    ── On approval of a `soul_update` ──
+    The row's payload looks like:
+        {
+          "slug": "identity/soul",
+          "diff_summary": "<short bullet summary of what changed>",
+          "revised_md": "<the FULL revised markdown body of the Soul page>",
+          "source": "reflector_weekly"
+        }
+    To apply it:
+      1. Narrate: "Updating your Soul page with the approved revision..."
+      2. Call mcp_safeclaw_brain_put_page with:
+           slug:    the payload's `slug` (always "identity/soul")
+           content: the payload's `revised_md` VERBATIM (full body, including
+                    its YAML frontmatter — do not trim or reformat).
+      3. Optionally drop a breadcrumb with
+         mcp_safeclaw_brain_add_timeline_entry(slug="identity/soul",
+         summary="Soul revision approved & applied", detail=<diff_summary>).
+      4. Confirm to the user in plain English, quoting the diff_summary so they
+         know what landed.
+
+    ── On approval of a `preference_update` ──
+    The row's payload looks like:
+        {
+          "rule": "<the candidate preference rule, e.g. 'Always close vendor emails with \"Thanks,\" not \"Best,\"'>",
+          "reason": "<why this rule was extracted>",
+          "confidence": 0.0-1.0,
+          "source": "reflector_weekly"
+        }
+    Persist the approved rule as its own brain page under the `preferences/`
+    namespace (mirrors how the Soul lives at a single pinned slug):
+      1. Narrate: "Saving the approved preference rule to your brain..."
+      2. Derive a stable slug from the rule text: lowercase, replace any run of
+         non-alphanumeric characters with a single hyphen, trim leading/trailing
+         hyphens, and prefix with "preferences/". Example:
+           rule "Always use 'Thanks,' not 'Best,' closing vendor emails"
+           -> slug "preferences/always-use-thanks-not-best-closing-vendor-emails"
+         Keep the slug under ~80 chars; truncate at a hyphen boundary if needed.
+      3. Call mcp_safeclaw_brain_put_page with:
+           slug:    the derived "preferences/<slug>"
+           content: a small markdown body capturing the rule, e.g.
+                    "# Preference\n\n{rule}\n\n## Why\n{reason}\n\n_Source: {source} · confidence {confidence}_"
+      4. Confirm to the user, restating the rule that is now in effect.
+
+    Apply a proposal ONLY after explicit human approval — never on your own
+    initiative, and never for a row that was rejected.
+
     When drafting an email reply:
       1. mcp_safeclaw_brain_get_page on the matching people/<slug> page for context.
       2. mcp_safeclaw_brain_get_page(slug="identity/soul") for tone cues.

@@ -485,16 +485,20 @@ def validate_all(form: dict[str, Any]) -> dict[str, str]:
     if not ok:
         errors["llm"] = msg
 
-    # Composio (required, customer-supplied)
-    errors.update(validate_composio(form))
+    # Deployment policy: the LLM is the ONLY hard requirement. Every other
+    # integration is OPTIONAL — validate a section only when its primary
+    # credential is supplied, so a missing integration never blocks
+    # provisioning (that feature simply stays off until configured later).
+    if (form.get("COMPOSIO_API_KEY") or "").strip():
+        errors.update(validate_composio(form))
 
-    # Slack (required)
-    errors.update(validate_slack(form))
+    if (form.get("SLACK_BOT_TOKEN") or "").strip():
+        errors.update(validate_slack(form))
 
-    # Telegram (optional)
+    # Telegram already self-gates on `telegram_enabled`.
     errors.update(validate_telegram(form))
 
-    # Google Drive (required — service account for file upload)
-    errors.update(validate_gdrive(form))
+    if (form.get("GDRIVE_SERVICE_ACCOUNT_JSON") or "").strip():
+        errors.update(validate_gdrive(form))
 
     return errors

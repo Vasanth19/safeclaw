@@ -193,11 +193,11 @@ services:
   # Devs who want to rebuild from source can comment-toggle the build: block.
   hermes-reader:
     image: ghcr.io/vasanth19/safeclaw-hermes:1.2
-    # Dev-only: rebuild from source. Uncomment to use; the `image:` tag above
-    # still controls the local tag name. Needed when the baked-MCP layer changed.
-    # build:
-    #   context: .
-    #   dockerfile: docker/Dockerfile.safeclaw-hermes
+    # Build on the VPS natively (any arch). The Dockerfile clones the pinned
+    # Hermes source at build time, so no vendored tree is needed in context.
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.safeclaw-hermes
     container_name: safeclaw-hermes-reader
     restart: unless-stopped
     networks:
@@ -264,13 +264,12 @@ services:
   # Disabled by default (ACTOR_ENABLED=false). Set ACTOR_ENABLED=true in .env
   # to start this service in Phase 2.
   hermes-actor:
-    # Same pre-built SafeClaw distribution image as hermes-reader (shared layer cache).
+    # Same SafeClaw distribution image as hermes-reader (shared layer cache).
     image: ghcr.io/vasanth19/safeclaw-hermes:1.2
-    # Dev-only: rebuild from source. Uncomment to use; the `image:` tag above
-    # still controls the local tag name.
-    # build:
-    #   context: .
-    #   dockerfile: docker/Dockerfile.safeclaw-hermes
+    # Build on the VPS natively (any arch) — clones pinned Hermes at build time.
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.safeclaw-hermes
     container_name: safeclaw-hermes-actor
     restart: unless-stopped
     ports:

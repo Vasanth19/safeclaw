@@ -231,17 +231,19 @@ def _phase_secrets(install: Install, install_dir: Path, form: dict) -> None:
 
 def _phase_compose_pull(install: Install, install_dir: Path, form: dict) -> None:
     _emit(install, "compose_pull", "start", "Pulling Docker images (~30s)...")
+    # --ignore-buildable: skip services with a build: stanza (safeclaw-brain,
+    # reflector, onboarding) — those are built locally, not in a registry.
     proc = _run_cmd(
-        ["docker", "compose", "pull"],
+        ["docker", "compose", "pull", "--ignore-buildable"],
         cwd=install_dir,
         timeout=600,
     )
     if proc.returncode != 0:
-        raise ProvisionError(
-            "compose_pull",
-            "docker compose pull failed.",
-            hint=_tail_output(proc),
-        )
+        # Non-fatal: a pull failure for a locally-built/absent-from-registry
+        # image must not block the install — `docker compose up --build` below
+        # builds anything missing. Log and continue.
+        _emit(install, "compose_pull", "progress",
+              f"pull skipped/failed (will build locally): {_tail_output(proc)[:120]}")
     _emit(install, "compose_pull", "ok", "Images ready.")
 
 

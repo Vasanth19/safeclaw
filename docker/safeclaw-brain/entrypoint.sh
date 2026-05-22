@@ -29,9 +29,15 @@ else
   if [ ! -d "${BRAIN_DIR}/.git" ]; then
     git init -q "${BRAIN_DIR}"
   fi
+  # Postgres engine (--supabase selects Postgres; --non-interactive + --url
+  # skips the wizard and connects to our postgres-brain). Postgres is required
+  # because static bearer tokens live in the Postgres-only access_tokens table.
   # Local Ollama embeddings: nomic-embed-text (768 dims, no API key). The host
   # must `ollama pull nomic-embed-text`; OLLAMA_BASE_URL points at the host.
   gbrain init \
+    --supabase \
+    --non-interactive \
+    --url "${DATABASE_URL}" \
     --embedding-model ollama:nomic-embed-text \
     --embedding-dimensions 768
 fi

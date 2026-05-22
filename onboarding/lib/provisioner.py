@@ -334,10 +334,15 @@ def _phase_mint_brain_tokens(install: Install, install_dir: Path, form: dict) ->
 
     minted: dict[str, str] = {}
     for env_key, token_name in pending.items():
+        # NOTE: --takes-holders is REQUIRED to work around a gbrain v0.37.11.0
+        # arg-parsing bug: with no --takes-holders flag, `auth create <name>`
+        # discards the positional name and exits with usage. Passing it also
+        # gives the token broad read visibility (world,garry,brain).
         proc = _run_cmd(
             [
                 "docker", "compose", "exec", "-T", "safeclaw-brain",
                 "gbrain", "auth", "create", token_name,
+                "--takes-holders", "world,garry,brain",
             ],
             cwd=install_dir,
             timeout=60,

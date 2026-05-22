@@ -62,8 +62,8 @@ services:
       context: ./docker/safeclaw-brain
       args:
         # Pins the GBrain source. Upstream does not tag releases; this SHA is
-        # package.json version 0.37.11.0 on master. Override via .env if needed.
-        GBRAIN_REF: ${GBRAIN_REF:-fe3499e5a184c8e507a30f0bb6ad7f9c7f7c9551}
+        # the v0.37.11.0 commit on origin/master. Override via .env if needed.
+        GBRAIN_REF: ${GBRAIN_REF:-d0d0e2a64a83ad27768b193521ec4f9f0bfdd4ae}
     image: ghcr.io/vasanth19/safeclaw-brain:${GBRAIN_VERSION}
     container_name: safeclaw-brain
     restart: unless-stopped

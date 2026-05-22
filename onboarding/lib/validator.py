@@ -345,21 +345,16 @@ def validate_slack(form: dict[str, Any]) -> dict[str, str]:
     if not ok:
         errors["SLACK_APP_TOKEN"] = msg
 
+    # Workspace ID / admin user / home channel / ingest channels are all
+    # OPTIONAL config (not auth) — only format-check the ones that are supplied.
+    # Channels can be set/auto-discovered later; never block provisioning on them.
     workspace = form.get("SLACK_WORKSPACE_ID", "").strip()
-    if not workspace.startswith("T"):
+    if workspace and not workspace.startswith("T"):
         errors["SLACK_WORKSPACE_ID"] = "Workspace ID must start with 'T'"
 
     admin = form.get("SLACK_BOT_ADMIN_USER_ID", "").strip()
-    if not admin.startswith("U"):
+    if admin and not admin.startswith("U"):
         errors["SLACK_BOT_ADMIN_USER_ID"] = "Admin user ID must start with 'U'"
-
-    home = form.get("SLACK_HOME_CHANNEL", "").strip()
-    if not home:
-        errors["SLACK_HOME_CHANNEL"] = "Home channel is required (e.g. C0123456789)"
-
-    ingest = form.get("SLACK_INGEST_CHANNELS", "").strip()
-    if not ingest:
-        errors["SLACK_INGEST_CHANNELS"] = "At least one ingest channel is required"
 
     return errors
 

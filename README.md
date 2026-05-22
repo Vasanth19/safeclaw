@@ -9,6 +9,12 @@ you connect it to, surfaces what matters, drafts replies in your voice, and neve
 auto-sends without an approval gate. The architecture itself — not a prompt or a
 content filter — is what defends against prompt-injection attacks.
 
+Its permanent memory ("the brain") is powered by the **GBrain engine**, running
+as a per-deployment `safeclaw-brain` service backed by Postgres + pgvector, with
+embeddings generated locally via Ollama (`nomic-embed-text`) — no embedding data
+ever leaves the box. Both Hermes agents reach the brain over HTTP MCP using
+GBrain's native tools.
+
 ---
 
 ## Table of Contents
@@ -96,6 +102,10 @@ rollback procedures.
 | **Slack** | v2 control surface + team channel summaries | [api.slack.com/apps](https://api.slack.com/apps) |
 | **Ollama Cloud** | Default LLM backend ($20/mo) — or use Anthropic, OpenAI, vLLM | [ollama.com](https://ollama.com) |
 | **Firecrawl** | Web search + extract (500 pages free, then $29/mo) | [firecrawl.dev](https://www.firecrawl.dev) |
+
+> **Local embedding model (required, free).** The brain embeds locally via the
+> host Ollama daemon. Before first run: `ollama pull nomic-embed-text`. This is
+> a one-time ~280 MB pull, runs on CPU, and keeps embedding data on-box.
 
 ---
 
@@ -211,22 +221,24 @@ ai-assistant/
 │   ├── actor-hermes.yaml       Write agent config + scheduled automations
 │   └── postgrest.conf          PostgREST connection + JWT config
 ├── db/
-│   ├── 001_obs_schema.sql      Observation DB schema (safeclaw_obs)
-│   ├── 002_task_schema.sql     Task DB schema + RLS policies (safeclaw_tasks)
-│   └── 003_brain_schema.sql    Brain layer (entities, style samples, embeddings)
+│   └── 002_task_schema.sql     Task DB schema + RLS policies (safeclaw_tasks)
+│                               (GBrain owns the brain schema — no brain DDL here)
+├── docker/
+│   └── safeclaw-brain/         GBrain engine image — Dockerfile + entrypoint
+│                               (gbrain init / apply-migrations / serve --http :3131)
 ├── mcp-tools/
-│   ├── brain-api/              Node MCP server exposing brain_recall / brain_write
 │   ├── tasks-api/              Node MCP server wrapping PostgREST
 │   ├── slack-api/              Native Slack MCP (channel history, list, send)
 │   └── drive-api/              Service-account Google Drive uploads (Python)
+│                               (brain-api removed — GBrain exposes native MCP over HTTP)
 ├── scripts/
-│   ├── bootstrap-brain.sh      First-run: backfills 90 days of Gmail history
+│   ├── bootstrap-brain.sh      First-run: backfills 90 days of Gmail into GBrain
 │   ├── init-secrets.sh           Generates DB passwords, JWT, agent JWT
 │   ├── verify-stack.sh          Phase-gated health checks
 │   └── build-images.sh          Build and push Docker images to GHCR
 ├── services/
-│   ├── embedder/               sentence-transformers HTTP server (CPU-only, 384-dim)
-│   └── reflector/              Weekly cron — proposes Soul/preference updates
+│   └── reflector/              Weekly cron — proposes Soul-page revisions
+│                               (embedder removed — GBrain embeds via host Ollama)
 └── onboarding/                 Flask webapp for customer self-service install
 ```
 

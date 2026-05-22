@@ -188,6 +188,51 @@ def write_env(
     return target_path
 
 
+def set_env_values(
+    install_dir: str | Path,
+    values: dict[str, str],
+    *,
+    target_name: str = ".env",
+) -> Path:
+    """Set specific KEY=VALUE pairs in an existing .env, atomically.
+
+    Unlike write_env(), this is NOT whitelist-driven — it's for values the
+    server itself produces post-boot (e.g. brain access tokens minted from the
+    running safeclaw-brain), which never originate from the customer form.
+
+    Existing lines for the given keys are rewritten in place; missing keys are
+    appended. All other lines are preserved verbatim. Refuses placeholder
+    values to avoid clobbering a real value with a sentinel.
+    """
+    install_dir = Path(install_dir)
+    target_path = install_dir / target_name
+
+    if not target_path.is_file():
+        raise EnvWriteError(f".env not found: {target_path}")
+
+    for key, value in values.items():
+        if value in PLACEHOLDERS:
+            raise EnvWriteError(f"refusing to set placeholder for {key}")
+
+    remaining = dict(values)
+    out_lines: list[str] = []
+    for raw in target_path.read_text(encoding="utf-8").splitlines():
+        match = KEY_LINE_RE.match(raw)
+        if match and match.group(1) in remaining:
+            key = match.group(1)
+            out_lines.append(f"{key}={_shell_quote(str(remaining.pop(key)))}")
+        else:
+            out_lines.append(raw)
+
+    # Any keys not already present get appended.
+    for key, value in remaining.items():
+        out_lines.append(f"{key}={_shell_quote(str(value))}")
+
+    rendered = "\n".join(out_lines) + "\n"
+    _atomic_write(install_dir, target_path, rendered)
+    return target_path
+
+
 def _atomic_write(install_dir: Path, target_path: Path, rendered: str) -> None:
     """Write `rendered` to target_path atomically, leaving 0600 perms."""
     # tempfile in same dir so rename is atomic on the same filesystem.

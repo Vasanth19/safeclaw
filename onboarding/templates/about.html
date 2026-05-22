@@ -1,0 +1,447 @@
+{% extends "base.html" %}
+{% block title %}About — SafeClaw{% endblock %}
+
+{% block head %}
+<style>
+  .about-header { margin-bottom: 2rem; }
+  .about-header h1 { font-size: 1.6rem; font-weight: 700; margin-bottom: 0.35rem; }
+  .about-header p { color: var(--text-dim); font-size: 0.95rem; }
+
+  .carousel { position: relative; max-width: 760px; margin: 0 auto; }
+
+  .slide {
+    display: none;
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 36px 40px 32px;
+  }
+  .slide.active { display: block; }
+
+  .slide-diagram { display: block; margin: 0 auto 28px; }
+
+  .slide-label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 6px;
+  }
+  .slide-title { font-size: 1.25rem; font-weight: 700; margin-bottom: 10px; }
+  .slide-body {
+    color: var(--text-dim);
+    font-size: 0.95rem;
+    line-height: 1.7;
+    max-width: 580px;
+  }
+
+  .carousel-nav {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    margin-top: 20px;
+  }
+  .carousel-btn {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 1.1rem;
+    line-height: 1;
+    padding: 7px 13px;
+    transition: border-color 0.15s, color 0.15s;
+  }
+  .carousel-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  .carousel-dots { display: flex; align-items: center; gap: 8px; }
+  .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--border);
+    cursor: pointer;
+    transition: background 0.2s, transform 0.2s;
+  }
+  .dot.active { background: var(--accent); transform: scale(1.3); }
+
+  .slide-counter {
+    font-size: 0.78rem;
+    color: var(--text-faint);
+    min-width: 36px;
+    text-align: center;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="about-header">
+  <h1>How SafeClaw Works</h1>
+  <p>A visual walkthrough of the system — from inbox to action, and why your data stays private.</p>
+</div>
+
+<div class="carousel" id="carousel">
+
+  <!-- ── Slide 1: Overview ── -->
+  <div class="slide active">
+    <svg class="slide-diagram" width="680" height="200" viewBox="0 0 680 200" xmlns="http://www.w3.org/2000/svg">
+      <!-- laptop -->
+      <rect x="20" y="70" width="100" height="68" rx="6" fill="#1e2330" stroke="#2a303b" stroke-width="1.5"/>
+      <rect x="28" y="78" width="84" height="52" rx="3" fill="#14171d"/>
+      <rect x="8" y="138" width="124" height="8" rx="3" fill="#2a303b"/>
+      <text x="70" y="108" text-anchor="middle" fill="#9aa3b2" font-family="system-ui" font-size="11">Slack</text>
+      <text x="70" y="120" text-anchor="middle" fill="#9aa3b2" font-family="system-ui" font-size="11">/ Gmail</text>
+      <text x="70" y="162" text-anchor="middle" fill="#6b7280" font-family="system-ui" font-size="10">Your client</text>
+
+      <!-- arrow left→VPS -->
+      <line x1="132" y1="104" x2="196" y2="104" stroke="#ff8a3d" stroke-width="1.5" stroke-dasharray="4 3"/>
+      <polygon points="196,100 204,104 196,108" fill="#ff8a3d"/>
+      <text x="168" y="96" text-anchor="middle" fill="#ff8a3d" font-family="system-ui" font-size="10">messages</text>
+
+      <!-- VPS box -->
+      <rect x="208" y="24" width="264" height="160" rx="10" fill="#1a1f2b" stroke="#3b4252" stroke-width="2" stroke-dasharray="6 4"/>
+      <text x="340" y="46" text-anchor="middle" fill="#9aa3b2" font-family="system-ui" font-size="11" font-weight="600">Your VPS</text>
+
+      <!-- Brain cylinder -->
+      <ellipse cx="298" cy="94" rx="34" ry="10" fill="#1e2330" stroke="#5cc8ff" stroke-width="1.5"/>
+      <rect x="264" y="94" width="68" height="48" fill="#1e2330" stroke="#5cc8ff" stroke-width="1.5"/>
+      <ellipse cx="298" cy="142" rx="34" ry="10" fill="#1e2330" stroke="#5cc8ff" stroke-width="1.5"/>
+      <text x="298" y="123" text-anchor="middle" fill="#5cc8ff" font-family="system-ui" font-size="11" font-weight="600">Brain</text>
+
+      <!-- Agents box -->
+      <rect x="362" y="80" width="96" height="56" rx="8" fill="#1e2330" stroke="#ff8a3d" stroke-width="1.5"/>
+      <text x="410" y="107" text-anchor="middle" fill="#ff8a3d" font-family="system-ui" font-size="11" font-weight="600">Agents</text>
+      <text x="410" y="122" text-anchor="middle" fill="#9aa3b2" font-family="system-ui" font-size="10">Reader · Actor</text>
+
+      <!-- brain↔agents -->
+      <line x1="332" y1="115" x2="362" y2="108" stroke="#2a303b" stroke-width="1.5"/>
+
+      <!-- lock icon on VPS -->
+      <rect x="446" y="28" width="18" height="14" rx="3" fill="none" stroke="#4ade80" stroke-width="1.5"/>
+      <path d="M449 28 v-5 a6 6 0 0 1 12 0 v5" fill="none" stroke="#4ade80" stroke-width="1.5"/>
+      <circle cx="455" cy="35" r="2" fill="#4ade80"/>
+
+      <!-- arrow VPS→services -->
+      <line x1="472" y1="104" x2="536" y2="104" stroke="#9aa3b2" stroke-width="1.5" stroke-dasharray="4 3"/>
+      <polygon points="536,100 544,104 536,108" fill="#9aa3b2"/>
+      <text x="508" y="96" text-anchor="middle" fill="#6b7280" font-family="system-ui" font-size="10">replies +</text>
+      <text x="508" y="107" text-anchor="middle" fill="#6b7280" font-family="system-ui" font-size="10">tasks</text>
+
+      <!-- services box -->
+      <rect x="548" y="68" width="112" height="72" rx="8" fill="#1e2330" stroke="#2a303b" stroke-width="1.5"/>
+      <text x="604" y="90" text-anchor="middle" fill="#9aa3b2" font-family="system-ui" font-size="10">Gmail</text>
+      <text x="604" y="106" text-anchor="middle" fill="#9aa3b2" font-family="system-ui" font-size="10">Slack</text>
+      <text x="604" y="122" text-anchor="middle" fill="#9aa3b2" font-family="system-ui" font-size="10">Tasks DB</text>
+
+      <!-- no-cloud callout -->
+      <text x="340" y="192" text-anchor="middle" fill="#4ade80" font-family="system-ui" font-size="10">No third-party cloud stores your data.</text>
+    </svg>
+
+    <div class="slide-label">Slide 1 of 5</div>
+    <div class="slide-title">Your AI assistant lives on your server.</div>
+    <div class="slide-body">SafeClaw runs entirely inside a Virtual Private Server (VPS) that you control. Messages come in from Gmail or Slack, two AI agents process them using a private knowledge base (the Brain), then send replies and log tasks — all without your raw data touching any outside cloud.</div>
+  </div>
+
+  <!-- ── Slide 2: Reader Agent ── -->
+  <div class="slide">
+    <svg class="slide-diagram" width="680" height="200" viewBox="0 0 680 200" xmlns="http://www.w3.org/2000/svg">
+      <!-- Gmail inbox -->
+      <rect x="20" y="60" width="120" height="80" rx="8" fill="#1e2330" stroke="#2a303b" stroke-width="1.5"/>
+      <text x="80" y="86" text-anchor="middle" fill="#e8ebf1" font-family="system-ui" font-size="11" font-weight="600">Gmail Inbox</text>
+      <!-- email lines -->
+      <rect x="34" y="96" width="92" height="8" rx="2" fill="#2a303b"/>
+      <rect x="34" y="110" width="72" height="8" rx="2" fill="#2a303b"/>
+      <rect x="34" y="124" width="82" height="8" rx="2" fill="#2a303b"/>
+
+      <!-- arrow: fetches -->
+      <line x1="140" y1="100" x2="200" y2="100" stroke="#ff8a3d" stroke-width="1.5"/>
+      <polygon points="200,96 208,100 200,104" fill="#ff8a3d"/>
+      <text x="172" y="92" text-anchor="middle" fill="#ff8a3d" font-family="system-ui" font-size="10">fetches</text>
+
+      <!-- Reader Agent box -->
+      <rect x="212" y="58" width="148" height="84" rx="8" fill="#1e2330" stroke="#ff8a3d" stroke-width="1.5"/>
+      <text x="286" y="86" text-anchor="middle" fill="#ff8a3d" font-family="system-ui" font-size="11" font-weight="600">Reader Agent</text>
+      <!-- magnifying glass -->
+      <circle cx="276" cy="115" r="10" fill="none" stroke="#9aa3b2" stroke-width="1.5"/>
+      <line x1="283" y1="122" x2="292" y2="131" stroke="#9aa3b2" stroke-width="2" stroke-linecap="round"/>
+      <text x="310" y="112" fill="#9aa3b2" font-family="system-ui" font-size="10">extracts</text>
+      <text x="310" y="124" fill="#9aa3b2" font-family="system-ui" font-size="10">contacts +</text>
+      <text x="310" y="136" fill="#9aa3b2" font-family="system-ui" font-size="10">context</text>
+
+      <!-- arrow: writes to memory -->
+      <line x1="360" y1="100" x2="430" y2="100" stroke="#5cc8ff" stroke-width="1.5"/>
+      <polygon points="430,96 438,100 430,104" fill="#5cc8ff"/>
+      <text x="396" y="92" text-anchor="middle" fill="#5cc8ff" font-family="system-ui" font-size="10">writes to</text>
+      <text x="396" y="103" text-anchor="middle" fill="#5cc8ff" font-family="system-ui" font-size="10">memory</text>
+
+      <!-- Brain cylinder -->
+      <ellipse cx="490" cy="80" rx="42" ry="12" fill="#1e2330" stroke="#5cc8ff" stroke-width="1.5"/>
+      <rect x="448" y="80" width="84" height="52" fill="#1e2330" stroke="#5cc8ff" stroke-width="1.5"/>
+      <ellipse cx="490" cy="132" rx="42" ry="12" fill="#1e2330" stroke="#5cc8ff" stroke-width="1.5"/>
+      <text x="490" y="112" text-anchor="middle" fill="#5cc8ff" font-family="system-ui" font-size="11" font-weight="600">Brain</text>
+
+      <!-- stored label -->
+      <text x="490" y="160" text-anchor="middle" fill="#6b7280" font-family="system-ui" font-size="10">Observations stored</text>
+
+      <!-- schedule note -->
+      <text x="286" y="160" text-anchor="middle" fill="#6b7280" font-family="system-ui" font-size="10">Runs on a schedule, automatically.</text>
+    </svg>
+
+    <div class="slide-label">Slide 2 of 5</div>
+    <div class="slide-title">Reader Agent scans every email.</div>
+    <div class="slide-body">A background Reader Agent fetches your Gmail inbox on a schedule, extracts contacts, company mentions, and key context from each thread, then writes structured observations into the Brain. Over time the Brain builds a rich picture of every relationship and deal in your inbox — without you lifting a finger.</div>
+  </div>
+
+  <!-- ── Slide 3: Actor Agent ── -->
+  <div class="slide">
+    <svg class="slide-diagram" width="680" height="200" viewBox="0 0 680 200" xmlns="http://www.w3.org/2000/svg">
+      <!-- User message bubble -->
+      <rect x="20" y="72" width="130" height="56" rx="10" fill="#1e2330" stroke="#2a303b" stroke-width="1.5"/>
+      <text x="85" y="96" text-anchor="middle" fill="#e8ebf1" font-family="system-ui" font-size="11" font-weight="600">Your message</text>
+      <text x="85" y="110" text-anchor="middle" fill="#9aa3b2" font-family="system-ui" font-size="10">via Slack / Telegram</text>
+      <polygon points="56,128 72,128 56,142" fill="#1e2330" stroke="#2a303b" stroke-width="1" stroke-linejoin="round"/>
+
+      <!-- arrow to Actor -->
+      <line x1="150" y1="100" x2="210" y2="100" stroke="#ff8a3d" stroke-width="1.5"/>
+      <polygon points="210,96 218,100 210,104" fill="#ff8a3d"/>
+
+      <!-- Actor Agent box -->
+      <rect x="222" y="60" width="140" height="80" rx="8" fill="#1e2330" stroke="#ff8a3d" stroke-width="1.5"/>
+      <text x="292" y="90" text-anchor="middle" fill="#ff8a3d" font-family="system-ui" font-size="12" font-weight="700">Actor Agent</text>
+      <text x="292" y="106" text-anchor="middle" fill="#9aa3b2" font-family="system-ui" font-size="10">plans + executes</text>
+      <text x="292" y="118" text-anchor="middle" fill="#9aa3b2" font-family="system-ui" font-size="10">your requests</text>
+
+      <!-- Brain arrow up (recalls context) -->
+      <line x1="292" y1="140" x2="292" y2="168" stroke="#5cc8ff" stroke-width="1.5" stroke-dasharray="4 3"/>
+      <polygon points="288,168 292,176 296,168" fill="#5cc8ff"/>
+      <text x="340" y="158" fill="#5cc8ff" font-family="system-ui" font-size="10">recalls context</text>
+
+      <!-- Brain mini -->
+      <ellipse cx="292" cy="178" rx="30" ry="8" fill="#1a1f2b" stroke="#5cc8ff" stroke-width="1.2"/>
+      <text x="292" y="182" text-anchor="middle" fill="#5cc8ff" font-family="system-ui" font-size="9">Brain</text>
+
+      <!-- three output branches -->
+      <!-- Draft email -->
+      <line x1="362" y1="80" x2="450" y2="60" stroke="#4ade80" stroke-width="1.5"/>
+      <polygon points="446,55 455,60 448,66" fill="#4ade80"/>
+      <rect x="458" y="44" width="130" height="32" rx="6" fill="#1e2330" stroke="#4ade80" stroke-width="1.2"/>
+      <text x="523" y="65" text-anchor="middle" fill="#4ade80" font-family="system-ui" font-size="10">Draft email reply</text>
+
+      <!-- Create task -->
+      <line x1="362" y1="100" x2="450" y2="100" stroke="#ff8a3d" stroke-width="1.5"/>
+      <polygon points="450,96 458,100 450,104" fill="#ff8a3d"/>
+      <rect x="462" y="84" width="130" height="32" rx="6" fill="#1e2330" stroke="#ff8a3d" stroke-width="1.2"/>
+      <text x="527" y="105" text-anchor="middle" fill="#ff8a3d" font-family="system-ui" font-size="10">Create / update task</text>
+
+      <!-- Search brain -->
+      <line x1="362" y1="120" x2="450" y2="140" stroke="#5cc8ff" stroke-width="1.5"/>
+      <polygon points="446,134 455,140 448,146" fill="#5cc8ff"/>
+      <rect x="458" y="124" width="130" height="32" rx="6" fill="#1e2330" stroke="#5cc8ff" stroke-width="1.2"/>
+      <text x="523" y="145" text-anchor="middle" fill="#5cc8ff" font-family="system-ui" font-size="10">Search brain for context</text>
+    </svg>
+
+    <div class="slide-label">Slide 3 of 5</div>
+    <div class="slide-title">Actor Agent drafts replies, logs tasks.</div>
+    <div class="slide-body">When you send a message through Slack or Telegram, the Actor Agent springs into action. It recalls relevant context from the Brain, then chooses the right action: drafting an email reply in your voice, creating or updating a task in the dashboard, or surfacing information from past conversations. One message, multiple results.</div>
+  </div>
+
+  <!-- ── Slide 4: Security ── -->
+  <div class="slide">
+    <svg class="slide-diagram" width="680" height="210" viewBox="0 0 680 210" xmlns="http://www.w3.org/2000/svg">
+      <!-- VPS dashed boundary -->
+      <rect x="24" y="20" width="380" height="170" rx="12" fill="#111418" stroke="#4ade80" stroke-width="2" stroke-dasharray="8 5"/>
+      <text x="214" y="44" text-anchor="middle" fill="#4ade80" font-family="system-ui" font-size="11" font-weight="700">Your VPS — Private Boundary</text>
+
+      <!-- Lock icon on VPS -->
+      <rect x="172" y="50" width="22" height="16" rx="4" fill="none" stroke="#4ade80" stroke-width="1.8"/>
+      <path d="M176 50 v-6 a7 7 0 0 1 14 0 v6" fill="none" stroke="#4ade80" stroke-width="1.8"/>
+      <circle cx="183" cy="58" r="2.5" fill="#4ade80"/>
+
+      <!-- Postgres DB -->
+      <ellipse cx="100" cy="100" rx="44" ry="12" fill="#1e2330" stroke="#5cc8ff" stroke-width="1.5"/>
+      <rect x="56" y="100" width="88" height="40" fill="#1e2330" stroke="#5cc8ff" stroke-width="1.5"/>
+      <ellipse cx="100" cy="140" rx="44" ry="12" fill="#1e2330" stroke="#5cc8ff" stroke-width="1.5"/>
+      <text x="100" y="125" text-anchor="middle" fill="#5cc8ff" font-family="system-ui" font-size="10" font-weight="600">Postgres DB</text>
+
+      <!-- Brain files -->
+      <rect x="170" y="86" width="80" height="68" rx="6" fill="#1e2330" stroke="#ff8a3d" stroke-width="1.5"/>
+      <text x="210" y="118" text-anchor="middle" fill="#ff8a3d" font-family="system-ui" font-size="10" font-weight="600">Brain files</text>
+      <text x="210" y="130" text-anchor="middle" fill="#9aa3b2" font-family="system-ui" font-size="9">13 MB vault</text>
+      <text x="210" y="142" text-anchor="middle" fill="#9aa3b2" font-family="system-ui" font-size="9">on disk</text>
+
+      <!-- API Keys -->
+      <rect x="282" y="86" width="96" height="68" rx="6" fill="#1e2330" stroke="#9aa3b2" stroke-width="1.5"/>
+      <text x="330" y="115" text-anchor="middle" fill="#e8ebf1" font-family="system-ui" font-size="10" font-weight="600">API Keys</text>
+      <text x="330" y="128" text-anchor="middle" fill="#9aa3b2" font-family="system-ui" font-size="9">encrypted</text>
+      <text x="330" y="140" text-anchor="middle" fill="#9aa3b2" font-family="system-ui" font-size="9">in .env</text>
+
+      <!-- Outside: services -->
+      <rect x="448" y="44" width="110" height="40" rx="6" fill="#1e2330" stroke="#2a303b" stroke-width="1.5"/>
+      <text x="503" y="69" text-anchor="middle" fill="#9aa3b2" font-family="system-ui" font-size="10">Gmail API</text>
+
+      <rect x="448" y="96" width="110" height="40" rx="6" fill="#1e2330" stroke="#2a303b" stroke-width="1.5"/>
+      <text x="503" y="121" text-anchor="middle" fill="#9aa3b2" font-family="system-ui" font-size="10">Slack API</text>
+
+      <rect x="448" y="148" width="110" height="40" rx="6" fill="#1e2330" stroke="#2a303b" stroke-width="1.5"/>
+      <text x="503" y="173" text-anchor="middle" fill="#9aa3b2" font-family="system-ui" font-size="10">Composio</text>
+
+      <!-- arrows crossing boundary (API calls only) -->
+      <line x1="404" y1="64" x2="448" y2="64" stroke="#6b7280" stroke-width="1.2" stroke-dasharray="3 2"/>
+      <polygon points="444,60 452,64 444,68" fill="#6b7280"/>
+
+      <line x1="404" y1="116" x2="448" y2="116" stroke="#6b7280" stroke-width="1.2" stroke-dasharray="3 2"/>
+      <polygon points="444,112 452,116 444,120" fill="#6b7280"/>
+
+      <line x1="404" y1="168" x2="448" y2="168" stroke="#6b7280" stroke-width="1.2" stroke-dasharray="3 2"/>
+      <polygon points="444,164 452,168 444,172" fill="#6b7280"/>
+
+      <text x="424" y="57" text-anchor="middle" fill="#6b7280" font-family="system-ui" font-size="9">API only</text>
+      <text x="424" y="109" text-anchor="middle" fill="#6b7280" font-family="system-ui" font-size="9">API only</text>
+      <text x="424" y="161" text-anchor="middle" fill="#6b7280" font-family="system-ui" font-size="9">API only</text>
+
+      <!-- callout banner -->
+      <text x="340" y="200" text-anchor="middle" fill="#4ade80" font-family="system-ui" font-size="10">Raw data never leaves the VPS — only structured API calls cross the boundary.</text>
+    </svg>
+
+    <div class="slide-label">Slide 4 of 5</div>
+    <div class="slide-title">Your secrets never leave this box.</div>
+    <div class="slide-body">The VPS is a hard security boundary. Inside it: your Postgres database, Brain files, and encrypted API keys stored in a <code>.env</code> file. The agents only send structured API calls outward to Gmail, Slack, and Composio — no raw emails, no contact lists, no business data exits. Everything sensitive stays on hardware you control.</div>
+  </div>
+
+  <!-- ── Slide 5: Task Dashboard ── -->
+  <div class="slide">
+    <svg class="slide-diagram" width="680" height="200" viewBox="0 0 680 200" xmlns="http://www.w3.org/2000/svg">
+      <!-- Actor Agent -->
+      <rect x="20" y="68" width="120" height="64" rx="8" fill="#1e2330" stroke="#ff8a3d" stroke-width="1.5"/>
+      <text x="80" y="97" text-anchor="middle" fill="#ff8a3d" font-family="system-ui" font-size="11" font-weight="600">Actor Agent</text>
+      <text x="80" y="111" text-anchor="middle" fill="#9aa3b2" font-family="system-ui" font-size="10">creates tasks</text>
+
+      <!-- arrow to DB -->
+      <line x1="140" y1="100" x2="200" y2="100" stroke="#ff8a3d" stroke-width="1.5"/>
+      <polygon points="200,96 208,100 200,104" fill="#ff8a3d"/>
+      <text x="172" y="92" text-anchor="middle" fill="#9aa3b2" font-family="system-ui" font-size="10">writes</text>
+
+      <!-- Tasks DB cylinder -->
+      <ellipse cx="252" cy="82" rx="44" ry="11" fill="#1e2330" stroke="#5cc8ff" stroke-width="1.5"/>
+      <rect x="208" y="82" width="88" height="44" fill="#1e2330" stroke="#5cc8ff" stroke-width="1.5"/>
+      <ellipse cx="252" cy="126" rx="44" ry="11" fill="#1e2330" stroke="#5cc8ff" stroke-width="1.5"/>
+      <text x="252" y="109" text-anchor="middle" fill="#5cc8ff" font-family="system-ui" font-size="10" font-weight="600">Tasks DB</text>
+
+      <!-- arrow to dashboard -->
+      <line x1="296" y1="100" x2="356" y2="100" stroke="#5cc8ff" stroke-width="1.5"/>
+      <polygon points="356,96 364,100 356,104" fill="#5cc8ff"/>
+      <text x="326" y="92" text-anchor="middle" fill="#9aa3b2" font-family="system-ui" font-size="10">served to</text>
+
+      <!-- Browser window (dashboard) -->
+      <rect x="368" y="28" width="250" height="160" rx="8" fill="#1e2330" stroke="#2a303b" stroke-width="1.5"/>
+      <!-- browser chrome -->
+      <rect x="368" y="28" width="250" height="28" rx="8" fill="#2a303b"/>
+      <circle cx="386" cy="42" r="5" fill="#3b4252"/>
+      <circle cx="402" cy="42" r="5" fill="#3b4252"/>
+      <circle cx="418" cy="42" r="5" fill="#3b4252"/>
+      <rect x="432" y="34" width="166" height="16" rx="4" fill="#14171d"/>
+      <text x="515" y="46" text-anchor="middle" fill="#6b7280" font-family="system-ui" font-size="9">:8080/tasks</text>
+      <!-- task rows -->
+      <rect x="382" y="68" width="222" height="20" rx="4" fill="#14171d"/>
+      <rect x="388" y="74" width="60" height="8" rx="2" fill="#2a303b"/>
+      <rect x="526" y="74" width="44" height="8" rx="2" fill="#ff8a3d" opacity="0.7"/>
+
+      <rect x="382" y="95" width="222" height="20" rx="4" fill="#111418"/>
+      <rect x="388" y="101" width="80" height="8" rx="2" fill="#2a303b"/>
+      <rect x="526" y="101" width="44" height="8" rx="2" fill="#4ade80" opacity="0.7"/>
+
+      <rect x="382" y="122" width="222" height="20" rx="4" fill="#14171d"/>
+      <rect x="388" y="128" width="50" height="8" rx="2" fill="#2a303b"/>
+      <rect x="526" y="128" width="44" height="8" rx="2" fill="#5cc8ff" opacity="0.7"/>
+
+      <rect x="382" y="149" width="222" height="20" rx="4" fill="#111418"/>
+      <rect x="388" y="155" width="70" height="8" rx="2" fill="#2a303b"/>
+      <rect x="526" y="155" width="44" height="8" rx="2" fill="#9aa3b2" opacity="0.5"/>
+
+      <!-- User arrow -->
+      <line x1="430" y1="200" x2="456" y2="174" stroke="#9aa3b2" stroke-width="1.2" stroke-dasharray="3 2"/>
+      <polygon points="452,172 460,172 458,180" fill="#9aa3b2"/>
+      <text x="406" y="196" fill="#9aa3b2" font-family="system-ui" font-size="10">filter, search,</text>
+      <text x="406" y="207" fill="#9aa3b2" font-family="system-ui" font-size="10">expand</text>
+    </svg>
+
+    <div class="slide-label">Slide 5 of 5</div>
+    <div class="slide-title">See everything the agent is working on.</div>
+    <div class="slide-body">Every task the Actor Agent creates or updates appears in real time on this Tasks dashboard. Filter by status, assignee, or date range, search across titles and descriptions, and click any task to expand its full history and comments. Nothing falls through the cracks — you always know what SafeClaw is doing on your behalf.</div>
+  </div>
+
+  <!-- navigation -->
+  <div class="carousel-nav">
+    <button class="carousel-btn" id="carousel-prev" aria-label="Previous slide">&#8592;</button>
+    <div class="carousel-dots" id="carousel-dots">
+      <span class="dot active" data-i="0"></span>
+      <span class="dot" data-i="1"></span>
+      <span class="dot" data-i="2"></span>
+      <span class="dot" data-i="3"></span>
+      <span class="dot" data-i="4"></span>
+    </div>
+    <button class="carousel-btn" id="carousel-next" aria-label="Next slide">&#8594;</button>
+    <span class="slide-counter" id="slide-counter">1 / 5</span>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  const slides = document.querySelectorAll('.slide');
+  const dots   = document.querySelectorAll('.dot');
+  const counter = document.getElementById('slide-counter');
+  const total  = slides.length;
+  let current  = 0;
+  let timer    = null;
+
+  function goTo(i) {
+    slides[current].classList.remove('active');
+    dots[current].classList.remove('active');
+    current = (i + total) % total;
+    slides[current].classList.add('active');
+    dots[current].classList.add('active');
+    counter.textContent = (current + 1) + ' / ' + total;
+    resetTimer();
+  }
+
+  function next() { goTo(current + 1); }
+  function prev() { goTo(current - 1); }
+
+  function resetTimer() {
+    clearInterval(timer);
+    timer = setInterval(next, 7000);
+  }
+
+  document.getElementById('carousel-next').addEventListener('click', next);
+  document.getElementById('carousel-prev').addEventListener('click', prev);
+
+  dots.forEach(function (d) {
+    d.addEventListener('click', function () { goTo(+d.dataset.i); });
+  });
+
+  document.getElementById('carousel').addEventListener('mouseenter', function () { clearInterval(timer); });
+  document.getElementById('carousel').addEventListener('mouseleave', resetTimer);
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'ArrowRight') next();
+    if (e.key === 'ArrowLeft')  prev();
+  });
+
+  let touchX = null;
+  document.getElementById('carousel').addEventListener('touchstart', function (e) {
+    touchX = e.changedTouches[0].clientX;
+  }, { passive: true });
+  document.getElementById('carousel').addEventListener('touchend', function (e) {
+    if (touchX === null) return;
+    const dx = e.changedTouches[0].clientX - touchX;
+    if (Math.abs(dx) > 50) dx < 0 ? next() : prev();
+    touchX = null;
+  }, { passive: true });
+
+  resetTimer();
+})();
+</script>
+{% endblock %}

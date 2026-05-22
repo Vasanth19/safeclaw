@@ -338,6 +338,7 @@
         "bot": [
         "app_mentions:read",
         "channels:history",
+        "channels:join",
         "channels:read",
         "chat:write",
         "chat:write.public",
@@ -374,7 +375,8 @@
         }</div>
             </div>
             <ol start="3">
-              <li><strong>Install:</strong> Sidebar → <strong>Install App</strong>. Install to workspace and copy the <strong>Bot User OAuth Token</strong> (<code>xoxb-...</code>).</li>
+              <li><strong>Install:</strong> Sidebar → <strong>Install App</strong>. Install to workspace and copy the <strong>Bot User OAuth Token</strong> (<code>xoxb-...</code>).
+                <br><small>The <code>channels:join</code> scope lets the bot automatically join public channels for ingestion — no manual <code>/invite</code> needed.</small></li>
               <li><strong>Socket Mode:</strong> Sidebar → <strong>Basic Information</strong>. Scroll down to <strong>App-Level Tokens</strong> and copy your <code>xapp-...</code> token (scope: <code>connections:write</code>).</li>
               <li><strong>Admin ID:</strong> In Slack, click your Profile → <strong>More (...)</strong> → <strong>Copy member ID</strong>. This ID (<code>U...</code>) will be the only one allowed to approve email sends.</li>
             </ol>

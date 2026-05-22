@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shlex
 import subprocess
 import tempfile
@@ -39,6 +40,9 @@ PHASES = [
     "secrets",
     "compose_pull",
     "compose_up",
+    "brain_health",
+    "mint_tokens",
+    "compose_up_rest",
     "waiting_health",
     "bootstrap",
     "welcome",
@@ -233,29 +237,36 @@ def _phase_compose_pull(install: Install, install_dir: Path, form: dict) -> None
 
 
 def _phase_compose_up(install: Install, install_dir: Path, form: dict) -> None:
-    _emit(install, "compose_up", "start", "Booting the stack (~45s)...")
+    # Staged bringup. The safeclaw-brain tokens must be minted from the running
+    # brain and written to .env BEFORE hermes containers are created (hermes
+    # reads .env at create time). So we bring up the brain + its data deps
+    # first, mint tokens (next phase), then bring up the rest of the stack.
+    _emit(install, "compose_up", "start", "Booting the brain layer (~45s)...")
     proc = _run_cmd(
-        ["docker", "compose", "up", "-d"],
+        # postgres-brain comes up transitively (safeclaw-brain depends on it).
+        ["docker", "compose", "up", "-d", "safeclaw-brain"],
         cwd=install_dir,
         timeout=300,
     )
     if proc.returncode != 0:
         raise ProvisionError(
             "compose_up",
-            "docker compose up failed.",
+            "docker compose up (brain) failed.",
             hint=_tail_output(proc),
         )
-    _emit(install, "compose_up", "ok", "Containers are up.")
+    _emit(install, "compose_up", "ok", "Brain layer is up.")
 
 
-def _phase_health(install: Install, install_dir: Path, form: dict) -> None:
-    _emit(install, "waiting_health", "start", "Waiting for services to be ready...")
-
-    # Poll `docker compose ps --status running` until every required service
-    # is marked running, or we hit the deadline.
-    required = ["postgres-obs", "postgres-tasks", "embedder"]
-    deadline = time.time() + 180
-
+def _wait_for_healthy(
+    install: Install,
+    install_dir: Path,
+    phase: str,
+    required: list[str],
+    timeout_s: int = 180,
+) -> None:
+    """Poll `docker compose ps --status running` until every required service
+    is marked running, or we hit the deadline."""
+    deadline = time.time() + timeout_s
     while time.time() < deadline:
         proc = _run_cmd(
             ["docker", "compose", "ps", "--status", "running", "--services"],
@@ -265,19 +276,125 @@ def _phase_health(install: Install, install_dir: Path, form: dict) -> None:
         running = set((proc.stdout or "").split())
         missing = [s for s in required if s not in running]
         if not missing:
-            _emit(install, "waiting_health", "ok", "All core services healthy.")
             return
-        _emit(
-            install, "waiting_health", "progress",
-            f"Waiting on: {', '.join(missing)}",
-        )
+        _emit(install, phase, "progress", f"Waiting on: {', '.join(missing)}")
         time.sleep(5)
 
     raise ProvisionError(
-        "waiting_health",
+        phase,
         "Services didn't become ready in time.",
         hint="Run 'docker compose logs' to see what's stuck.",
     )
+
+
+def _phase_brain_health(install: Install, install_dir: Path, form: dict) -> None:
+    _emit(install, "brain_health", "start", "Waiting for the brain to be ready...")
+    # safeclaw-brain has a /health healthcheck; once it's `running` (healthy)
+    # the engine has initialized + applied migrations and is serving on :3131.
+    _wait_for_healthy(install, install_dir, "brain_health", ["safeclaw-brain"])
+    _emit(install, "brain_health", "ok", "Brain is healthy.")
+
+
+# Maps the .env key to the `gbrain auth create <name>` token name.
+_BRAIN_TOKENS = {
+    "SAFECLAW_BRAIN_READER_TOKEN": "reader",
+    "SAFECLAW_BRAIN_ACTOR_TOKEN": "actor",
+}
+# A real token looks like `gbrain_<64 hex>`.
+_TOKEN_RE = re.compile(r"gbrain_[0-9a-f]{64}")
+
+
+def _env_value(install_dir: Path, key: str) -> str:
+    """Read the current value of `key` from .env (empty string if absent)."""
+    env_path = install_dir / ".env"
+    if not env_path.is_file():
+        return ""
+    pat = re.compile(rf"^{re.escape(key)}=(.*)$")
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        m = pat.match(line)
+        if m:
+            return m.group(1).strip().strip('"')
+    return ""
+
+
+def _phase_mint_brain_tokens(install: Install, install_dir: Path, form: dict) -> None:
+    _emit(install, "mint_tokens", "start", "Minting brain access tokens...")
+
+    pending = {}
+    for env_key, token_name in _BRAIN_TOKENS.items():
+        current = _env_value(install_dir, env_key)
+        # Idempotent: skip any token already minted into .env.
+        if current and current not in ("__MINTED__", "__GENERATE__", "__FILL_IN__"):
+            continue
+        pending[env_key] = token_name
+
+    if not pending:
+        _emit(install, "mint_tokens", "ok", "Brain tokens already present — skipping.")
+        return
+
+    minted: dict[str, str] = {}
+    for env_key, token_name in pending.items():
+        proc = _run_cmd(
+            [
+                "docker", "compose", "exec", "-T", "safeclaw-brain",
+                "gbrain", "auth", "create", token_name,
+            ],
+            cwd=install_dir,
+            timeout=60,
+        )
+        if proc.returncode != 0:
+            raise ProvisionError(
+                "mint_tokens",
+                f"gbrain auth create {token_name} failed.",
+                hint=_tail_output(proc),
+            )
+        match = _TOKEN_RE.search(proc.stdout or "")
+        if not match:
+            raise ProvisionError(
+                "mint_tokens",
+                f"Could not parse the minted '{token_name}' token.",
+                hint=_tail_output(proc),
+            )
+        minted[env_key] = match.group(0)
+
+    try:
+        env_writer.set_env_values(install_dir, minted)
+    except env_writer.EnvWriteError as exc:
+        raise ProvisionError(
+            "mint_tokens",
+            f"Could not write brain tokens to .env: {exc}",
+            hint="Check filesystem permissions on the install directory.",
+        ) from exc
+
+    _emit(
+        install, "mint_tokens", "ok",
+        f"Minted {len(minted)} brain token(s).",
+    )
+
+
+def _phase_compose_up_rest(install: Install, install_dir: Path, form: dict) -> None:
+    # Now that brain tokens are in .env, bring up the rest of the stack. hermes
+    # containers are (re)created here so they read the freshly-minted tokens.
+    _emit(install, "compose_up_rest", "start", "Booting the rest of the stack (~45s)...")
+    proc = _run_cmd(
+        ["docker", "compose", "up", "-d"],
+        cwd=install_dir,
+        timeout=300,
+    )
+    if proc.returncode != 0:
+        raise ProvisionError(
+            "compose_up_rest",
+            "docker compose up failed.",
+            hint=_tail_output(proc),
+        )
+    _emit(install, "compose_up_rest", "ok", "Containers are up.")
+
+
+def _phase_health(install: Install, install_dir: Path, form: dict) -> None:
+    _emit(install, "waiting_health", "start", "Waiting for services to be ready...")
+    required = ["postgres-brain", "safeclaw-brain", "postgres-tasks"]
+    _wait_for_healthy(install, install_dir, "waiting_health", required)
+    _emit(install, "waiting_health", "ok", "All core services healthy.")
 
 
 def _phase_bootstrap(install: Install, install_dir: Path, form: dict) -> None:
@@ -368,6 +485,9 @@ PHASE_FUNCS = [
     ("secrets", _phase_secrets),
     ("compose_pull", _phase_compose_pull),
     ("compose_up", _phase_compose_up),
+    ("brain_health", _phase_brain_health),
+    ("mint_tokens", _phase_mint_brain_tokens),
+    ("compose_up_rest", _phase_compose_up_rest),
     ("waiting_health", _phase_health),
     ("bootstrap", _phase_bootstrap),
     ("welcome", _phase_welcome),

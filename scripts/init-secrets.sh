@@ -6,11 +6,15 @@
 # already-populated secrets are preserved on re-runs.
 #
 # Generated values:
-#   POSTGRES_OBS_PASSWORD, POSTGRES_TASKS_PASSWORD,
-#   TASKS_AGENT_PASSWORD,  TASKS_HUMAN_PASSWORD     -> openssl rand -hex 16
+#   BRAIN_DB_PASSWORD,    POSTGRES_TASKS_PASSWORD,
+#   TASKS_AGENT_PASSWORD, TASKS_HUMAN_PASSWORD      -> openssl rand -hex 16
 #   JWT_SECRET                                       -> openssl rand -hex 32
 #   TASKS_AGENT_JWT                                  -> HS256 over {"role":"tasks_agent"}
 #                                                       signed with JWT_SECRET
+#
+# NOT generated here: SAFECLAW_BRAIN_READER_TOKEN / SAFECLAW_BRAIN_ACTOR_TOKEN
+# (left as __MINTED__) — those are minted from the running safeclaw-brain by
+# the onboarding provisioner, not by this script.
 #
 # Usage:
 #   bash scripts/init-secrets.sh        # fill any remaining __GENERATE__ lines
@@ -95,7 +99,7 @@ while IFS= read -r line; do
         DEFERRED_JWT=1
         continue
         ;;
-      POSTGRES_OBS_PASSWORD|POSTGRES_TASKS_PASSWORD|TASKS_AGENT_PASSWORD|TASKS_HUMAN_PASSWORD)
+      BRAIN_DB_PASSWORD|POSTGRES_TASKS_PASSWORD|TASKS_AGENT_PASSWORD|TASKS_HUMAN_PASSWORD)
         value="$(gen_password)"
         ;;
       *)

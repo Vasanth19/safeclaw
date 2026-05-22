@@ -11,7 +11,8 @@
 # The script bootstrap-brain.sh itself handles:
 #   - Composio MCP fetch with the SSE-parser fix
 #   - Incremental: messages with received_at <= last watermark are skipped
-#   - Upsert into brain/People/, brain/Companies/, postgres-obs.entities
+#   - Upsert of people/, companies/ and style/ pages into the GBrain
+#     safeclaw-brain service via its HTTP MCP (GBrain embeds them itself)
 #
 # Suggested cron line (every 30 min):
 #   */30 * * * * /Users/vasanth/Clients/rspur/ai-assistant/scripts/brain-sync.sh
@@ -55,22 +56,12 @@ trap 'rmdir "${LOCK_DIR}" 2>/dev/null || true' EXIT
     cd "${REPO_ROOT}"
     # --days 1 keeps the window narrow; the watermark in bootstrap-state.json
     # is what actually controls "only fetch newer than last successful run".
+    #
+    # bootstrap-brain.sh writes pages straight into the GBrain safeclaw-brain
+    # service, which chunks + embeds them itself (local Ollama). There is no
+    # separate indexing step any more — the old index-brain.py / embedder pass
+    # is gone; `gbrain sync` (run by GBrain) replaces vault indexing.
     bash scripts/bootstrap-brain.sh --days 1
-
-    # Index any new or changed brain .md files into brain_docs for vector search.
-    # Uses the same ephemeral embedder container pattern as bootstrap-brain.sh.
-    # shellcheck disable=SC1091
-    set -o allexport; source .env; set +o allexport
-    INTERNAL_DB_URL="postgresql://${POSTGRES_OBS_USER}:${POSTGRES_OBS_PASSWORD}@postgres-obs:5432/${POSTGRES_OBS_DB}"
-    docker compose run --rm \
-      --no-deps \
-      --entrypoint "" \
-      -T \
-      -e BRAIN_OBS_DATABASE_URL="${INTERNAL_DB_URL}" \
-      -e BRAIN_USER_KEY="${BRAIN_USER_KEY:-primary}" \
-      -v "${REPO_ROOT}:/repo:rw" \
-      embedder \
-      python /repo/scripts/index-brain.py --verbose
 
     printf '──── %s ── brain-sync done (rc=%s)\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$?"
 } >> "${LOG_FILE}" 2>&1

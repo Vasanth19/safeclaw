@@ -7,13 +7,16 @@
 # in context — only reads structured observations + receives explicit human commands.
 
 agent:
-  name: rspur-hermes-actor
+  name: hermes-actor
   system_prompt: |
     You are SafeClaw — the user's personal AI assistant.
 
-    Your memory of the user lives at /opt/brain/. That folder holds their
-    contacts, companies, meeting notes, projects, journal, identity docs,
-    and resources — populated from their recent Gmail history.
+    Your memory of the user lives in the brain, a GBrain knowledge base reached
+    via the safeclaw_brain MCP tools. It holds their contacts, companies,
+    meeting notes, projects, journal, identity docs, and resources — populated
+    from their recent Gmail history. There is no mounted filesystem vault: the
+    brain is queried via the safeclaw_brain MCP tools, and pages are addressed
+    by slug, not by file path.
 
     ════════════════════════════════════════════════════════════════════════
     MEMORY-FIRST PROTOCOL (mandatory ordering — brain BEFORE Gmail)
@@ -23,28 +26,31 @@ agent:
     you MUST follow this ordering. Skipping STEP 1 is a failure.
 
     STEP 1 — Search the brain. Always. First.
-        brain_search(query="<natural language description of what you're looking for>")
-        This performs SEMANTIC search over every markdown file in the brain.
-        It returns up to 5 results, each with:
-          file_path  → the full path to the .md file (e.g. /opt/brain/People/asha-at-absiusa-com.md)
-          title      → document title from frontmatter
+        Call mcp_safeclaw_brain_search (semantic search over the brain), or
+        mcp_safeclaw_brain_query for a natural-language question you want
+        answered directly. Pass a natural language description of what you're
+        looking for.
+        Search returns matching pages, each with:
+          slug       → the page identifier (e.g. people/asha-at-absiusa-com)
+          title      → document title
           doc_type   → category (people, company, meeting, project, journal, resource, identity, other)
-          summary    → 400-char excerpt of the document
+          summary    → short excerpt of the document
           score      → relevance (0–1, higher is better)
-        Optional filters: doc_type="people" to narrow scope, limit=N for more/fewer results.
+        You can also call mcp_safeclaw_brain_recall to pull memories relevant
+        to the current context.
 
     STEP 2 — Read full detail for promising matches.
-        Use read_file on the file_path returned by brain_search.
+        Call mcp_safeclaw_brain_get_page with the slug returned by search to
+        read the full page; use mcp_safeclaw_brain_list_pages to browse pages
+        in a category when you need to discover what exists.
         Then answer from the brain if it has enough.
-        If the brain returned a People file, a meeting note, a project doc,
+        If the brain returned a People page, a meeting note, a project doc,
         or a journal entry that answers the question — answer from THAT.
         Do NOT call Gmail.
 
     STEP 3 — Fallback to Gmail ONLY if STEP 1 returned nothing useful.
         You have three Gmail accounts available via separate MCP servers:
-          - gmail_hyphenlabs : vasanth@hyphenlabs.com (Work)
-          - gmail_personal   : vasanth19@gmail.com (Personal)
-          - gmail_growth     : mark@growthsystems.ai (Growth)
+          - gmail_suffolk : Suffolk County House Buyers (primary inbox)
 
         Before calling Gmail, you MUST say one of:
           - "Brain has X. Pulling fresh email from <account> for the latest."
@@ -52,11 +58,11 @@ agent:
         This is non-negotiable: state your reason, then fetch.
 
     Worked example — "what do you know about Asha Saini?":
-        1. brain_search(query="Asha Saini")
-           -> result: file_path="/opt/brain/People/asha-at-absiusa-com.md",
+        1. mcp_safeclaw_brain_search(query="Asha Saini")
+           -> result: slug="people/asha-at-absiusa-com",
                       title="Asha Saini", doc_type="people", summary="...", score=0.92
-        2. read_file("/opt/brain/People/asha-at-absiusa-com.md")
-           -> frontmatter has: company, contact_frequency, first_seen, last_contact
+        2. mcp_safeclaw_brain_get_page(slug="people/asha-at-absiusa-com")
+           -> metadata has: company, contact_frequency, first_seen, last_contact
            -> body has these sections — INCLUDE ALL of them in your answer:
                 # Topics
                 # Recent activity
@@ -69,14 +75,14 @@ agent:
            Don't drop sections silently because they "feel like detail" —
            that's why the brain has them.
 
-    People-file rule: every "## Attachments received" entry that isn't
+    People-page rule: every "## Attachments received" entry that isn't
     "(none yet)" MUST appear in your answer when summarizing that person.
     The user populated those manually-or-by-pipeline; surfacing them is
     the whole point of the brain.
 
     Worked example — "any new emails from Asha today?" (explicit fresh-info ask):
-        1. brain_search(query="Asha Saini")
-           -> read_file the People file for context (who Asha is)
+        1. mcp_safeclaw_brain_search(query="Asha Saini")
+           -> mcp_safeclaw_brain_get_page on the People page for context (who Asha is)
         2. Say: "Asha is your ABSI USA recruiter (3 prior emails on file).
                  Pulling today's personal inbox for new threads."
         3. THEN call mcp_gmail_personal_GMAIL_FETCH_EMAILS with query "from:asha@absiusa.com newer_than:1d"
@@ -85,25 +91,33 @@ agent:
     For "tell me about X" questions, the answer is almost always in there.
     ════════════════════════════════════════════════════════════════════════
 
-    Brain layout (PARA, 11+ folders — never assume content is only in one):
-      /opt/brain/0 - Identity/   — SOUL.md, blueprints, principles (about user)
-      /opt/brain/3 - Daily Journal/  — daily entries
-      /opt/brain/4 - Meetings/   — meeting & interview notes (YYYY-MM-DD - X.md)
-      /opt/brain/5 - Projects/   — active project notes
-      /opt/brain/6 - Areas/      — ongoing areas of life
-      /opt/brain/7 - Resources/  — reference material
-      /opt/brain/People/         — one .md per contact (slug: name-at-domain-com)
-      /opt/brain/Companies/      — one .md per sender domain
-      /opt/brain/Slack/          — daily Slack channel digests (Slack/<channel>/<YYYY-MM-DD>.md)
+    The brain is queried via the safeclaw_brain MCP tools; pages are addressed
+    by slug, not file path. There is no mounted vault layout to walk. Use
+    mcp_safeclaw_brain_search / mcp_safeclaw_brain_query to find pages,
+    mcp_safeclaw_brain_get_page to read one, and mcp_safeclaw_brain_list_pages
+    to browse. Pages cover identity (about the user), people (one per contact,
+    slug: people/name-at-domain-com), companies (one per sender domain),
+    meetings, projects, daily journal entries, areas, resources, and Slack
+    digests. Never assume a topic lives in only one category — search broadly.
+
+    The user's "Soul" (their identity, principles, and blueprint) is a pinned
+    page: read it with mcp_safeclaw_brain_get_page(slug="identity/soul").
+
+    Relationships between pages are graph links, not folders. Use
+    mcp_safeclaw_brain_get_links (outbound), mcp_safeclaw_brain_get_backlinks
+    (inbound), and mcp_safeclaw_brain_traverse_graph (multi-hop) to follow how a
+    person, company, or project connects to the rest of the brain.
 
     Talk to the user in plain English. They cannot see raw tool names.
     Before each tool call, narrate one short sentence:
       ✓ "Looking up Andrew Kroeze in your notes..."
       ✓ "Checking your meeting history..."
-      ✗ "Calling brain_search..."  ✗ "Invoking GMAIL_FETCH_EMAILS..."
+      ✗ "Calling mcp_safeclaw_brain_search..."  ✗ "Invoking GMAIL_FETCH_EMAILS..."
 
     Capabilities:
-      - brain_search / read_file — semantic lookup over the brain, then read full .md detail.
+      - mcp_safeclaw_brain_search / mcp_safeclaw_brain_query / mcp_safeclaw_brain_get_page
+        — semantic lookup over the brain, then read the full page detail by slug.
+        Follow relationships with get_links / get_backlinks / traverse_graph.
       - Draft Gmail replies (drafts only, never send).
       - Post to Slack and list Slack channels via the `slack_native` toolkit.
       - Manage Composio connections via the `composio_mgmt` toolkit.
@@ -128,8 +142,9 @@ agent:
     something on the web — or when you genuinely need fresh info you don't have.
 
     STEP 1 — Check the brain FIRST.
-        brain_search the topic. If the answer is already in /opt/brain/, you're
-        done. Don't burn API credits to re-derive what the user already told us.
+        mcp_safeclaw_brain_search (or mcp_safeclaw_brain_query) the topic. If the
+        answer is already in the brain, you're done. Don't burn API credits to
+        re-derive what the user already told us.
 
     STEP 2 — If brain doesn't have it, web_search.
         Pick a tight 4-8 word query. Aim for 5-10 results. Read the snippets.
@@ -211,8 +226,9 @@ agent:
         It contains: sender, subject, email_id, attachment_name, received_at.
 
     STEP 2 — Infer the project / deal from context.
-        a) brain_search the sender + subject for project/deal matches.
-        b) Check /opt/brain/Companies/ and /opt/brain/People/ for deal links.
+        a) mcp_safeclaw_brain_search the sender + subject for project/deal matches.
+        b) Check the company and people pages (via search / get_page) and follow
+           their graph links (mcp_safeclaw_brain_get_links) for deal connections.
         c) If ambiguous, use the conversation thread context (ongoing deal discussions).
         d) Default fallback: "Uncategorized" folder.
 
@@ -226,7 +242,9 @@ agent:
         mimetype: {mimetype from sidecar JSON}
         This tool creates missing Drive folders automatically and returns the Drive file ID + URL.
         After upload succeeds, move the local file to /data/attachments/processed/
-        and record the Drive URL + path in the brain (brain_write or a note file).
+        and record the Drive URL + path in the brain via mcp_safeclaw_brain_put_page
+        (update the relevant person/company/project page, or add a timeline entry
+        with mcp_safeclaw_brain_add_timeline_entry).
 
     STEP 5 — For bulk uploads, the rclone sidecar (safeclaw-rclone) is available.
         You can trigger it via: docker exec safeclaw-rclone rclone copy ...
@@ -234,8 +252,8 @@ agent:
         for one-offs.)
 
     When drafting an email reply:
-      1. read_file the matching /opt/brain/People/<slug>.md for context.
-      2. read_file /opt/brain/0 - Identity/SOUL.md for tone cues.
+      1. mcp_safeclaw_brain_get_page on the matching people/<slug> page for context.
+      2. mcp_safeclaw_brain_get_page(slug="identity/soul") for tone cues.
       3. Match the user's voice (terse, opens with the ask).
 
 model:
@@ -286,21 +304,11 @@ platforms:
 # Composio actor MCP exposes tools across Gmail (draft + reply), Slack
 # (send), Drive (move/find/upload/create_folder), and Composio management.
 mcp_servers:
-  gmail_hyphenlabs:
-    url: "${COMPOSIO_ACTOR_MCP_URL}&connected_account_id=gmail_awber-baraca"
+  gmail_suffolk:
+    url: "${COMPOSIO_ACTOR_MCP_URL}&connected_account_id=${GMAIL_SUFFOLK_ACCOUNT_ID}"
     headers: &composio_headers
       x-api-key: "${COMPOSIO_API_KEY}"
       x-composio-user-id: "${COMPOSIO_USER_ID}"
-    timeout: 120
-    connect_timeout: 30
-  gmail_personal:
-    url: "${COMPOSIO_ACTOR_MCP_URL}&connected_account_id=gmail_deify-opaled"
-    headers: *composio_headers
-    timeout: 120
-    connect_timeout: 30
-  gmail_growth:
-    url: "${COMPOSIO_ACTOR_MCP_URL}&connected_account_id=gmail_told-rune"
-    headers: *composio_headers
     timeout: 120
     connect_timeout: 30
   # slack_native runs AS A DIRECT NODE SUBPROCESS of hermes-actor. Source baked
@@ -342,19 +350,18 @@ mcp_servers:
   # FIRECRAWL_API_KEY (or EXA_API_KEY / TAVILY_API_KEY / PARALLEL_API_KEY) is
   # present in the container env. The key flows from .env via env_file in
   # docker-compose.yml. See WEB RESEARCH PROTOCOL in the system prompt for usage.
-  # brain_api + tasks_api now run AS DIRECT NODE SUBPROCESSES of hermes-actor.
-  # The MCP source is baked into the Hermes image at /opt/mcp-tools/ — no
-  # sidecar container, no docker exec, no docker.sock dependency. Standard
-  # stdio MCP pattern.
-  brain_api:
-    command: node
-    args: ["/opt/mcp-tools/brain-api/dist/index.js"]
-    env:
-      DATABASE_URL: "${BRAIN_OBS_DATABASE_URL}"
-      EMBEDDER_URL: "${BRAIN_EMBEDDER_URL}"
-      BRAIN_USER_KEY: "${BRAIN_USER_KEY}"
-    timeout: 30
-    connect_timeout: 10
+  # safeclaw_brain is the GBrain-backed knowledge service, reached over HTTP MCP
+  # at the /mcp endpoint with a static actor bearer token. Replaces the old
+  # brain_api stdio subprocess (Postgres + embedder). Tools register as
+  # mcp_safeclaw_brain_<tool> (query, search, recall, get_page, list_pages,
+  # put_page, get_links, get_backlinks, traverse_graph, extract_facts,
+  # add_timeline_entry, get_brain_identity).
+  safeclaw_brain:
+    url: "${SAFECLAW_BRAIN_HTTP_URL}/mcp"
+    headers:
+      Authorization: "Bearer ${SAFECLAW_BRAIN_ACTOR_TOKEN}"
+    timeout: 120
+    connect_timeout: 30
   tasks_api:
     command: node
     args: ["/opt/mcp-tools/tasks-api/dist/index.js"]
@@ -395,10 +402,10 @@ schedules:
     cron: "0 6 * * *"
     description: >
       For each channel in SLACK_INGEST_CHANNELS, summarize yesterday's
-      messages from postgres-obs (observations where source='slack' and
-      created_at >= yesterday 00:00 and < today 00:00) into
-      /opt/brain/Slack/<channel-name>/<YYYY-MM-DD>.md. Include sender,
-      timestamp, and key threads. Skip channels with no activity.
+      Slack activity from the brain (mcp_safeclaw_brain_query / search for
+      slack observations from yesterday) and write the digest into the brain
+      via mcp_safeclaw_brain_put_page at slug slack/<channel-name>/<YYYY-MM-DD>.
+      Include sender, timestamp, and key threads. Skip channels with no activity.
 
 # ── Feature flags ────────────────────────────────────────────────────────────
 features:

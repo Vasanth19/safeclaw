@@ -38,9 +38,14 @@ Open `.env` and fill in every value. The table below describes each variable.
 
 | Variable | Required | How to Generate / Where to Find |
 |----------|----------|--------------------------------|
-| `POSTGRES_OBS_USER` | Yes | Any string. Default: `obs_user` |
-| `POSTGRES_OBS_PASSWORD` | Yes | `openssl rand -base64 24` |
-| `POSTGRES_OBS_DB` | Yes | Any string. Default: `safeclaw_obs` |
+| `BRAIN_DB_USER` | Yes | Any string. Default: `safeclaw_brain`. Postgres user for the GBrain backend (`postgres-brain`). |
+| `BRAIN_DB_PASSWORD` | Yes | `openssl rand -base64 24` — auto-set by `scripts/init-secrets.sh` |
+| `BRAIN_DB_NAME` | Yes | Any string. Default: `safeclaw_brain` |
+| `BRAIN_USER_KEY` | Yes | Single-user installs use `primary`. |
+| `GBRAIN_VERSION` | Yes | GBrain image/build pin (e.g. `0.37.11.0`). Bump to upgrade the brain — see §11. |
+| `SAFECLAW_BRAIN_HTTP_URL` | Yes | Internal HTTP endpoint of the brain. Default: `http://safeclaw-brain:3131`. Agents hit `${SAFECLAW_BRAIN_HTTP_URL}/mcp`. |
+| `SAFECLAW_BRAIN_READER_TOKEN` | Yes | `__MINTED__` until you run `docker compose exec safeclaw-brain gbrain auth create reader` post-boot; paste the printed `gbrain_<hex>`. |
+| `SAFECLAW_BRAIN_ACTOR_TOKEN` | Yes | `__MINTED__` until you run `docker compose exec safeclaw-brain gbrain auth create actor` post-boot; paste the printed `gbrain_<hex>`. |
 | `POSTGRES_TASKS_USER` | Yes | Any string. Default: `tasks_super` |
 | `POSTGRES_TASKS_PASSWORD` | Yes | `openssl rand -base64 24` |
 | `POSTGRES_TASKS_DB` | Yes | Any string. Default: `safeclaw_tasks` |
@@ -83,6 +88,13 @@ Paste the output as `TASKS_AGENT_JWT` in `.env`.
 
 ## 3. Starting the Stack
 
+Before the first `up`, pull the local embedding model on the host running the
+Ollama daemon (the brain embeds locally via Ollama — no API key, no egress):
+
+```bash
+ollama pull nomic-embed-text
+```
+
 ```bash
 docker compose up -d
 ```
@@ -92,9 +104,20 @@ Check service status:
 docker compose ps
 ```
 
-Wait for all services to be `healthy` (Postgres, PostgREST, embedder) or `running`
-(hermes-reader, hermes-actor, rclone-sync). Allow up to 60 seconds for Postgres
-initialization on the first `up`.
+Wait for all services to be `healthy` (`postgres-brain`, `postgres-tasks`,
+`postgrest`, `safeclaw-brain`) or `running` (hermes-reader, hermes-actor,
+rclone-sync). Allow up to 60 seconds for Postgres initialization on the first
+`up`. On first boot, `safeclaw-brain` runs `gbrain init` +
+`gbrain apply-migrations --yes` before its `/health` check goes green.
+
+After the brain is healthy, mint the two agent bearer tokens and load them:
+
+```bash
+docker compose exec safeclaw-brain gbrain auth create reader   # → SAFECLAW_BRAIN_READER_TOKEN
+docker compose exec safeclaw-brain gbrain auth create actor    # → SAFECLAW_BRAIN_ACTOR_TOKEN
+# paste both gbrain_<hex> values into .env, then:
+docker compose up -d hermes-reader hermes-actor
+```
 
 Run foundation verification:
 ```bash
@@ -138,15 +161,15 @@ see ARCHITECTURE.md §5 for why.
 
 ## 5. Database Initialization
 
-Run migrations after OAuth setup (or anytime after Postgres is healthy):
+**Brain DB:** no manual step. GBrain owns its own schema — the `safeclaw-brain`
+entrypoint runs `gbrain init` (first boot) + `gbrain apply-migrations --yes`
+(every boot, idempotent) against `postgres-brain` automatically. SafeClaw ships
+no brain DDL.
+
+**Task DB:** run the task migration after OAuth setup (or anytime after Postgres
+is healthy):
 
 ```bash
-# Observation DB
-docker compose exec postgres-obs psql \
-  -U "$POSTGRES_OBS_USER" \
-  -d "$POSTGRES_OBS_DB" \
-  -f /migrations/001_obs_schema.sql
-
 # Task DB
 docker compose exec postgres-tasks psql \
   -U "$POSTGRES_TASKS_USER" \
@@ -156,8 +179,8 @@ docker compose exec postgres-tasks psql \
 
 Verify tables were created:
 ```bash
-docker compose exec postgres-obs psql -U "$POSTGRES_OBS_USER" -d "$POSTGRES_OBS_DB" \
-  -c "\dt"
+# Brain (GBrain-managed) — page count + health
+docker compose exec safeclaw-brain gbrain stats
 
 docker compose exec postgres-tasks psql -U "$POSTGRES_TASKS_USER" -d "$POSTGRES_TASKS_DB" \
   -c "\dt"
@@ -205,22 +228,33 @@ docker compose logs -f hermes-actor
 docker compose logs -f
 ```
 
-### Querying the observation DB
+### Inspecting the brain (GBrain)
+
+The brain has no host port and no raw SQL surface — use the `gbrain` CLI inside
+the `safeclaw-brain` container. (Avoid querying `postgres-brain` directly; the
+schema is GBrain-owned and may change between `GBRAIN_VERSION` bumps.)
 
 ```bash
-# Most recent observations
-docker compose exec postgres-obs psql \
-  -U "$POSTGRES_OBS_USER" -d "$POSTGRES_OBS_DB" \
-  -c "SELECT inbox, subject, is_critical, processed_at FROM observations ORDER BY processed_at DESC LIMIT 20;"
+# Brain health + page/stat summary
+docker compose exec safeclaw-brain gbrain doctor
+docker compose exec safeclaw-brain gbrain stats
 
-# Critical alerts awaiting acknowledgment
-docker compose exec postgres-obs psql \
-  -U "$POSTGRES_OBS_USER" -d "$POSTGRES_OBS_DB" \
-  -c "SELECT * FROM critical_alerts WHERE acknowledged_at IS NULL ORDER BY alerted_at DESC;"
+# Recent pages (observations, People, Companies, style samples)
+docker compose exec safeclaw-brain gbrain list_pages
 
+# Read the Soul page the agent reads
+docker compose exec safeclaw-brain gbrain get_page identity/soul
+
+# Hybrid query the brain
+docker compose exec safeclaw-brain gbrain query "recent emails from Alice"
+```
+
+### Querying the task DB
+
+```bash
 # Review queue (pending approvals)
-docker compose exec postgres-obs psql \
-  -U "$POSTGRES_OBS_USER" -d "$POSTGRES_OBS_DB" \
+docker compose exec postgres-tasks psql \
+  -U "$POSTGRES_TASKS_USER" -d "$POSTGRES_TASKS_DB" \
   -c "SELECT action_type, proposed_at, approved_at, rejected_at FROM review_queue ORDER BY proposed_at DESC LIMIT 10;"
 ```
 

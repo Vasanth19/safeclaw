@@ -46,6 +46,7 @@ from lib.progress import registry
 # ── Config ────────────────────────────────────────────────────────────────
 INSTALL_DIR = Path(os.environ.get("SAFECLAW_INSTALL_DIR", "/safeclaw"))
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+POSTGREST_URL = os.environ.get("POSTGREST_URL", "http://postgrest:3000")
 
 logging.basicConfig(
     level=LOG_LEVEL,
@@ -381,6 +382,82 @@ def create_app() -> Flask:
             "events": install.snapshot(),
         })
 
+    # ── About ─────────────────────────────────────────────────────────────
+    @app.get("/about")
+    def about():
+        return render_template("about.html")
+
+    # ── Tasks ─────────────────────────────────────────────────────────────
+    @app.get("/tasks")
+    def tasks_page():
+        return render_template("tasks.html")
+
+    @app.get("/api/tasks")
+    def api_tasks():
+        import requests as _req
+        import datetime as _dt
+        params: dict[str, str] = {"order": "created_at.desc", "limit": "200"}
+        if v := request.args.get("status"):
+            params["status"] = f"eq.{v}"
+        if v := request.args.get("user"):
+            params["assigned_to"] = f"eq.{v}"
+        # Single search bar — OR across title and description
+        if q := request.args.get("q", "").strip():
+            params["or"] = f"(title.ilike.*{q}*,description.ilike.*{q}*)"
+        # Date range filter
+        days = {"today": 0, "7d": 7, "30d": 30, "90d": 90}.get(request.args.get("range", ""), None)
+        if days is not None:
+            since = (_dt.datetime.utcnow() - _dt.timedelta(days=days)).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+            params["created_at"] = f"gte.{since.isoformat()}Z"
+        try:
+            r = _req.get(
+                f"{POSTGREST_URL}/tasks",
+                params=params,
+                headers={"Authorization": f"Bearer {_tasks_jwt()}"},
+                timeout=8,
+            )
+            return jsonify(r.json()), r.status_code
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 502
+
+    @app.get("/api/tasks/users")
+    def api_task_users():
+        """Return distinct non-null assigned_to values for the user dropdown."""
+        import requests as _req
+        try:
+            r = _req.get(
+                f"{POSTGREST_URL}/tasks",
+                params={"select": "assigned_to", "assigned_to": "not.is.null", "limit": "500"},
+                headers={"Authorization": f"Bearer {_tasks_jwt()}"},
+                timeout=8,
+            )
+            rows = r.json() if r.ok else []
+            users = sorted({row["assigned_to"] for row in rows if row.get("assigned_to")})
+            return jsonify(users)
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 502
+
+    @app.get("/api/tasks/<task_id>/details")
+    def api_task_details(task_id: str):
+        import requests as _req
+        hdr = {"Authorization": f"Bearer {_tasks_jwt()}"}
+        try:
+            comments = _req.get(
+                f"{POSTGREST_URL}/comments",
+                params={"task_id": f"eq.{task_id}", "order": "created_at.asc"},
+                headers=hdr, timeout=8,
+            ).json()
+            history = _req.get(
+                f"{POSTGREST_URL}/status_transitions",
+                params={"task_id": f"eq.{task_id}", "order": "transitioned_at.asc"},
+                headers=hdr, timeout=8,
+            ).json()
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 502
+        return jsonify({"comments": comments, "history": history})
+
     # ── Dashboard ─────────────────────────────────────────────────────────
     @app.get("/dashboard")
     def dashboard():
@@ -504,6 +581,21 @@ _INSTALL_ID_RE = re.compile(r"^[a-f0-9]{8,32}$")
 
 def _valid_install_id(install_id: str) -> bool:
     return bool(_INSTALL_ID_RE.match(install_id or ""))
+
+
+def _tasks_jwt() -> str:
+    """Return TASKS_AGENT_JWT from env or fall back to reading from .env file."""
+    token = os.environ.get("TASKS_AGENT_JWT", "")
+    if token:
+        return token
+    env_path = INSTALL_DIR / ".env"
+    try:
+        for line in env_path.read_text(errors="ignore").splitlines():
+            if line.startswith("TASKS_AGENT_JWT="):
+                return line.split("=", 1)[1].strip().strip('"').strip("'")
+    except Exception:
+        pass
+    return ""
 
 
 # Module-level app for gunicorn `app:app`.

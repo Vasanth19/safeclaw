@@ -3,8 +3,10 @@ SafeClaw — bootstrap_brain.py
 =============================
 
 The brain-seeding workhorse. This script is invoked by
-``scripts/bootstrap-brain.sh`` inside the ``embedder`` container, which
-already has Python 3.12 + psycopg installed.
+``scripts/bootstrap-brain.sh`` and writes everything it learns into the
+GBrain-backed ``safeclaw-brain`` service over its HTTP MCP endpoint. It needs
+nothing but Python 3 stdlib + network access to ``safeclaw-brain`` (and,
+optionally, Google's API client libraries for Drive attachment upload).
 
 What it does, end-to-end
 ------------------------
@@ -21,24 +23,26 @@ What it does, end-to-end
 3. For each unique sender:
 
    - Slugifies the email address (``alice@acme.com`` -> ``alice-at-acme-com``).
-   - Upserts ``brain/People/<slug>.md`` from a small template.
-   - Upserts a row into ``postgres-obs.entities`` (kind=``person``).
+   - Writes a GBrain page via ``put_page`` slug ``people/<slug>``.
+   - Optionally runs ``extract_facts`` over the person's email context so
+     GBrain's hot-memory layer learns structured claims.
 
 4. For each unique sender domain:
 
-   - Upserts ``brain/Companies/<domain>.md``.
-   - Upserts an ``entities`` row (kind=``company``).
+   - Writes a GBrain page via ``put_page`` slug ``companies/<domain>``.
 
 5. For each *sent* message (``q=in:sent``):
 
-   - Inserts a row into ``postgres-obs.style_samples`` so the Actor has voice
-     samples from day one. The embedder service will vectorize them on its
-     next polling cycle.
+   - Writes a GBrain page via ``put_page`` slug ``style/<id>`` tagged ``style``
+     so the Actor can pull voice samples from day one. GBrain embeds the page
+     itself (local Ollama) — this script never embeds anything.
 
-6. Writes a human-readable summary report to
-   ``brain/2 - Live Logs/bootstrap-<UTC-timestamp>.md``.
+6. Seeds a starter ``identity/soul`` page if one does not already exist.
 
-7. Tracks a watermark in ``brain/.bootstrap-state.json`` so re-runs only fetch
+7. Writes a human-readable summary report via ``put_page`` slug
+   ``logs/bootstrap-<UTC-timestamp>``.
+
+8. Tracks a watermark in ``brain/.bootstrap-state.json`` so re-runs only fetch
    messages newer than the last successful run. Use ``--reset`` to start over.
 
 Why MCP and not the Gmail REST API directly
@@ -50,21 +54,31 @@ tokens has a strict toolkit allowlist (read-only), so even this bootstrap
 script — which is presumably benign — cannot accidentally send or delete
 anything. Belt and suspenders.
 
+GBrain HTTP MCP contract
+------------------------
+
+Every write goes through the GBrain JSON-RPC ``tools/call`` endpoint::
+
+    POST ${SAFECLAW_BRAIN_HTTP_URL}/mcp
+    Authorization: Bearer ${SAFECLAW_BRAIN_ACTOR_TOKEN}
+    Content-Type: application/json
+    Accept: application/json
+    {"jsonrpc":"2.0","id":N,"method":"tools/call",
+     "params":{"name":"put_page","arguments":{"slug":"...","content":"..."}}}
+
+The response is ``{"result":{"content":[{"type":"text","text":"<json>"}],
+"isError":?},"jsonrpc":"2.0","id":N}`` — the operation's real return value is
+the JSON-encoded string in ``result.content[0].text``.
+
 CLI
 ---
 
 ::
 
     python bootstrap_brain.py                 # incremental
-    python bootstrap_brain.py --dry-run       # parse + print, no DB writes
+    python bootstrap_brain.py --dry-run       # parse + print, no writes
     python bootstrap_brain.py --reset         # clear watermark, full rerun
     python bootstrap_brain.py --days 30       # override BOOTSTRAP_DAYS
-
-Attribution
------------
-
-The brain folder layout this script populates (``People/``, ``Companies/``,
-``2 - Live Logs/``, etc.) follows a PARA-style markdown vault structure.
 """
 
 from __future__ import annotations
@@ -82,9 +96,6 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
-
-# psycopg is bundled in the embedder image (services/embedder/requirements.txt).
-import psycopg
 
 
 # ─── Constants ─────────────────────────────────────────────────────────────
@@ -147,6 +158,10 @@ class BootstrapStats:
     sent_processed: int = 0
     journal_files_created: int = 0
     style_samples_saved: int = 0
+    people_pages_written: int = 0
+    company_pages_written: int = 0
+    facts_extracted: int = 0
+    page_errors: int = 0
     attachments_seen: int = 0
     attachments_uploaded: int = 0
     attachments_skipped: int = 0
@@ -345,6 +360,124 @@ def _parse_sse_payload(raw: str) -> dict[str, Any]:
             f"dump={dump_path}). head={head!r}, tail={tail!r}"
         )
     return last_data_json
+
+
+class GBrainError(RuntimeError):
+    pass
+
+
+class GBrainClient:
+    """Authenticated client for the GBrain ``safeclaw-brain`` HTTP MCP endpoint.
+
+    Talks JSON-RPC ``tools/call`` to ``${base_url}/mcp`` with a static
+    ``Authorization: Bearer <token>``. GBrain handles chunking + embedding
+    (local Ollama) internally — this client only ever writes pages, facts and
+    timeline entries; it never embeds anything itself.
+
+    Construct via :meth:`from_env` so the fail-fast env checks live in one place.
+    """
+
+    def __init__(self, base_url: str, token: str):
+        self.mcp_url = base_url.rstrip("/") + "/mcp"
+        self.headers = {
+            "Authorization": f"Bearer {token}",
+            # GBrain's HTTP transport accepts JSON; it does not stream SSE for
+            # tools/call, but we advertise both to be safe.
+            "Accept": "application/json, text/event-stream",
+            "User-Agent": "SafeClaw-Bootstrap/2.0",
+        }
+        self._rpc_id = 0
+
+    @classmethod
+    def from_env(cls) -> "GBrainClient":
+        """Build from ``SAFECLAW_BRAIN_HTTP_URL`` + ``SAFECLAW_BRAIN_ACTOR_TOKEN``.
+
+        Fails fast (per the repo convention) with a clear message if either is
+        missing or still a placeholder.
+        """
+        base_url = os.environ.get("SAFECLAW_BRAIN_HTTP_URL", "").strip()
+        token = os.environ.get("SAFECLAW_BRAIN_ACTOR_TOKEN", "").strip()
+        if not base_url:
+            raise GBrainError(
+                "SAFECLAW_BRAIN_HTTP_URL is not set. Point it at the GBrain "
+                "service, e.g. http://safeclaw-brain:3131"
+            )
+        if not token or token in ("__FILL_IN__", "__GENERATE__", "__MINTED__"):
+            raise GBrainError(
+                "SAFECLAW_BRAIN_ACTOR_TOKEN is not set (or still a placeholder). "
+                "Mint a read+write token with 'gbrain auth create' and pass it "
+                "through the environment."
+            )
+        return cls(base_url, token)
+
+    def _next_id(self) -> int:
+        self._rpc_id += 1
+        return self._rpc_id
+
+    def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> Any:
+        """JSON-RPC ``tools/call`` against GBrain. Returns the parsed op result.
+
+        GBrain wraps the operation's return value as a JSON-encoded string in
+        ``result.content[0].text``. We unwrap + json.loads it so callers see
+        the operation's native return shape (a dict, list, etc.).
+        """
+        body = {
+            "jsonrpc": "2.0",
+            "id": self._next_id(),
+            "method": "tools/call",
+            "params": {"name": tool_name, "arguments": arguments},
+        }
+        resp = _http_post_json(self.mcp_url, self.headers, body)
+        if resp.get("error"):
+            raise GBrainError(f"GBrain MCP error for tool {tool_name}: {resp['error']}")
+        result = resp.get("result") or {}
+        content = result.get("content")
+        text = ""
+        if isinstance(content, list) and content:
+            first = content[0]
+            if isinstance(first, dict):
+                text = first.get("text", "") or ""
+        parsed: Any = None
+        if text:
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError:
+                parsed = text
+        if result.get("isError"):
+            raise GBrainError(f"GBrain tool {tool_name} returned an error: {parsed or text}")
+        return parsed
+
+    # ── High-level helpers ──────────────────────────────────────────────
+
+    def put_page(self, slug: str, content: str) -> Any:
+        """Create/update a page. GBrain chunks + embeds it server-side."""
+        return self.call_tool("put_page", {"slug": slug, "content": content})
+
+    def get_page(self, slug: str) -> Any | None:
+        """Read a page by slug. Returns None when the page does not exist."""
+        try:
+            return self.call_tool("get_page", {"slug": slug})
+        except GBrainError:
+            # get_page raises (isError) when the slug is unknown; treat as absent.
+            return None
+
+    def extract_facts(self, turn_text: str, *, entity_hints: list[str] | None = None) -> Any:
+        """Extract structured facts from a chunk of text into GBrain hot memory."""
+        args: dict[str, Any] = {"turn_text": turn_text}
+        if entity_hints:
+            args["entity_hints"] = entity_hints
+        return self.call_tool("extract_facts", args)
+
+    def add_timeline_entry(
+        self, slug: str, *, date: str, summary: str, detail: str = "", source: str = ""
+    ) -> Any:
+        """Append a timeline entry (date must be strict YYYY-MM-DD)."""
+        args: dict[str, Any] = {"slug": slug, "date": date, "summary": summary}
+        if detail:
+            args["detail"] = detail
+        if source:
+            args["source"] = source
+        return self.call_tool("add_timeline_entry", args)
 
 
 class ComposioReader:
@@ -827,34 +960,11 @@ def save_attachments_state(brain_dir: Path, state: dict[str, dict[str, Any]]) ->
     p.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
 
 
-# ─── Brain folder writers (People/, Companies/, Live Logs/) ───────────────
-
-
-DAILY_JOURNAL_TEMPLATE = """\
----
-date: {date}
-source: gmail
-account: {account}
-inbound_count: {inbound_count}
-sent_count: {sent_count}
----
-
-# Daily Journal — {date}
-
-## Inbound ({inbound_count})
-
-{inbound_block}
-
-## Sent ({sent_count})
-
-{sent_block}
-
-## Attachments
-
-{attachments_block}
-
-## Notes
-"""
+# ─── Attachment rendering helper ──────────────────────────────────────────
+#
+# Used by build_person_page to render the per-person "Attachments" section
+# from the metadata captured during Phase A (and the Drive URLs filled in by
+# Phase A.5).
 
 
 def _format_attachments_block(records: list[dict[str, Any]]) -> str:
@@ -885,145 +995,188 @@ def _format_attachments_block(records: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def write_daily_journal(
+# ─── GBrain page builders ────────────────────────────────────────────────────
+#
+# Everything the bootstrap learns is persisted to the GBrain ``safeclaw-brain``
+# service as markdown pages via put_page. GBrain chunks + embeds each page
+# server-side (local Ollama), so we never embed anything here. Each builder
+# returns the markdown body (with YAML frontmatter) that put_page expects.
+
+
+def _yaml_escape(value: str) -> str:
+    """Quote a scalar for a single-line YAML frontmatter value."""
+    v = (value or "").replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ")
+    return f'"{v}"'
+
+
+def build_person_page(
     *,
-    journal_dir: Path,
-    date: dt.date,
-    account: str,
-    inbound: list[GmailMessage],
-    sent: list[GmailMessage],
-    attachments_map: dict[str, list[dict[str, Any]]],
-    dry_run: bool,
-) -> bool:
-    """Write one Daily Journal file for a single date. Returns True if written."""
-    out_path = journal_dir / f"{date.isoformat()}.md"
-
-    # Group inbound by sender domain
-    sender_groups: dict[str, list[GmailMessage]] = {}
-    for msg in inbound:
-        d = domain_of(msg.sender_email) or "unknown"
-        sender_groups.setdefault(d, []).append(msg)
-
-    inbound_lines: list[str] = []
-    for domain, msgs in sorted(sender_groups.items(), key=lambda kv: -len(kv[1])):
-        inbound_lines.append(f"### {domain} ({len(msgs)})")
-        for msg in msgs:
-            preview = msg.subject or "(no subject)"
-            sender = msg.sender_name or msg.sender_email
-            inbound_lines.append(f"- **{sender}** — {preview}")
-        inbound_lines.append("")
-
-    if not inbound_lines:
-        inbound_lines.append("No inbound email.")
-
-    sent_lines: list[str] = []
-    for msg in sent:
-        preview = msg.subject or "(no subject)"
-        recipients = ", ".join(msg.recipient_emails[:3])
-        body_preview = msg.body_text.strip().replace("\n", " ")[:80]
-        sent_lines.append(f"- **To:** {recipients} — {preview}")
-        if body_preview:
-            sent_lines.append(f"  > {body_preview}")
-
-    if not sent_lines:
-        sent_lines.append("No sent email.")
-
-    att_records: list[dict[str, Any]] = []
-    for sender, records in attachments_map.items():
-        att_records.extend(records)
-    att_block = _format_attachments_block(att_records)
-
-    content = DAILY_JOURNAL_TEMPLATE.format(
-        date=date.isoformat(),
-        account=account,
-        inbound_count=len(inbound),
-        sent_count=len(sent),
-        inbound_block="\n".join(inbound_lines),
-        sent_block="\n".join(sent_lines),
-        attachments_block=att_block,
-    )
-
-    if out_path.exists():
-        existing = out_path.read_text(encoding="utf-8", errors="replace")
-        if existing == content:
-            return False
-
-    if dry_run:
-        return True
-    journal_dir.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(content, encoding="utf-8")
-    return True
-
-
-# ─── Postgres writers ──────────────────────────────────────────────────────
-
-
-def upsert_entity(
-    cur: psycopg.Cursor,
-    *,
-    kind: str,
+    email: str,
     name: str,
-    canonical_email: str | None,
-    aliases: list[str] | None = None,
-    metadata: dict[str, Any] | None = None,
-) -> uuid.UUID | None:
-    """Upsert one row into ``entities`` keyed on ``(kind, lower(name))``.
-
-    The schema (db/003_brain_schema.sql) has a UNIQUE INDEX on
-    ``entities (kind, lower(name))``. We use ON CONFLICT against that index
-    to make this safe to call repeatedly.
-    """
-    if not name:
-        return None
-    aliases_arr = aliases or []
-    cur.execute(
-        """
-        INSERT INTO entities (kind, name, aliases, canonical_email, metadata, last_seen_at)
-        VALUES (%s, %s, %s, %s, %s, now())
-        ON CONFLICT (kind, lower(name)) DO UPDATE
-            SET aliases         = (SELECT ARRAY(SELECT DISTINCT unnest(entities.aliases || EXCLUDED.aliases))),
-                canonical_email = COALESCE(entities.canonical_email, EXCLUDED.canonical_email),
-                metadata        = COALESCE(entities.metadata, '{}'::jsonb) || COALESCE(EXCLUDED.metadata, '{}'::jsonb),
-                last_seen_at    = now()
-        RETURNING id
-        """,
-        (
-            kind,
-            name,
-            aliases_arr,
-            canonical_email,
-            json.dumps(metadata or {}),
-        ),
+    domain: str,
+    frequency: int,
+    first_seen: dt.datetime | None,
+    last_seen: dt.datetime | None,
+    attachments: list[dict[str, Any]] | None,
+) -> str:
+    """Render the markdown body for a ``people/<slug>`` page."""
+    first = first_seen.date().isoformat() if first_seen else "?"
+    last = last_seen.date().isoformat() if last_seen else "?"
+    relationship = relationship_label(frequency)
+    display = name or email
+    lines = [
+        "---",
+        f"title: {_yaml_escape(display)}",
+        "type: person",
+        f"email: {_yaml_escape(email)}",
+        f"domain: {_yaml_escape(domain)}",
+        f"relationship: {relationship}",
+        f"message_count: {frequency}",
+        f"first_seen: {first}",
+        f"last_seen: {last}",
+        "tags: [person, contact]",
+        "source: gmail-bootstrap",
+        "---",
+        "",
+        f"# {display}",
+        "",
+        f"- Email: {email}",
+    ]
+    if domain:
+        lines.append(f"- Company: [[companies/{domain}]]")
+    lines.extend(
+        [
+            f"- Relationship: {relationship} ({frequency} messages in window)",
+            f"- First seen: {first}",
+            f"- Last seen: {last}",
+        ]
     )
-    row = cur.fetchone()
-    return row[0] if row else None
+    att_records = attachments or []
+    lines.extend(["", "## Attachments", "", _format_attachments_block(att_records)])
+    lines.extend(["", "## Notes", ""])
+    return "\n".join(lines) + "\n"
 
 
-def insert_style_sample(
-    cur: psycopg.Cursor,
+def build_company_page(
     *,
-    user_key: str,
-    sample_text: str,
-    recipient_relationship: str | None,
-    topic_category: str | None,
-) -> bool:
-    """Insert one row into ``style_samples``. Returns True if inserted."""
-    text = (sample_text or "").strip()
-    if not text:
-        return False
-    word_count = len(text.split())
-    if word_count < MIN_STYLE_SAMPLE_WORDS:
-        return False
+    domain: str,
+    people_emails: Iterable[str],
+    first_seen: dt.datetime | None,
+    last_seen: dt.datetime | None,
+) -> str:
+    """Render the markdown body for a ``companies/<domain>`` page."""
+    first = first_seen.date().isoformat() if first_seen else "?"
+    last = last_seen.date().isoformat() if last_seen else "?"
+    people = sorted(set(people_emails))
+    lines = [
+        "---",
+        f"title: {_yaml_escape(domain)}",
+        "type: company",
+        f"domain: {_yaml_escape(domain)}",
+        f"contact_count: {len(people)}",
+        f"first_seen: {first}",
+        f"last_seen: {last}",
+        "tags: [company]",
+        "source: gmail-bootstrap",
+        "---",
+        "",
+        f"# {domain}",
+        "",
+        f"- Domain: {domain}",
+        f"- First seen: {first}",
+        f"- Last seen: {last}",
+        "",
+        "## Contacts",
+        "",
+    ]
+    if people:
+        for em in people:
+            lines.append(f"- [[people/{slugify_email(em)}]] ({em})")
+    else:
+        lines.append("- (none seen)")
+    lines.extend(["", "## Notes", ""])
+    return "\n".join(lines) + "\n"
 
-    cur.execute(
-        """
-        INSERT INTO style_samples
-            (user_key, sample_text, recipient_relationship, topic_category, word_count)
-        VALUES (%s, %s, %s, %s, %s)
-        """,
-        (user_key, text, recipient_relationship, topic_category, word_count),
-    )
-    return True
+
+def build_style_page(
+    *,
+    sample_id: str,
+    msg: "GmailMessage",
+    relationship: str,
+) -> str:
+    """Render the markdown body for a ``style/<id>`` voice-sample page."""
+    recipients = ", ".join(msg.recipient_emails[:5])
+    date = msg.received_at.date().isoformat()
+    subject = msg.subject or "(no subject)"
+    body = (msg.body_text or "").strip()
+    lines = [
+        "---",
+        f"title: {_yaml_escape('Voice sample — ' + subject)}",
+        "type: style_sample",
+        "tags: [style, voice]",
+        f"recipient_relationship: {relationship}",
+        f"sent_at: {date}",
+        f"subject: {_yaml_escape(subject)}",
+        f"recipients: {_yaml_escape(recipients)}",
+        "source: gmail-bootstrap",
+        f"message_id: {_yaml_escape(msg.message_id)}",
+        "---",
+        "",
+        f"# Voice sample — {subject}",
+        "",
+        f"Sent {date} to {recipients or '(unknown)'} — relationship: {relationship}",
+        "",
+        "## Body",
+        "",
+        body,
+        "",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+STARTER_SOUL = """\
+---
+title: "Soul"
+type: identity
+tags: [identity, soul]
+source: bootstrap
+---
+
+# Soul
+
+This is the pinned identity page for the SafeClaw operator. The Actor reads it
+(`get_page(slug="identity/soul")`) for tone, principles, and blueprint before
+drafting on your behalf.
+
+## Who I am
+
+_(Edit this — describe yourself in a few sentences.)_
+
+## Principles
+
+- _(How you like to communicate, what you value, what you never do.)_
+
+## Voice
+
+- _(Greeting / sign-off preferences, formality, length.)_
+
+## Blueprint
+
+- _(Current goals and priorities.)_
+
+> Seeded by the SafeClaw bootstrap. The Reflector proposes revisions here,
+> queued for your approval — but you can edit it directly any time.
+"""
+
+
+def style_sample_text(msg: "GmailMessage") -> str | None:
+    """Return a sent-message body worth saving as a style sample, else None."""
+    text = (msg.body_text or "").strip()
+    if not text:
+        return None
+    if len(text.split()) < MIN_STYLE_SAMPLE_WORDS:
+        return None
+    return text
 
 
 # ─── Main pipeline ────────────────────────────────────────────────────────
@@ -1072,13 +1225,13 @@ def fetch_messages(
 def run(
     *,
     brain_dir: Path,
-    db_url: str,
-    user_key: str,
+    gbrain: "GBrainClient | None",
     composio_api_key: str,
     composio_reader_url: str,
     drive_credentials_path: str | None,
     composio_user_id: str | None,
     composio_account_ids: list[str],
+    extract_facts_enabled: bool,
     days: int,
     dry_run: bool,
     reset: bool,
@@ -1088,15 +1241,13 @@ def run(
     account_display = ", ".join(composio_account_ids) if composio_account_ids else "(default)"
     print(f"SafeClaw bootstrap_brain — UTC {started_at.isoformat()}")
     print(f"  brain dir : {brain_dir}")
-    print(f"  user key  : {user_key}")
+    print(f"  gbrain    : {gbrain.mcp_url if gbrain else '(dry-run, none)'}")
     print(f"  days back : {days}")
     print(f"  dry run   : {dry_run}")
     print(f"  reset     : {reset}")
+    print(f"  facts     : {extract_facts_enabled}")
     print(f"  accounts  : {account_display}")
     print()
-
-    journal_dir = brain_dir / "3 - Daily Journal"
-    live_logs_dir = brain_dir / "2 - Live Logs"
 
     state = {} if reset else load_state(brain_dir)
     last_run = state.get("last_run_iso")
@@ -1361,84 +1512,129 @@ def run(
     print(f"  done. {stats.sent_processed} sent messages processed.")
     print()
 
-    # ── Phase C: write Daily Journal + DB ─────────────────────────────────
-    print("Phase C — writing Daily Journal files and DB rows...")
-    journal_dir.mkdir(parents=True, exist_ok=True)
-    live_logs_dir.mkdir(parents=True, exist_ok=True)
+    # ── Phase C: write pages to GBrain ────────────────────────────────────
+    # People, companies, style samples, and a starter Soul all become GBrain
+    # pages via put_page. GBrain chunks + embeds them server-side — we never
+    # embed anything here.
+    print("Phase C — writing pages to GBrain (safeclaw-brain)...")
 
-    # Group messages by date for journal creation.
-    daily_inbound: dict[str, list[GmailMessage]] = {}
-    daily_sent: dict[str, list[GmailMessage]] = {}
-    daily_attachments: dict[str, dict[str, list[dict[str, Any]]]] = {}
-    for msg in (m for m in all_inbound if m.sender_email):
-        date_key = msg.received_at.date().isoformat()
-        daily_inbound.setdefault(date_key, []).append(msg)
-    for msg in sent_samples:
-        date_key = msg.received_at.date().isoformat()
-        daily_sent.setdefault(date_key, []).append(msg)
-    for sender, records in person_attachments.items():
-        for rec in records:
-            date_key = rec.get("date") or started_at.date().isoformat()
-            daily_attachments.setdefault(date_key, {}).setdefault(sender, []).append(rec)
+    # Build the list of people / companies we discovered.
+    people = sorted(person_name.keys())
+    domains = sorted(domain_to_people.keys())
 
     if dry_run:
-        print("  [DRY] would write daily journals for:")
-        for date_key in sorted(set(daily_inbound) | set(daily_sent)):
-            ib = len(daily_inbound.get(date_key, []))
-            se = len(daily_sent.get(date_key, []))
-            print(f"    {date_key}: {ib} inbound, {se} sent")
-        print(f"  [DRY] would save {len(sent_samples)} style samples")
+        print(f"  [DRY] would write {len(people)} people pages -> people/<slug>")
+        print(f"  [DRY] would write {len(domains)} company pages -> companies/<domain>")
+        n_style = sum(1 for m in sent_samples if style_sample_text(m))
+        print(f"  [DRY] would write {n_style} style sample pages -> style/<id>")
+        if extract_facts_enabled:
+            print(f"  [DRY] would run extract_facts for {len(people)} people")
+        print("  [DRY] would seed identity/soul if absent")
         print()
         print(f"DRY RUN — no writes performed. Inbound={stats.emails_processed}, sent={stats.sent_processed}")
         return 0
 
-    # Real DB + vault writes.
-    with psycopg.connect(db_url, autocommit=False) as conn:
-        with conn.cursor() as cur:
-            # Daily Journal files — one per date.
-            for date_key in sorted(set(daily_inbound) | set(daily_sent)):
-                d = dt.date.fromisoformat(date_key)
-                changed = write_daily_journal(
-                    journal_dir=journal_dir,
-                    date=d,
-                    account=account_display,
-                    inbound=daily_inbound.get(date_key, []),
-                    sent=daily_sent.get(date_key, []),
-                    attachments_map=daily_attachments.get(date_key, {}),
-                    dry_run=False,
-                )
-                if changed:
-                    stats.journal_files_created += 1
+    assert gbrain is not None  # guaranteed by main() when not dry_run
 
-            # Style samples (sent mail bodies) — still go to postgres.
-            for msg in sent_samples:
-                primary_recipient = msg.recipient_emails[0] if msg.recipient_emails else ""
-                relationship = relationship_label(
-                    stats.contact_frequency.get(primary_recipient, 0)
-                )
-                inserted = insert_style_sample(
-                    cur,
-                    user_key=user_key,
-                    sample_text=msg.body_text,
-                    recipient_relationship=relationship,
-                    topic_category=None,
-                )
-                if inserted:
-                    stats.style_samples_saved += 1
+    # 1) Seed the Soul page if absent. We do NOT clobber an existing one.
+    if gbrain.get_page("identity/soul") is None:
+        try:
+            gbrain.put_page("identity/soul", STARTER_SOUL)
+            print("  seeded identity/soul")
+        except GBrainError as exc:
+            stats.page_errors += 1
+            print(f"  [warn] could not seed identity/soul: {exc}")
+    else:
+        print("  identity/soul already exists — leaving it as-is")
 
-        conn.commit()
+    # 2) People pages (+ optional fact extraction).
+    for email in people:
+        slug = f"people/{slugify_email(email)}"
+        domain = domain_of(email)
+        page = build_person_page(
+            email=email,
+            name=person_name.get(email, ""),
+            domain=domain,
+            frequency=stats.contact_frequency.get(email, 0),
+            first_seen=person_first_seen.get(email),
+            last_seen=person_last_seen.get(email),
+            attachments=person_attachments.get(email),
+        )
+        try:
+            gbrain.put_page(slug, page)
+            stats.people_pages_written += 1
+        except GBrainError as exc:
+            stats.page_errors += 1
+            print(f"  [warn] put_page failed for {slug}: {exc}")
+            continue
 
-    # ── Phase D: report + watermark ───────────────────────────────────────
+        if extract_facts_enabled:
+            # Feed the person page body to GBrain's fact extractor so the hot
+            # memory layer learns structured claims. Best-effort; never fatal.
+            try:
+                r = gbrain.extract_facts(page, entity_hints=[slug])
+                if isinstance(r, dict):
+                    stats.facts_extracted += int(r.get("inserted") or 0)
+            except GBrainError as exc:
+                print(f"  [warn] extract_facts failed for {slug}: {exc}")
+
+        if stats.people_pages_written % 50 == 0:
+            print(f"  ...wrote {stats.people_pages_written} people pages")
+
+    # 3) Company pages — one per sender domain.
+    for domain in domains:
+        slug = f"companies/{domain}"
+        page = build_company_page(
+            domain=domain,
+            people_emails=domain_to_people.get(domain, set()),
+            first_seen=domain_first_seen.get(domain),
+            last_seen=domain_last_seen.get(domain),
+        )
+        try:
+            gbrain.put_page(slug, page)
+            stats.company_pages_written += 1
+        except GBrainError as exc:
+            stats.page_errors += 1
+            print(f"  [warn] put_page failed for {slug}: {exc}")
+
+    # 4) Style sample pages — sent mail bodies tagged `style` so the Actor
+    #    can pull voice samples. Slug is deterministic per message id so
+    #    re-runs upsert rather than duplicate.
+    for msg in sent_samples:
+        text = style_sample_text(msg)
+        if not text:
+            continue
+        primary_recipient = msg.recipient_emails[0] if msg.recipient_emails else ""
+        relationship = relationship_label(stats.contact_frequency.get(primary_recipient, 0))
+        sample_id = safe_filename(msg.message_id) or uuid.uuid4().hex
+        slug = f"style/{sample_id}"
+        page = build_style_page(sample_id=sample_id, msg=msg, relationship=relationship)
+        try:
+            gbrain.put_page(slug, page)
+            stats.style_samples_saved += 1
+        except GBrainError as exc:
+            stats.page_errors += 1
+            print(f"  [warn] put_page failed for {slug}: {exc}")
+
+    print(
+        f"  done. people={stats.people_pages_written} companies={stats.company_pages_written} "
+        f"style={stats.style_samples_saved} facts={stats.facts_extracted} errors={stats.page_errors}"
+    )
+    print()
+
+    # ── Phase D: report page + watermark ──────────────────────────────────
     finished_at = utcnow()
     elapsed = (finished_at - started_at).total_seconds()
-    report_path = (
-        live_logs_dir
-        / f"bootstrap-{started_at.strftime('%Y%m%d-%H%M%S')}.md"
-    )
-    top_contacts = sorted(
-        stats.contact_frequency.items(), key=lambda kv: -kv[1]
-    )[:10]
+    report_slug = f"logs/bootstrap-{started_at.strftime('%Y%m%d-%H%M%S')}"
+    top_contacts = sorted(stats.contact_frequency.items(), key=lambda kv: -kv[1])[:10]
     report_lines = [
+        "---",
+        f"title: {_yaml_escape('Bootstrap report ' + started_at.strftime('%Y-%m-%d %H:%M:%S'))}",
+        "type: log",
+        "tags: [bootstrap, log]",
+        "source: gmail-bootstrap",
+        "---",
+        "",
         "# SafeClaw — Bootstrap Report",
         "",
         f"- run started: `{started_at.isoformat()}`",
@@ -1447,8 +1643,11 @@ def run(
         f"- days scanned: `{days}`",
         f"- inbound emails processed: `{stats.emails_processed}`",
         f"- sent emails processed: `{stats.sent_processed}`",
-        f"- daily journal files created/updated: `{stats.journal_files_created}`",
+        f"- people pages written: `{stats.people_pages_written}`",
+        f"- company pages written: `{stats.company_pages_written}`",
         f"- style samples saved: `{stats.style_samples_saved}`",
+        f"- facts extracted: `{stats.facts_extracted}`",
+        f"- page write errors: `{stats.page_errors}`",
         f"- attachments seen: `{stats.attachments_seen}`",
         f"- attachments uploaded to Drive: `{stats.attachments_uploaded}`",
         f"- attachments skipped (already in Drive): `{stats.attachments_skipped}`",
@@ -1460,12 +1659,12 @@ def run(
         report_lines.append(f"- `{email}` — {freq} messages")
     if not top_contacts:
         report_lines.append("- (none seen)")
-    report_lines.extend([
-        "",
-        "*Brain folder layout: PARA-style markdown vault*",
-        "",
-    ])
-    report_path.write_text("\n".join(report_lines), encoding="utf-8")
+    report_lines.append("")
+    try:
+        gbrain.put_page(report_slug, "\n".join(report_lines) + "\n")
+    except GBrainError as exc:
+        stats.page_errors += 1
+        print(f"  [warn] could not write report page {report_slug}: {exc}")
 
     # Update watermark.
     new_state = dict(state)
@@ -1487,20 +1686,22 @@ def run(
     print(bar)
     print(f"  Brain bootstrapped from {days} days of Gmail history")
     print(bar)
-    print(f"   Created   {stats.journal_files_created} Daily journals -> brain/3 - Daily Journal/")
-    print(f"             {stats.style_samples_saved} Style samples    -> postgres-obs.style_samples")
+    print(f"   Wrote     {stats.people_pages_written} People pages    -> people/<slug>")
+    print(f"             {stats.company_pages_written} Company pages   -> companies/<domain>")
+    print(f"             {stats.style_samples_saved} Style samples    -> style/<id>")
+    if stats.facts_extracted:
+        print(f"             {stats.facts_extracted} Facts extracted -> GBrain hot memory")
     if stats.attachments_seen:
         print(f"             {stats.attachments_seen} Attachments seen "
               f"({stats.attachments_uploaded} uploaded to Drive, "
               f"{stats.attachments_skipped} skipped)")
     print()
     print("Next steps:")
-    print("   1. Open brain/0 - Identity/ and edit your soul.md (1 min)")
-    print("   2. Glance at brain/3 - Daily Journal/ — daily digest of emails")
-    print("   3. Create People/ entries manually only for key relationships")
+    print("   1. Read identity/soul (get_page slug=\"identity/soul\") and edit it (1 min)")
+    print("   2. Search the brain to spot-check people/ and companies/ pages")
+    print("   3. The Actor pulls voice samples from style/ pages automatically")
     print(bar)
-    print(f"  Report: {report_path.relative_to(brain_dir.parent)}")
-    print(f"  Brain layout: PARA-style markdown vault")
+    print(f"  Report page: {report_slug}")
     print(bar)
     return 0
 
@@ -1544,14 +1745,32 @@ def main(argv: list[str]) -> int:
     # Required env vars (the wrapper script already checks these, but we
     # check again for the case where the operator runs the .py directly).
     try:
-        db_url = os.environ["BRAIN_OBS_DATABASE_URL"]
         composio_api_key = os.environ["COMPOSIO_API_KEY"]
         composio_reader_url = os.environ["COMPOSIO_READER_MCP_URL"]
-        user_key = os.environ.get("BRAIN_USER_KEY", "primary")
         composio_user_id = os.environ.get("COMPOSIO_USER_ID") or None
     except KeyError as missing:
         print(f"ERROR: required env var {missing} is not set.", file=sys.stderr)
         return 1
+
+    # GBrain client — built from SAFECLAW_BRAIN_HTTP_URL + SAFECLAW_BRAIN_ACTOR_TOKEN.
+    # Fail fast (per repo convention) when either is missing, EXCEPT for --dry-run
+    # which never writes and so doesn't need a live brain.
+    gbrain: GBrainClient | None = None
+    if not args.dry_run:
+        try:
+            gbrain = GBrainClient.from_env()
+        except GBrainError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 1
+
+    # extract_facts can be disabled to keep runs fast / cheap (it calls an LLM
+    # inside GBrain per page). On by default; set BOOTSTRAP_EXTRACT_FACTS=0 off.
+    extract_facts_enabled = os.environ.get("BOOTSTRAP_EXTRACT_FACTS", "1").strip() not in (
+        "0",
+        "false",
+        "no",
+        "",
+    )
 
     # Optional — drives Phase A.5 (Drive upload). If absent, attachment
     # metadata still lands in brain/People/<slug>.md without Drive links.
@@ -1576,13 +1795,13 @@ def main(argv: list[str]) -> int:
     try:
         return run(
             brain_dir=brain_dir,
-            db_url=db_url,
-            user_key=user_key,
+            gbrain=gbrain,
             composio_api_key=composio_api_key,
             composio_reader_url=composio_reader_url,
             drive_credentials_path=drive_credentials_path,
             composio_user_id=composio_user_id,
             composio_account_ids=composio_account_ids,
+            extract_facts_enabled=extract_facts_enabled,
             days=days,
             dry_run=args.dry_run,
             reset=args.reset,
@@ -1590,8 +1809,8 @@ def main(argv: list[str]) -> int:
     except ComposioMCPError as e:
         print(f"ERROR: Composio MCP call failed — {e}", file=sys.stderr)
         return 2
-    except psycopg.Error as e:
-        print(f"ERROR: Postgres error — {e}", file=sys.stderr)
+    except GBrainError as e:
+        print(f"ERROR: GBrain MCP call failed — {e}", file=sys.stderr)
         return 3
 
 

@@ -15,8 +15,11 @@ agent:
 # os.replace() which recreates config.yaml as root:root and breaks chown.
 model:
   provider: custom
-  base_url: http://host.docker.internal:11435/v1
-  api_key: ollama-local
+  # Ollama Cloud direct API (OpenAI-compatible). The local-daemon :cloud routing
+  # on :11435 doesn't work headless; the cloud endpoint + API key does. The host
+  # Ollama on :11434 is used only for the brain's embeddings.
+  base_url: https://ollama.com/v1
+  api_key: ${OLLAMA_API_KEY}
   default: glm-5.1:cloud
   temperature: 0.0
 

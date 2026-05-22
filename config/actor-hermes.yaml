@@ -320,10 +320,12 @@ agent:
 
 model:
   # `custom` = generic OpenAI-compatible endpoint (per `hermes setup` hint).
-  # We point at local Ollama daemon which proxies :cloud models to ollama.com.
+  # Ollama Cloud DIRECT API — the local-daemon :cloud routing on :11435 fails
+  # headless (500); the cloud endpoint + API key works. Host Ollama on :11434
+  # is used only for the brain's embeddings.
   provider: custom
-  base_url: http://host.docker.internal:11435/v1
-  api_key: ollama-local
+  base_url: https://ollama.com/v1
+  api_key: ${OLLAMA_API_KEY}
   # Hermes uses `default:` (the default model), not `name:` — unlike most agent runtimes.
   # Kimi K2.5 — Moonshot's agentic model. Far better at tool routing
   # (memory-first protocol, multi-step search) than glm-5.1, which kept

@@ -330,7 +330,7 @@ model:
   # Kimi K2.5 — Moonshot's agentic model. Far better at tool routing
   # (memory-first protocol, multi-step search) than glm-5.1, which kept
   # improvising past the system prompt.
-  default: glm-5.1:cloud
+  default: glm-4.6   # verified present on Ollama Cloud; glm-5.1:cloud does not exist
   temperature: 0.2
   # Cap output to prevent runaway truncation/continuation loops on small-output models.
   max_tokens: 4096

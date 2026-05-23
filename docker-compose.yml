@@ -213,9 +213,13 @@ services:
       - .env
     environment:
       HERMES_INFERENCE_PROVIDER: ollama-cloud
-      OLLAMA_BASE_URL: http://host.docker.internal:11435/v1
-      OLLAMA_API_KEY: ollama-local
-      HERMES_DEFAULT_MODEL: glm-5.1:cloud
+      # Ollama Cloud DIRECT API. The local-daemon :11435 routing fails headless
+      # (APIConnectionError) — the cloud endpoint + a real key is what works.
+      OLLAMA_BASE_URL: https://ollama.com/v1
+      # OLLAMA_API_KEY is intentionally NOT hardcoded here — it flows from
+      # env_file (.env) so the real secret isn't committed and isn't shadowed by
+      # a placeholder. (Was `ollama-local`, which 401'd / pointed at the dead :11435.)
+      HERMES_DEFAULT_MODEL: glm-4.6   # glm-5.1:cloud does not exist on Ollama Cloud
       # Reader is a background ingest agent — it does NOT bind to Telegram or Slack.
       # The Actor owns the user-facing chat; blanking these tokens here prevents
       # dual-listener conflicts (two Socket Mode connections = dropped events).
@@ -289,13 +293,12 @@ services:
     env_file:
       - .env
     environment:
-      # Hermes inference provider override — these are static, not from .env.
+      # Hermes inference provider override — static, except the API key.
       HERMES_INFERENCE_PROVIDER: ollama-cloud
-      OLLAMA_BASE_URL: http://host.docker.internal:11435/v1
-      OLLAMA_API_KEY: ollama-local
-      # Kimi K2.5 — Moonshot's agentic model. Better at multi-step tool
-      # routing than glm-5.1; required for the brain-first memory protocol.
-      HERMES_DEFAULT_MODEL: glm-5.1:cloud
+      # Ollama Cloud DIRECT API — :11435 local-daemon routing fails headless.
+      OLLAMA_BASE_URL: https://ollama.com/v1
+      # OLLAMA_API_KEY comes from env_file (.env), not hardcoded here.
+      HERMES_DEFAULT_MODEL: glm-4.6   # glm-5.1:cloud does not exist on Ollama Cloud
     volumes:
       # Operator config as read-only template; entrypoint copies it into
       # /opt/data/config.yaml so /sethome + `hermes config set` can rewrite.

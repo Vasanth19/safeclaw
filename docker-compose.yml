@@ -246,6 +246,9 @@ services:
       # Init wrapper — chmods docker socket before privilege drop so hermes user
       # (uid 10000) can run docker exec for the rclone sidecar.
       - ./scripts/hermes-docker-init.sh:/hermes-init.sh:ro
+      # Cron-sync — translates config `schedules:` into real Hermes cron jobs
+      # at startup (this Hermes version's config loader ignores `schedules:`).
+      - ./scripts/safeclaw-cron-sync.py:/safeclaw/cron-sync.py:ro
       # Brain (filesystem vault) mount is deferred — needs HERMES_UID/GID
       # alignment to avoid chown failure on bind-mount permissions. Agent
       # reads brain via the baked brain_api MCP → postgres-obs path until
@@ -311,6 +314,9 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Init wrapper — chmods docker socket before privilege drop.
       - ./scripts/hermes-docker-init.sh:/hermes-init.sh:ro
+      # Cron-sync — translates config `schedules:` into real Hermes cron jobs
+      # at startup (this Hermes version's config loader ignores `schedules:`).
+      - ./scripts/safeclaw-cron-sync.py:/safeclaw/cron-sync.py:ro
       # Brain mount — read-write so the agent can write back to the vault
       # (People/, .inbox/manual/, etc.) in addition to searching it.
       - ./brain:/opt/brain:rw

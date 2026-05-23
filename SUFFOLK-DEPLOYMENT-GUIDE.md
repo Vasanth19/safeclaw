@@ -6,14 +6,18 @@
 
 ## ⭐ CURRENT STATUS — START HERE (new agent: read this first)
 
-**As of 2026-05-22.**
+**As of 2026-05-22 (end of session 2). The full stack is DEPLOYED and RUNNING.**
 
-- **Where we are:** VPS is **pre-staged** and the **onboarding UI is live**; the **full agent stack is NOT started yet** (waiting on credentials to run the `/setup` wizard).
-- **Next action:** collect the 3 remaining creds (**Composio user ID, an LLM key, Telegram bot token+user ID**) → open the wizard → it boots the full stack.
-- **Access (passwordless, IP-allowlisted to operator):** https://srv1687869.hstgr.cloud:8443/setup and `/dashboard`
-- **Code:** branch `feat/safeclaw-brain-gbrain`, PR #1 (github `Vasanth19/safeclaw`) — **not merged**. The VPS clone at `/opt/safeclaw` is on this branch.
-- **Creds collected:** `suffolk.env` (gitignored, local). Composio API key, Slack bot+app tokens, workspace ID saved. **Pending:** Composio user ID, LLM key, Telegram.
-- **🚨 PRIME DIRECTIVE:** the box also runs the client's **LIVE "Brookhaven Solds" app** (nginx 80/443, uvicorn `:8001`, postgres `:5432`). **Never disturb it.** Everything SafeClaw is additive + isolated (port 8443 + internal docker net). Verify Brookhaven `/health` after any change.
+- **What's up on the box (`/opt/safeclaw`, branch `feat/safeclaw-brain-gbrain`):** `safeclaw-brain` (GBrain, Postgres engine, Ollama embeddings) + `postgres-brain` + `postgres-tasks` + `postgrest` + `reflector` + `rclone` + `onboarding` + **both `hermes-reader` and `hermes-actor`** — all Up. Brain tokens minted, agents on a natively-built amd64 image.
+- **🔴 THE ONE OPEN GAP — automated ingestion does not run.** Root cause: SafeClaw's reader config uses a `schedules:` key (e.g. `slack_ingest`, cron `*/30`), but **this Hermes version's gateway/config.py does NOT read a `schedules:` key** — it's silently ignored, so no ingestion cron is ever registered. The reader has the right tools (`slack_native` + `safeclaw_brain`) and instructions, but nothing triggers the task. **FIX:** register the ingest task in Hermes' REAL cron system (the `/cron` job store, persisted under `~/.hermes/cron/…`), e.g. have `safeclaw-entrypoint` translate config `schedules:` → Hermes cron jobs at startup. Needs a short dig into Hermes' cron-job format. Until then, **brain stays at 0 pages**.
+- **🟡 Gmail ingestion also blocked (separate):** the customer's Composio account has **0 connected accounts** (Gmail not connected) AND Composio changed its MCP-create API (`/api/v3/mcp/create` is gone → use `/api/v3/mcp/servers`, which now needs `auth_config_ids`). Slack uses the bot token (NOT Composio), so Slack is unaffected by this — only Gmail needs Composio connected + the provisioner's Composio code updated to the new API.
+- **Access (passwordless, IP-allowlisted to operator's IP):** https://srv1687869.hstgr.cloud:8443/setup and `/dashboard`. If it 403s, operator IP rotated (mobile IPv6) — add the new `client:` IP from `/var/log/nginx/error.log` to `/etc/nginx/sites-available/safeclaw-admin` and reload nginx.
+- **Code:** branch `feat/safeclaw-brain-gbrain`, PR #1 (github `Vasanth19/safeclaw`) — **not merged**. Many fixes landed this session (see Update Log).
+- **Creds:** `suffolk.env` (gitignored, local). All set EXCEPT Telegram (the actor logs a non-fatal `telegram InvalidToken __FILL_IN__` — optional). Ollama Cloud key is the LLM.
+- **🚨 PRIME DIRECTIVE:** the box also runs the client's **LIVE "Brookhaven Solds" app** (nginx 80/443, uvicorn `:8001`, postgres `:5432`). **Never disturb it.** Everything SafeClaw is additive + isolated (port 8443 + internal docker net). Verify Brookhaven `/health` (https://srv1687869.hstgr.cloud/health → `{"status":"ok"}`) after any change.
+
+### To re-run the provision (from the box, the working path)
+`docker compose exec -T onboarding python3 /safeclaw/fire_provision.py` (reads `.env`, POSTs `/api/provision`). Then `docker compose up -d` FROM THE HOST (not via onboarding — the provisioner runs inside onboarding and recreating it mid-`up` kills the run). NOTE: if you wipe & re-init the brain, do it BEFORE secrets are finalized or the postgres-brain password (set on first init) won't match the regenerated `BRAIN_DB_PASSWORD` — symptom: `password authentication failed for user "safeclaw_brain"`. Fix = remove `safeclaw_brain_data` + `safeclaw_brain_db` volumes and let it re-init with the current `.env` password.
 
 ---
 
@@ -111,4 +115,11 @@ ssh suffolk-vps 'stat -c %y /etc/nginx/sites-available/brookhaven' # unchanged (
 
 ## 9. Update Log
 
-- **2026-05-22** — GBrain swap built + smoke-tested + pushed (PR #1). VPS pre-staged (repo, Ollama+model, brain image amd64, std + hermes images). Onboarding UI started; dashboard exposed on :8443 (switched basic-auth → IPv6/IPv4 allow-list after basic-auth broke wizard XHRs). Creds (Composio key, Slack bot+app tokens, workspace TLL1P1QU9) saved to suffolk.env. Brookhaven verified untouched throughout. **Pending:** Composio user ID, LLM key, Telegram → then run wizard.
+- **2026-05-22 (session 1)** — GBrain swap built + smoke-tested + pushed (PR #1). VPS pre-staged (repo, Ollama+model, brain image amd64, std + hermes images). Onboarding UI started; dashboard exposed on :8443 (switched basic-auth → IPv6/IPv4 allow-list after basic-auth broke wizard XHRs). Creds saved to suffolk.env. Brookhaven verified untouched.
+- **2026-05-22 (session 2) — brought the full stack up + found the ingestion gap.** Fixes committed (branch `feat/safeclaw-brain-gbrain`): LLM endpoint → Ollama Cloud direct API `https://ollama.com/v1` (the `:11435` local-daemon routing fails headless); `validate_all` made LLM-only-required (Composio/Slack/Drive optional, Slack workspace/admin/home/ingest optional); `init-secrets.sh` JWT signer node→python3; compose pull `--ignore-buildable` + non-fatal; Composio MCP provisioning non-fatal + honors supplied URLs; **build-on-VPS** standardized (Dockerfile.safeclaw-hermes now clones `NousResearch/hermes-agent`@`6f1eed3` at build; compose `build:` enabled for both agents); reader observation-write fixed (was the removed obs DB → now `mcp_safeclaw_brain_put_page`). Ran provision via `fire_provision.py`; hit + fixed: postgres-brain password mismatch (wiped brain volumes), mint-too-early (revoke+refire), onboarding-self-recreate killing the provisioner (do final `up` from host), and the arm64 hermes image (`exec format error` → rebuilt amd64 on box). **Result: both Hermes agents running.** **Discovered: scheduled ingestion never fires — Hermes ignores the config `schedules:` key (see Current Status #1).** Brookhaven untouched throughout.
+
+### Gotchas added this session (also in §6)
+- **Hermes ignores `config.yaml: schedules:`** — its gateway only reads session_reset/quick_commands/stt/streaming/etc. Cron lives in the `/cron` job store. SafeClaw's `schedules:` block is dead config. → ingestion never triggers.
+- **`hermes-*` GHCR image is arm64-only** → `exec format error` on amd64 VPS. Solved by build-on-VPS (clone-at-build). The Dockerfile needs the gitignored `vendor/hermes-agent` ONLY if you don't use the new clone-at-build path.
+- **Composio API moved**: `/api/v3/mcp/create` (404) → `/api/v3/mcp/servers` (POST needs `auth_config_ids`, which require connected accounts). `provision_composio_mcps` in `onboarding/lib/validator.py` still uses the old API → update it when wiring Gmail.
+- **Brain DB password**: postgres-brain bakes its password on first init; regenerating `BRAIN_DB_PASSWORD` after that → auth failure. Wipe `safeclaw_brain_db`+`safeclaw_brain_data` to re-init cleanly.

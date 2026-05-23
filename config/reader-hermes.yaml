@@ -20,7 +20,7 @@ model:
   # Ollama on :11434 is used only for the brain's embeddings.
   base_url: https://ollama.com/v1
   api_key: ${OLLAMA_API_KEY}
-  default: glm-4.6   # verified present on Ollama Cloud; glm-5.1:cloud does not exist
+  default: kimi-k2.5   # agentic tool-routing model (Ollama Cloud); glm tripped a tool-call parse bug
   temperature: 0.0
 
 # ── MCP Servers (Composio HTTP transport) ────────────────────────────────────

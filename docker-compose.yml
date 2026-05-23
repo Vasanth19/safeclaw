@@ -219,7 +219,7 @@ services:
       # OLLAMA_API_KEY is intentionally NOT hardcoded here — it flows from
       # env_file (.env) so the real secret isn't committed and isn't shadowed by
       # a placeholder. (Was `ollama-local`, which 401'd / pointed at the dead :11435.)
-      HERMES_DEFAULT_MODEL: glm-4.6   # glm-5.1:cloud does not exist on Ollama Cloud
+      HERMES_DEFAULT_MODEL: kimi-k2.5   # agentic tool-routing; glm-4.6 tripped a tool-call parse bug ('str' has no .get)
       # Reader is a background ingest agent — it does NOT bind to Telegram or Slack.
       # The Actor owns the user-facing chat; blanking these tokens here prevents
       # dual-listener conflicts (two Socket Mode connections = dropped events).
@@ -298,7 +298,7 @@ services:
       # Ollama Cloud DIRECT API — :11435 local-daemon routing fails headless.
       OLLAMA_BASE_URL: https://ollama.com/v1
       # OLLAMA_API_KEY comes from env_file (.env), not hardcoded here.
-      HERMES_DEFAULT_MODEL: glm-4.6   # glm-5.1:cloud does not exist on Ollama Cloud
+      HERMES_DEFAULT_MODEL: kimi-k2.5   # agentic tool-routing; glm-4.6 tripped a tool-call parse bug ('str' has no .get)
     volumes:
       # Operator config as read-only template; entrypoint copies it into
       # /opt/data/config.yaml so /sethome + `hermes config set` can rewrite.

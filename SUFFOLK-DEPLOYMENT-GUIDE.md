@@ -6,10 +6,15 @@
 
 ## ⭐ CURRENT STATUS — START HERE (new agent: read this first)
 
-**As of 2026-05-24 (session 5). The full stack is DEPLOYED and RUNNING. The LLM works, the reader runs the ingest end-to-end and SUCCESSFULLY READS SLACK (49 human messages pulled from `callrail-new-daily-calls`), and the ACTOR is now recreated on the correct LLM env (kimi-k2.5) so it answers Slack. Pages are still 0 because of TWO remaining, well-understood blockers below — both need an operator action only you can do.**
+**As of 2026-05-24 (session 5). The full stack is DEPLOYED and RUNNING. Wiring is now COMPLETE end-to-end: actor on correct LLM env, embeddings bind fixed, brain reaches the embedder, cron fires the ingest. Pages are STILL 0 because of a newly-surfaced hard wall: the Ollama Cloud account hit its WEEKLY USAGE LIMIT (HTTP 429) — the LLM can't process messages until that's resolved. Two operator decisions remain (LLM quota + Slack files:read). Brookhaven verified `{"status":"ok"}` throughout.**
 
-### ✅ Fixed & deployed (session 5 — actor)
-- **hermes-actor recreated onto the correct LLM env** (was the old broken `glm-5.1:cloud` + dead `:11435` + `ollama-local` placeholder). Box was already at the fixed commit `bffe1f4`, so `docker compose up -d --force-recreate hermes-actor` was enough — actor now runs `kimi-k2.5` / `https://ollama.com/v1` / real key and answers Slack. Booted clean; only error is the known optional Telegram `__FILL_IN__` token (non-fatal). Brookhaven `/health` verified `{"status":"ok"}` after. This was blocker #2 — now closed.
+### ✅ Fixed & deployed (session 5)
+- **Blocker (old #2) CLOSED — hermes-actor recreated onto the correct LLM env** (was the old broken `glm-5.1:cloud` + dead `:11435` + `ollama-local` placeholder). Box was already at the fixed commit `bffe1f4`, so `docker compose up -d --force-recreate hermes-actor` was enough — actor now runs `kimi-k2.5` / `https://ollama.com/v1` / real key. Booted clean; only error is the known optional Telegram `__FILL_IN__` token (non-fatal).
+- **Blocker (old #1) CLOSED — host Ollama embeddings bind fixed.** Wrote `/etc/systemd/system/ollama.service.d/override.conf` with `OLLAMA_HOST=172.17.0.1:11434`, `daemon-reload` + `restart ollama`. Verified: `ss -tlnp` now shows `172.17.0.1:11434`, and from inside `safeclaw-brain`, `curl http://172.17.0.1:11434/api/tags` returns `nomic-embed-text`. The brain CAN now embed. (Bound to the docker bridge, not `0.0.0.0` — no host firewall, so `0.0.0.0` would expose Ollama publicly.)
+- **Ingest cron triggered** (`hermes cron run 187b27fb908d`) — ran end-to-end, reached the LLM, but failed on the 429 below. So the full pipeline is proven wired; only the quota wall stops pages.
+
+### 🔴 NEW hard blocker — Ollama Cloud weekly usage limit (HTTP 429)
+Triggering the ingest produced: `429 — you (goofy_hugle_463) have reached your weekly usage limit` (both reader AND actor). **Why it burns so fast:** the `slack_ingest` cron runs **every 30 min** (`*/30 * * * *`), each run is an agentic **kimi-k2.5 (thinking) model** job making several multi-step LLM calls (≈13 calls observed in one run). 48 runs/day × multi-call thinking = the free weekly cap is exhausted quickly. **The free Ollama tier is not sized for an every-30-min agentic cron.** Options (operator decision — see session-5 log): (a) repoint Hermes at a **hosted Anthropic key** (`sk-ant-…`, no weekly caps — the guide's recommended path), (b) add paid usage / upgrade at ollama.com/settings, or (c) wait for weekly reset. **Regardless of choice, dial the cron back** (e.g. `*/30` → daily or hourly) to stop torching quota — change `schedules:` in the config template, recreate reader.
 
 ### ✅ Fixed & deployed earlier session (reader)
 - **LLM credential** — the box's `OLLAMA_API_KEY` was a 12-char placeholder (`ollama-local`, hardcoded in the compose `environment:` block, which overrode `.env`). The REAL 57-char key lives in `suffolk.env`. Fixed by: removing the hardcoded `OLLAMA_API_KEY` from both `environment:` blocks so it flows from `env_file:.env`, and writing the real key into the box `.env`. Verified working (`/v1/chat/completions` → 200).
@@ -17,19 +22,14 @@
 - **Model** — was `glm-5.1:cloud` (does not exist). Switched to **`kimi-k2.5`** (agentic, the model the config author wanted) after `glm-4.6` tripped a Hermes OpenAI-compat tool-call parse bug (`'str' object has no attribute 'get'` at API call #13). kimi-k2.5 reads Slack cleanly.
 - All of the above are committed (branch `feat/safeclaw-brain-gbrain`, latest `bffe1f4`) and deployed to **hermes-reader** on the box.
 
-### 🔴 TWO remaining blockers (both operator-only)
-1. **[OPERATOR] Brain embeddings — host Ollama bind.** GBrain embeds each page via the host Ollama (`nomic-embed-text`). The brain reaches it at `host.docker.internal` → `172.17.0.1:11434`, but host Ollama binds **`127.0.0.1` only** (verified again session 5: `ss -tlnp` shows `127.0.0.1:11434`) → connection refused → `put_page` fails → 0 pages. **Ollama Cloud has NO embeddings endpoint (`/v1/embeddings` 404), so cloud is not an option — the local embedder is required.** FIX (host change, needs you — the auto-mode classifier blocks an agent from doing this):
-   ```bash
-   ssh suffolk-vps 'mkdir -p /etc/systemd/system/ollama.service.d && printf "[Service]\nEnvironment=\"OLLAMA_HOST=172.17.0.1:11434\"\n" > /etc/systemd/system/ollama.service.d/override.conf && systemctl daemon-reload && systemctl restart ollama && sleep 4 && ss -tlnp | grep 11434 && curl -s https://srv1687869.hstgr.cloud/health'
-   ```
-   Bind to `172.17.0.1` (docker bridge), NOT `0.0.0.0` — no host firewall is active, so `0.0.0.0` would expose the unauthenticated Ollama API publicly.
-2. **[OPERATOR] Slack attachments — bot lacks `files:read`.** The `xoxb-` bot (`aiassistant` @ "Suffolk County House Buyers") has history/read scopes but NOT `files:read`, so Slack refuses to hand over file bytes → videos/images sent to the assistant can't be downloaded. FIX: api.slack.com/apps → aiassistant → OAuth & Permissions → add **`files:read`** → **Reinstall to Workspace** → put the new `xoxb-` token in `suffolk.env` + box `.env`. Also: the bot is a member of only **1 of 71 channels** — `/invite @aiassistant` into any channel you want ingested.
+### 🔴 Slack attachments — bot lacks `files:read` (operator-only, blocked on workspace access)
+The `xoxb-` bot (`aiassistant` @ "Suffolk County House Buyers", team `TLL1P1QU9`, `suffolkcounty-emg4147.slack.com` — confirmed via `auth.test` session 5) has history/read scopes but NOT `files:read`, so Slack refuses file bytes → videos/images can't be downloaded. **Session-5 finding: the `aiassistant` app does NOT appear under the operator's api.slack.com/apps — that login only sees the "Hyphen labs" workspace (apps: SafeClaw, Jarvis, KEDB Solo). The operator's Slack browser session is signed into "Rocking Spur Homes" + "Hyphen labs" but NOT "Suffolk County House Buyers".** So to make the scope change you must FIRST sign into the Suffolk workspace (`suffolkcounty-emg4147.slack.com`) at slack.com/signin. THEN: api.slack.com/apps → aiassistant → OAuth & Permissions → add **`files:read`** → **Reinstall to Workspace** → put the new `xoxb-` token in `suffolk.env` + box `.env` → recreate reader. Also: the bot is in only **1 of 71 channels** — `/invite @aiassistant` into channels you want ingested.
 
-### ▶️ To finish (once blocker #1 is done — agent CAN do these)
+### ▶️ To finish (once the LLM quota blocker is resolved — agent CAN do this)
 ```bash
 ssh suffolk-vps 'cd /opt/safeclaw && docker compose exec -T -u 10000 hermes-reader /opt/hermes/.venv/bin/hermes cron run 187b27fb908d'   # slack_ingest job id
 # wait ~120s (kimi is a thinking model), then:
-ssh suffolk-vps 'docker exec safeclaw-brain gbrain stats'   # Pages should go > 0
+ssh suffolk-vps 'docker exec safeclaw-brain gbrain stats'   # Pages should go > 0 (embeddings bind already fixed)
 ```
 
 - **What's up on the box (`/opt/safeclaw`, branch `feat/safeclaw-brain-gbrain`):** `safeclaw-brain` (GBrain, Postgres engine, Ollama embeddings) + `postgres-brain` + `postgres-tasks` + `postgrest` + `reflector` + `rclone` + `onboarding` + **both `hermes-reader` and `hermes-actor`** — all Up. Brain tokens minted, agents on a natively-built amd64 image.

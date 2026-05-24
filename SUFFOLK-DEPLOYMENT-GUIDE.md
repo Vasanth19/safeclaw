@@ -6,22 +6,24 @@
 
 ## ⭐ CURRENT STATUS — START HERE (new agent: read this first)
 
-**As of 2026-05-24 (end of session 4). The full stack is DEPLOYED and RUNNING. The LLM works, the reader runs the ingest end-to-end and SUCCESSFULLY READS SLACK (49 human messages pulled from `callrail-new-daily-calls`). Pages are still 0 because of THREE remaining, well-understood blockers below — each has an exact fix, two of them need an operator action only you can do.**
+**As of 2026-05-24 (session 5). The full stack is DEPLOYED and RUNNING. The LLM works, the reader runs the ingest end-to-end and SUCCESSFULLY READS SLACK (49 human messages pulled from `callrail-new-daily-calls`), and the ACTOR is now recreated on the correct LLM env (kimi-k2.5) so it answers Slack. Pages are still 0 because of TWO remaining, well-understood blockers below — both need an operator action only you can do.**
 
-### ✅ Fixed & deployed this session (reader)
+### ✅ Fixed & deployed (session 5 — actor)
+- **hermes-actor recreated onto the correct LLM env** (was the old broken `glm-5.1:cloud` + dead `:11435` + `ollama-local` placeholder). Box was already at the fixed commit `bffe1f4`, so `docker compose up -d --force-recreate hermes-actor` was enough — actor now runs `kimi-k2.5` / `https://ollama.com/v1` / real key and answers Slack. Booted clean; only error is the known optional Telegram `__FILL_IN__` token (non-fatal). Brookhaven `/health` verified `{"status":"ok"}` after. This was blocker #2 — now closed.
+
+### ✅ Fixed & deployed earlier session (reader)
 - **LLM credential** — the box's `OLLAMA_API_KEY` was a 12-char placeholder (`ollama-local`, hardcoded in the compose `environment:` block, which overrode `.env`). The REAL 57-char key lives in `suffolk.env`. Fixed by: removing the hardcoded `OLLAMA_API_KEY` from both `environment:` blocks so it flows from `env_file:.env`, and writing the real key into the box `.env`. Verified working (`/v1/chat/completions` → 200).
 - **LLM endpoint** — `OLLAMA_BASE_URL` pointed at the dead local daemon `host.docker.internal:11435` (the true cause of the original `APIConnectionError`). Changed to `https://ollama.com/v1` in both blocks.
 - **Model** — was `glm-5.1:cloud` (does not exist). Switched to **`kimi-k2.5`** (agentic, the model the config author wanted) after `glm-4.6` tripped a Hermes OpenAI-compat tool-call parse bug (`'str' object has no attribute 'get'` at API call #13). kimi-k2.5 reads Slack cleanly.
 - All of the above are committed (branch `feat/safeclaw-brain-gbrain`, latest `bffe1f4`) and deployed to **hermes-reader** on the box.
 
-### 🔴 THREE remaining blockers (prioritized)
-1. **[OPERATOR] Brain embeddings — host Ollama bind.** GBrain embeds each page via the host Ollama (`nomic-embed-text`). The brain reaches it at `host.docker.internal` → `172.17.0.1:11434`, but host Ollama binds **`127.0.0.1` only** → connection refused → `put_page` fails → 0 pages. **Ollama Cloud has NO embeddings endpoint (`/v1/embeddings` 404), so cloud is not an option — the local embedder is required.** FIX (host change, needs you — the auto-mode classifier blocks an agent from doing this):
+### 🔴 TWO remaining blockers (both operator-only)
+1. **[OPERATOR] Brain embeddings — host Ollama bind.** GBrain embeds each page via the host Ollama (`nomic-embed-text`). The brain reaches it at `host.docker.internal` → `172.17.0.1:11434`, but host Ollama binds **`127.0.0.1` only** (verified again session 5: `ss -tlnp` shows `127.0.0.1:11434`) → connection refused → `put_page` fails → 0 pages. **Ollama Cloud has NO embeddings endpoint (`/v1/embeddings` 404), so cloud is not an option — the local embedder is required.** FIX (host change, needs you — the auto-mode classifier blocks an agent from doing this):
    ```bash
    ssh suffolk-vps 'mkdir -p /etc/systemd/system/ollama.service.d && printf "[Service]\nEnvironment=\"OLLAMA_HOST=172.17.0.1:11434\"\n" > /etc/systemd/system/ollama.service.d/override.conf && systemctl daemon-reload && systemctl restart ollama && sleep 4 && ss -tlnp | grep 11434 && curl -s https://srv1687869.hstgr.cloud/health'
    ```
    Bind to `172.17.0.1` (docker bridge), NOT `0.0.0.0` — no host firewall is active, so `0.0.0.0` would expose the unauthenticated Ollama API publicly.
-2. **[OPERATOR] hermes-actor still runs the OLD broken env.** Only `hermes-reader` was recreated this session. The actor still has `glm-5.1:cloud` + `:11435` + `ollama-local`. Recreate it to pick up the committed compose fixes: `cd /opt/safeclaw && git pull && docker compose up -d --force-recreate hermes-actor`. (The actor owns user-facing Slack/Telegram chat, so this is what makes it answer messages.)
-3. **[OPERATOR] Slack attachments — bot lacks `files:read`.** The `xoxb-` bot (`aiassistant` @ "Suffolk County House Buyers") has history/read scopes but NOT `files:read`, so Slack refuses to hand over file bytes → videos/images sent to the assistant can't be downloaded. FIX: api.slack.com/apps → aiassistant → OAuth & Permissions → add **`files:read`** → **Reinstall to Workspace** → put the new `xoxb-` token in `suffolk.env` + box `.env`. Also: the bot is a member of only **1 of 71 channels** — `/invite @aiassistant` into any channel you want ingested.
+2. **[OPERATOR] Slack attachments — bot lacks `files:read`.** The `xoxb-` bot (`aiassistant` @ "Suffolk County House Buyers") has history/read scopes but NOT `files:read`, so Slack refuses to hand over file bytes → videos/images sent to the assistant can't be downloaded. FIX: api.slack.com/apps → aiassistant → OAuth & Permissions → add **`files:read`** → **Reinstall to Workspace** → put the new `xoxb-` token in `suffolk.env` + box `.env`. Also: the bot is a member of only **1 of 71 channels** — `/invite @aiassistant` into any channel you want ingested.
 
 ### ▶️ To finish (once blocker #1 is done — agent CAN do these)
 ```bash

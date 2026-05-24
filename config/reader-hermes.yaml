@@ -20,10 +20,9 @@ model:
   # Ollama on :11434 is used only for the brain's embeddings.
   base_url: https://ollama.com/v1
   api_key: ${OLLAMA_API_KEY}
-  default: qwen3-coder:480b   # non-reasoning agentic tool-caller (Ollama Cloud). kimi-k2.5 reasons
-                              # long enough that the cloud connection drops (ReadTimeout) mid-call and
-                              # it hallucinates tools (environment_info); glm-4.6 tripped a tool-call
-                              # parse bug. qwen3-coder is built for tool use and has no thinking phase.
+  default: kimi-k2.5   # Ollama Cloud per-model weekly cap: qwen3-coder:480b + all others are 429'd
+                       # (burned by earlier trial runs), but kimi-k2.5 still has quota (HTTP 200).
+                       # glm-4.6 tripped a tool-call parse bug. Watch for kimi reasoning ReadTimeouts.
   temperature: 0.0
 
 # ── MCP Servers (Composio HTTP transport) ────────────────────────────────────

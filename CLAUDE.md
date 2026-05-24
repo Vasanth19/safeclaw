@@ -16,6 +16,7 @@ Key facts for any agent touching this:
 
 ## Related docs
 - `SUFFOLK-DEPLOYMENT-GUIDE.md` — the running deploy guide (primary)
+- `CLIENT-DEPLOYMENT-PLAYBOOK.md` — **distilled gotchas + pre-flight checklist for FUTURE client deploys** (read before deploying to any new client box, so we don't re-hit the Suffolk traps)
 - `SUFFOLK-DEPLOY-PLAN.md` — the detailed step-by-step deploy runbook
 - `ARCHITECTURE.md` — system architecture (trust split, tiers, brain)
 - `DEPLOY-RUNBOOK.md`, `INSTALL.md`, `FIRST-RUN.md`, `HOSTINGER-DEPLOY.md` — general deploy docs

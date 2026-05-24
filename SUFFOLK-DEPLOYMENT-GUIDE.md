@@ -6,7 +6,15 @@
 
 ## ⭐ CURRENT STATUS — START HERE (new agent: read this first)
 
-**As of 2026-05-24 (session 5). The full stack is DEPLOYED and RUNNING. Wiring is now COMPLETE end-to-end: actor on correct LLM env, embeddings bind fixed, brain reaches the embedder, cron fires the ingest. Pages are STILL 0 because of a newly-surfaced hard wall: the Ollama Cloud account hit its WEEKLY USAGE LIMIT (HTTP 429) — the LLM can't process messages until that's resolved. Two operator decisions remain (LLM quota + Slack files:read). Brookhaven verified `{"status":"ok"}` throughout.**
+**🎉 As of 2026-05-24 (session 5) — INGESTION IS LIVE. The brain is FILLING. A trial `slack_ingest` run completed end-to-end on `kimi-k2.5`: GBrain now holds 6 embedded `slack_message_observation` pages (`observations/slack/callrail-new-daily-calls/<ts>`), 6/6 embedded. Full chain works: Slack → kimi-k2.5 → put_page → GBrain embeds (host Ollama bind) → searchable. Brookhaven `{"status":"ok"}` throughout.**
+
+**What made it work this session (in order):** (1) actor recreated on correct LLM env; (2) host Ollama embeddings bind fixed (`172.17.0.1:11434`); (3) **disabled the broken `gmail_suffolk` MCP** that was aborting every run; (4) discovered the Ollama Cloud **weekly cap is PER-MODEL** — qwen3-coder:480b + others 429'd from test runs, but **kimi-k2.5 still had quota**, so reader stays on kimi-k2.5; (5) the FIRST post-recreate trigger fired before the gateway finished booting (no-op) — **re-trigger AFTER the gateway is fully up** (~30s) and it runs.
+
+**Operational notes for steady-state:** ingest cron is now `0 */6 * * *` (every 6h) to conserve the per-model weekly quota. If kimi-k2.5 later 429s, either wait for its weekly reset or switch `model.default` to whichever model still has quota (probe `/v1/chat/completions` per model). Watch for kimi reasoning ReadTimeouts on heavier runs; a hosted Anthropic key remains the most robust long-term LLM.
+
+**Remaining (non-blocking for text ingest):**
+- **Slack `files:read`** — attachments (video/image) still can't download; operator must add the scope in the Suffolk workspace (see below).
+- **Gmail ingest** — still needs the customer to connect Gmail in Composio; the gmail MCP is disabled until then.
 
 ### ✅ Fixed & deployed (session 5)
 - **Blocker (old #2) CLOSED — hermes-actor recreated onto the correct LLM env** (was the old broken `glm-5.1:cloud` + dead `:11435` + `ollama-local` placeholder). Box was already at the fixed commit `bffe1f4`, so `docker compose up -d --force-recreate hermes-actor` was enough — actor now runs `kimi-k2.5` / `https://ollama.com/v1` / real key. Booted clean; only error is the known optional Telegram `__FILL_IN__` token (non-fatal).

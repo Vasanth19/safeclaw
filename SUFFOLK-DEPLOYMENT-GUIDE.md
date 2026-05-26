@@ -12,6 +12,14 @@
 
 **Operational notes for steady-state:** ingest cron is now `0 */6 * * *` (every 6h) to conserve the per-model weekly quota. If kimi-k2.5 later 429s, either wait for its weekly reset or switch `model.default` to whichever model still has quota (probe `/v1/chat/completions` per model). Watch for kimi reasoning ReadTimeouts on heavier runs; a hosted Anthropic key remains the most robust long-term LLM.
 
+**⚠️ Session 6 (2026-05-26) — WIDE ingest (all channels) hangs; single-channel still works.** Operator added the bot to ~36 channels and supplied a NEW funded Ollama key (`e292…`, account has quota across all models incl. qwen3-coder:480b/gpt-oss:120b — old `goofy_hugle_463` key swapped out in `.env`). But a wide agentic run hangs on the **first model call**: gateway goes idle (~1% CPU) right after `auxiliary auto-detect`, agent.log frozen, **0 new pages**. Findings:
+- It is NOT scope alone — even a **6-channel batch** hung the same way (tested + reverted; full 71-list restored).
+- Model scorecard on Ollama Cloud's OpenAI-compat path: `glm-4.6` parse bug · `gpt-oss:120b` returns empty `content` (all output in `reasoning` field) so the loop never reaches put_page · `qwen3-coder:480b` correct but slow + `APITimeout` · `kimi-k2.5` a streaming probe also returned empty `content` with text in `reasoning` (likely max_tokens artifact, but suspicious). kimi is the only model that has ever written pages here (the 37).
+- **No tool-allowlist exists** to trim the brain's 70 MCP tools — neither Hermes (`mcp_servers.*` has no tool filter) nor GBrain config. The reader loads **78 tools** total; that + the open-ended "process all channels" prompt makes the first reasoning-model call very heavy.
+- Removed a **stray duplicate cron** `00b68ae3a6e9` ("Slack Ingestion Job", `*/30`, ran `./slack_ingestion.py`) that was double-loading the LLM.
+- **Likely real fix = hosted Anthropic key** (`sk-ant-…`): reliably drives large agentic loops with many tools, returns proper `content`+`tool_calls`, no reasoning-channel/empty-content quirk, no Ollama timeout. Operator preferred staying on Ollama; this remains the open decision. Alternative Ollama path = engineer a smaller per-run batch loop AND find a non-reasoning model that returns real `content` (qwen3-coder works but is slow).
+- State left clean: full 71-channel list restored, model `kimi-k2.5`, container synced, Brookhaven `{"status":"ok"}`, 37 pages intact.
+
 **Remaining (non-blocking for text ingest):**
 - **Slack `files:read`** — attachments (video/image) still can't download; operator must add the scope in the Suffolk workspace (see below).
 - **Gmail ingest** — still needs the customer to connect Gmail in Composio; the gmail MCP is disabled until then.

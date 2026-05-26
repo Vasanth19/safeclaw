@@ -1,0 +1,16 @@
+{
+  "name": "safeclaw-memory",
+  "private": true,
+  "version": "0.1.0",
+  "description": "SafeClaw Memory — 3D GBrain constellation dashboard plugin",
+  "scripts": {
+    "build": "esbuild src/index.js --bundle --format=iife --minify --outfile=dashboard/dist/index.js",
+    "watch": "esbuild src/index.js --bundle --format=iife --outfile=dashboard/dist/index.js --watch"
+  },
+  "dependencies": {
+    "3d-force-graph": "^1.73.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.0"
+  }
+}

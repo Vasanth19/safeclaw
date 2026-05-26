@@ -1,0 +1,13 @@
+{
+  "name": "safeclaw-personas",
+  "label": "Personas",
+  "description": "Personas for SafeClaw. Each persona is a voice (prompt + model + skills) bound to a single trust boundary (Reader or Actor) and inherits that agent's tool allowlist — it can never grant itself new capabilities.",
+  "icon": "Users",
+  "version": "0.1.0",
+  "tab": {
+    "path": "/personas",
+    "position": "after:skills"
+  },
+  "entry": "dist/index.js",
+  "api": "plugin_api.py"
+}

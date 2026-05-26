@@ -53,7 +53,8 @@ load-bearing part — don't merge them.
 ### Step 1 — Clone the repo
 
 ```bash
-git clone <safeclaw-repo-url> safeclaw
+# New client deploys track main (the stable line). Only Suffolk tracks the feat branch.
+git clone -b main https://github.com/Vasanth19/safeclaw.git safeclaw
 cd safeclaw
 ```
 

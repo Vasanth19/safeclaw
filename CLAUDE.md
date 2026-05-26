@@ -9,7 +9,7 @@ There is a **deployment in progress** to the first client's production VPS (Suff
 ➡️ **`SUFFOLK-DEPLOYMENT-GUIDE.md`** — running document. Read its **"CURRENT STATUS — START HERE"** block first. **Keep it updated** (status block + update log) every time the deploy moves or you discover a new nuance.
 
 Key facts for any agent touching this:
-- The GBrain swap lives on branch **`feat/safeclaw-brain-gbrain`** (PR #1, not merged). The VPS clone at `/opt/safeclaw` tracks this branch.
+- The GBrain swap is **merged to `main`** (PR #1, merged 2026-05-26). **New client deployments track `main`** (see `CLIENT-DEPLOYMENT-PLAYBOOK.md`). The `feat/safeclaw-brain-gbrain` branch is **deliberately kept open** for in-flight Suffolk fixes and is *not* deleted. **Suffolk is the exception:** its VPS clone at `/opt/safeclaw` still tracks `feat/safeclaw-brain-gbrain` — **do not re-point Suffolk to `main`** while moving parts remain.
 - **🚨 PRIME DIRECTIVE:** the Suffolk box also runs the client's **LIVE "Brookhaven Solds" app** (nginx 80/443, uvicorn `:8001`, postgres `:5432`). **Never disturb it.** All SafeClaw additions are isolated (port 8443 + internal docker net). Verify Brookhaven `/health` after any VPS change.
 - Secrets live in **`suffolk.env`** (gitignored) — never commit secrets; never paste them into committed docs.
 - Deployment knowledge is also mirrored in brain-personal (`projects/safeclaw/suffolk-deployment`) and `.claude/knowledge/decisions/suffolk-deployment-tracker.md`.

@@ -22,9 +22,12 @@ Step-by-step operator guide for installing, configuring, and maintaining the Saf
 ### Clone the repository
 
 ```bash
-git clone <repo-url> safeclaw
+# New client deploys track the stable line: main
+git clone -b main https://github.com/Vasanth19/safeclaw.git safeclaw
 cd safeclaw/ai-assistant
 ```
+
+> **Branch policy:** new client boxes track **`main`**. The `feat/safeclaw-brain-gbrain` branch is the in-flight line and is only used by the **Suffolk** box — do not clone it for a fresh client.
 
 ### Copy and fill the environment file
 

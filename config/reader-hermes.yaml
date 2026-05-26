@@ -20,10 +20,11 @@ model:
   # Ollama on :11434 is used only for the brain's embeddings.
   base_url: https://ollama.com/v1
   api_key: ${OLLAMA_API_KEY}
-  default: gpt-oss:120b   # non-reasoning, native OpenAI-format tool-calling (cleanest fit for Hermes'
-                          # OpenAI-compat path) and mid-size so Ollama Cloud rate limits are more
-                          # generous than the 480b/kimi-1t giants. Avoids kimi-k2.5 reasoning
-                          # ReadTimeouts and the glm-4.6 tool-call parse bug. Best limit/capability fit.
+  default: qwen3-coder:480b   # purpose-built agentic tool-caller, non-reasoning. Has full quota on the
+                              # funded key. Model scorecard: glm-4.6 = tool-call parse bug; gpt-oss:120b =
+                              # returns empty content after tool calls (harmony reasoning-channel quirk) so
+                              # the loop never reaches put_page; kimi-k2.5 = reasoning ReadTimeouts.
+                              # qwen3-coder avoids all three.
   temperature: 0.0
 
 # ── MCP Servers (Composio HTTP transport) ────────────────────────────────────

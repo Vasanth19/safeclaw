@@ -15,8 +15,9 @@ SafeClaw is a self-hosted AI assistant deployed as a Docker Compose stack.
 After install, the operator chats with it via Telegram and the assistant:
 
 - Reads inbound Gmail through a hosted MCP broker (Composio)
-- Writes structured observations + a "Brain" of People/Companies/Style to local Postgres
-- Drafts replies in the operator's voice (using `style_samples` learned from sent mail)
+- Writes structured observations + a "Brain" of People/Companies/Style into the
+  `safeclaw-brain` GBrain engine (local Postgres + pgvector, local Ollama embeddings)
+- Drafts replies in the operator's voice (using style samples learned from sent mail)
 - Stages every send as a Gmail draft for the operator to approve
 
 The architecture defense (see `ARCHITECTURE.md` §5) splits "read" and "write"
@@ -35,6 +36,7 @@ load-bearing part — don't merge them.
 | **Composio account** | Holds OAuth tokens off-box and exposes per-toolkit MCP URLs. Free tier covers a single-user install (5,000 actions/mo). | https://app.composio.dev |
 | **Telegram account** | v1 control surface. Operator DMs the bot to read/draft. | App on phone or desktop. |
 | **LLM endpoint** | OpenAI-compatible. Default: Ollama Cloud via local daemon ($20/mo). Alternative: Anthropic, OpenAI, vLLM, etc. | https://ollama.com (then `ollama signin`) |
+| **Local embedding model** | The `safeclaw-brain` (GBrain) engine embeds locally via the host Ollama daemon — no API key, no egress. | `ollama pull nomic-embed-text` (one-time, ~280 MB, CPU) |
 
 ### Hardware
 
@@ -98,7 +100,7 @@ What this does:
 Sample output:
 ```
 init-secrets: filled 6 placeholder(s):
-  - POSTGRES_OBS_PASSWORD
+  - BRAIN_DB_PASSWORD
   - POSTGRES_TASKS_PASSWORD
   - TASKS_AGENT_PASSWORD
   - TASKS_HUMAN_PASSWORD
@@ -106,6 +108,11 @@ init-secrets: filled 6 placeholder(s):
   - TASKS_AGENT_JWT
 init-secrets: .env permissions are now 600.
 ```
+
+> The two brain access tokens (`SAFECLAW_BRAIN_READER_TOKEN`,
+> `SAFECLAW_BRAIN_ACTOR_TOKEN`) are left as `__MINTED__` here — `init-secrets`
+> does **not** generate them. They are minted from the running `safeclaw-brain`
+> after the stack is up (see Step 6.5).
 
 ### Step 4 — Set up Composio (one-time, ~5 min)
 
@@ -169,12 +176,28 @@ work needed.
 
 ### Step 6 — Boot the stack
 
+First, pull the local embedding model the brain needs (one-time, on the host
+running the Ollama daemon):
+
+```bash
+ollama pull nomic-embed-text
+```
+
+Then bring the stack up:
+
 ```bash
 docker compose up -d
 ```
 
 The first build is slow (~8-15 min) because Hermes is built from source
-(Python + `uv` + Playwright browsers). Subsequent restarts are fast.
+(Python + `uv` + Playwright browsers) and the `safeclaw-brain` GBrain image is
+compiled. Subsequent restarts are fast.
+
+On first boot the `safeclaw-brain` entrypoint runs `gbrain init`
+(`--embedding-model ollama:nomic-embed-text --embedding-dimensions 768`) then
+`gbrain apply-migrations --yes`, then serves `gbrain serve --http --port 3131`
+on the internal network (no published host port). The service is healthy once
+its `/health` check passes.
 
 Watch progress:
 ```bash
@@ -191,6 +214,35 @@ Messaging platforms + cron scheduler
 That means the gateway booted and is now polling Telegram. If it's silent
 after that, that's normal — Hermes only logs when there's traffic.
 
+### Step 6.5 — Mint the brain access tokens
+
+The two Hermes agents authenticate to `safeclaw-brain` over HTTP MCP with a
+static bearer token each. These are **minted from the running brain** (not by
+`init-secrets`). Once `safeclaw-brain` is healthy:
+
+```bash
+# One token per agent — copy each printed `gbrain_<hex>` value into .env.
+docker compose exec safeclaw-brain gbrain auth create reader
+docker compose exec safeclaw-brain gbrain auth create actor
+```
+
+Paste the printed tokens into `.env`:
+
+```
+SAFECLAW_BRAIN_READER_TOKEN=gbrain_<reader hex>
+SAFECLAW_BRAIN_ACTOR_TOKEN=gbrain_<actor hex>
+```
+
+Then restart the agents so they pick up the tokens:
+
+```bash
+docker compose up -d hermes-reader hermes-actor
+```
+
+(The onboarding provisioner does this automatically; these are the manual
+equivalents. Tokens are stored SHA-256-hashed in GBrain's `access_tokens`
+table — re-mint with the same commands if one is lost or rotated.)
+
 ### Step 7 — Bootstrap the brain
 
 ```bash
@@ -202,11 +254,11 @@ What this does:
    present. Creates the standard vault layout (Identity, Aspirations, Live Logs,
    Daily Journal, Meetings, Projects, Areas, Resources, Operations, People, Companies).
 2. Pulls Gmail history for the last 90 days through the Composio Reader MCP.
-3. Extracts unique senders → upserts into `brain/People/<slug>.md` and the
-   `entities` table in postgres-obs.
-4. Extracts sender domains → `brain/Companies/<domain>.md` + `entities`.
-5. Pulls sent-mail bodies → `style_samples` table (used as few-shot when
-   the Actor drafts replies in your voice).
+3. Extracts unique senders → seeds People pages into GBrain (`safeclaw-brain`)
+   and the corresponding `brain/People/<slug>.md` files.
+4. Extracts sender domains → Companies pages in GBrain + `brain/Companies/<domain>.md`.
+5. Pulls sent-mail bodies → style-sample pages in GBrain (used as few-shot when
+   the Actor drafts replies in your voice), and seeds the `identity/soul` page.
 6. Writes a summary to `brain/2 - Live Logs/bootstrap-<timestamp>.md`.
 
 Useful flags:
@@ -214,13 +266,13 @@ Useful flags:
 | Flag | Effect |
 |---|---|
 | `--days N` | Override `BOOTSTRAP_DAYS` for this run (default 90) |
-| `--dry-run` | Parse + print what would happen, no DB writes |
+| `--dry-run` | Parse + print what would happen, no brain writes |
 | `--reset` | Clear the watermark, reprocess everything from scratch |
 | `--help` | Print usage |
 
 After it finishes, `brain/People/` and `brain/Companies/` will have one
-markdown file per unique correspondent / domain. The Actor uses these +
-the `entities` table to recognize who you talk about.
+markdown file per unique correspondent / domain, mirrored as GBrain pages the
+Actor queries to recognize who you talk about.
 
 ### Step 8 — First conversation
 
@@ -281,7 +333,9 @@ After changing, `docker compose restart hermes-reader hermes-actor`.
 | All services status | `docker compose ps` |
 | Tail reader logs | `docker compose logs -f hermes-reader` |
 | Tail actor logs | `docker compose logs -f hermes-actor` |
-| Recent observations | `docker compose exec postgres-obs psql -U "$POSTGRES_OBS_USER" -d safeclaw_obs -c 'SELECT sender, subject, is_critical, processed_at FROM observations ORDER BY processed_at DESC LIMIT 20;'` |
+| Brain stats / health | `docker compose exec safeclaw-brain gbrain stats` (or `gbrain doctor`) |
+| List recent brain pages | `docker compose exec safeclaw-brain gbrain list_pages` |
+| Query the brain | `docker compose exec safeclaw-brain gbrain query "what do I know about Alice"` |
 | Show all People in brain | `ls brain/People/` |
 | Re-bootstrap (incremental, only new mail) | `bash scripts/bootstrap-brain.sh` |
 | Re-bootstrap (full reset) | `bash scripts/bootstrap-brain.sh --reset` |
@@ -430,11 +484,16 @@ or `.env` still has `__FILL_IN__` for Composio fields.
 ```bash
 cd <safeclaw_install>
 git pull
-docker compose build --pull        # rebuild custom images (Hermes, brain-api, etc.)
+docker compose build --pull        # rebuild custom images (Hermes, safeclaw-brain, etc.)
 docker compose up -d                # restart with new images
 ```
 
-Migrations are forward-compatible — no manual SQL needed.
+Task-side migrations are forward-compatible — no manual SQL needed. The brain
+schema is owned by GBrain: the `safeclaw-brain` entrypoint runs
+`gbrain apply-migrations --yes` (idempotent) on every boot, so brain schema
+upgrades apply automatically. To pull upstream GBrain improvements specifically,
+bump `GBRAIN_VERSION` in `.env` and rebuild/pull just that service — see
+**DEPLOY-RUNBOOK.md §GBrain / Hermes upgrade pipeline**.
 
 ### Updating the brain template
 
@@ -453,20 +512,26 @@ script that handles the merge for you.
 
 The data that matters:
 
-- `postgres-obs` Docker volume → contains the brain (entities, observations,
-  embeddings, style samples). Back up via:
+- `postgres-brain` Docker volume → contains the brain (GBrain pages, links,
+  timeline, embeddings, style samples — the whole GBrain-owned schema). Back up
+  via:
   ```bash
-  docker compose exec postgres-obs pg_dump -U "$POSTGRES_OBS_USER" safeclaw_obs > obs-$(date +%F).sql
+  docker compose exec postgres-brain pg_dump -U "$BRAIN_DB_USER" "$BRAIN_DB_NAME" > brain-$(date +%F).sql
   ```
 - `postgres-tasks` volume → similar:
   ```bash
   docker compose exec postgres-tasks pg_dump -U "$POSTGRES_TASKS_USER" safeclaw_tasks > tasks-$(date +%F).sql
   ```
+- `safeclaw_brain_data` volume (`/data/safeclaw-brain`) → GBrain's home dir
+  (config + git-backed brain working tree). Back up with `docker run`/`tar`
+  against the volume if you want a full snapshot beyond the SQL dump.
 - `./brain/` folder → human-readable backup is just a `cp -r` or `tar`.
-- `.env` → contains the only secrets. Back up to a password manager or KMS.
+- `.env` → contains the only secrets, including the two minted brain bearer
+  tokens. Back up to a password manager or KMS.
 
-The `vendor/`, `composio/`, `node_modules/`, and Docker volumes other than
-the two Postgres ones are reproducible from the repo + `.env`.
+The `vendor/`, `composio/`, `node_modules/`, and Docker volumes other than the
+two Postgres clusters and `safeclaw_brain_data` are reproducible from the repo +
+`.env`.
 
 ---
 
@@ -489,6 +554,13 @@ customers:
 
 The codebase has zero per-customer assumptions. The `.env` is the only
 customer-specific surface, and `.env.example` documents every field.
+
+> **Brain naming is constant across deployments.** The brain service is always
+> `safeclaw-brain` and its DB always `postgres-brain` — there is **no**
+> per-customer brain name. Isolation comes from each customer running their own
+> stack (own clone, own VPS/machine, own `postgres-brain` volume and minted
+> tokens), not from renaming the service. Don't try to namespace the brain per
+> client; keep the names as shipped.
 
 ### Cost per customer at typical volume
 
@@ -513,8 +585,9 @@ These exist as scaffolding but are not yet wired:
   auto-provisioned through Composio yet. v2 closes this loop.
 - **Auto-send** (`AUTO_SEND_ENABLED=true`) — gated behind 30-day clean run
   (see `IMPLEMENTATION-PLAN.md` §Phase 4). Don't enable in v1.
-- **Reflector** (weekly Soul revisions) — service is in compose but not
-  scheduled to run; `soul_revisions` table stays empty. Wire in v2.
+- **Reflector** (weekly Soul-page revisions) — service is in compose but not
+  scheduled to run; it proposes revisions to the `identity/soul` GBrain page
+  for human approval rather than editing it directly. Wire in v2.
 - **Reader cron** — currently the Reader observes only when the Actor
   triggers it (via Telegram conversation). Continuous Gmail Pub/Sub push or
   a cron poller is v2 work. Until then, "fetch latest" via Telegram is the
@@ -529,17 +602,17 @@ After Step 7, run this checklist:
 ```bash
 # All services healthy
 docker compose ps
-# → expect: postgres-obs, postgres-tasks, postgrest, embedder healthy;
-#    hermes-reader, hermes-actor, brain-api-mcp, tasks-api-mcp running
+# → expect: postgres-brain, postgres-tasks, postgrest, safeclaw-brain healthy;
+#    hermes-reader, hermes-actor, tasks-api-mcp running
 
-# Brain populated
+# Brain healthy + reachable
+docker compose exec safeclaw-brain curl -fsS http://localhost:3131/health
+# → expect: HTTP 200 / ok
+
+# Brain populated (pages exist + has content)
+docker compose exec safeclaw-brain gbrain stats
 ls brain/People/ | wc -l
-# → expect: > 0 (one file per unique sender from last 90 days)
-
-# Postgres has style samples
-docker compose exec postgres-obs psql -U "$POSTGRES_OBS_USER" -d safeclaw_obs \
-  -c "SELECT count(*) FROM style_samples;"
-# → expect: > 0
+# → expect: stats show > 0 pages; People dir has > 0 files
 
 # Composio MCP reachable
 docker compose exec hermes-actor python3 -c "
@@ -559,7 +632,7 @@ curl -sf "https://api.telegram.org/bot$(grep ^TELEGRAM_BOT_TOKEN .env | cut -d= 
 # → expect: {"ok":true,"result":{"username":"<your_bot>",...}}
 ```
 
-If all four pass, the install is shippable.
+If all of these pass, the install is shippable.
 
 ---
 
@@ -583,21 +656,23 @@ If all four pass, the install is shippable.
 │   └── postgrest.conf
 │
 ├── db/
-│   ├── 001_obs_schema.sql        ← observation event log + critical alerts
-│   ├── 002_task_schema.sql       ← tasks + RLS roles
-│   └── 003_brain_schema.sql      ← brain layer (entities, facts, embeddings)
+│   └── 002_task_schema.sql       ← tasks + RLS roles (GBrain owns the brain schema)
+│
+├── docker/
+│   └── safeclaw-brain/           ← GBrain engine image: Dockerfile + entrypoint.sh
+│                                   (gbrain init / apply-migrations / serve --http :3131)
 │
 ├── services/
-│   ├── embedder/                 ← Python: sentence-transformers, polls + /embed HTTP
-│   └── reflector/                ← Python: weekly Soul updater (v2)
+│   └── reflector/                ← Python: weekly Soul-page reviser (v2)
+│                                   (embedder removed — GBrain embeds via host Ollama)
 │
 ├── mcp-tools/
-│   ├── tasks-api/                ← Node MCP server: create_task, add_comment, ...
-│   └── brain-api/                ← Node MCP server: brain_recall, brain_write, ...
+│   └── tasks-api/                ← Node MCP server: create_task, add_comment, ...
+│                                   (brain-api removed — GBrain serves native MCP over HTTP)
 │
 ├── scripts/
 │   ├── init-secrets.sh           ← generate per-install random secrets in .env
-│   ├── bootstrap-brain.sh        ← clone Evolving Brain Template + scrape 90d Gmail
+│   ├── bootstrap-brain.sh        ← seed PARA vault + scrape 90d Gmail into GBrain
 │   ├── lib/bootstrap_brain.py    ← the actual brain-population logic
 │   └── verify-stack.sh           ← phase-gated PASS/FAIL acceptance checks
 │
@@ -624,8 +699,9 @@ If all four pass, the install is shippable.
 ## Credits
 
 - **Hermes Agent runtime** — NousResearch (https://github.com/NousResearch/hermes-agent)
+- **GBrain engine** — the brain layer (https://github.com/garrytan/gbrain)
 - **PARA-style markdown vault layout** — inspired by Tiago Forte's PARA method
 - **Composio** — OAuth + MCP integration platform (https://composio.dev)
-- **Ollama Cloud** — `:cloud` model routing (https://ollama.com)
-- **pgvector** — Postgres vector extension
+- **Ollama** — local LLM + embedding model serving (https://ollama.com)
+- **pgvector** — Postgres vector extension (GBrain backend)
 - **PostgREST** — auto-generated REST API on the task DB

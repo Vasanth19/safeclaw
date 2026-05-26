@@ -6,11 +6,15 @@
 # already-populated secrets are preserved on re-runs.
 #
 # Generated values:
-#   POSTGRES_OBS_PASSWORD, POSTGRES_TASKS_PASSWORD,
-#   TASKS_AGENT_PASSWORD,  TASKS_HUMAN_PASSWORD     -> openssl rand -hex 16
+#   BRAIN_DB_PASSWORD,    POSTGRES_TASKS_PASSWORD,
+#   TASKS_AGENT_PASSWORD, TASKS_HUMAN_PASSWORD      -> openssl rand -hex 16
 #   JWT_SECRET                                       -> openssl rand -hex 32
 #   TASKS_AGENT_JWT                                  -> HS256 over {"role":"tasks_agent"}
 #                                                       signed with JWT_SECRET
+#
+# NOT generated here: SAFECLAW_BRAIN_READER_TOKEN / SAFECLAW_BRAIN_ACTOR_TOKEN
+# (left as __MINTED__) — those are minted from the running safeclaw-brain by
+# the onboarding provisioner, not by this script.
 #
 # Usage:
 #   bash scripts/init-secrets.sh        # fill any remaining __GENERATE__ lines
@@ -29,7 +33,7 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
 fi
 
 # ── Sanity checks ─────────────────────────────────────────────────────────
-for cmd in openssl node; do
+for cmd in openssl python3; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "ERROR: required tool '$cmd' not found in PATH." >&2
     exit 1
@@ -48,29 +52,21 @@ trap 'rm -f "${TMP_FILE}"' EXIT
 gen_password() { openssl rand -hex 16; }
 gen_jwt_secret() { openssl rand -hex 32; }
 
-# Sign an HS256 JWT with the given secret. Uses Node + node:crypto so we don't
-# need any external dependencies. Payload is the literal {"role":"tasks_agent"}
-# plus an `iat` claim for auditability.
+# Sign an HS256 JWT with the given secret. Uses python3 stdlib (no external
+# deps) so this runs in the python-based onboarding container. Payload is the
+# literal {"role":"tasks_agent"} plus an `iat` claim for auditability.
 sign_tasks_agent_jwt() {
   local secret="$1"
-  JWT_SECRET="${secret}" node -e '
-    const crypto = require("crypto");
-    const secret = process.env.JWT_SECRET;
-    const b64url = (buf) =>
-      Buffer.from(buf).toString("base64")
-        .replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
-    const header  = b64url(JSON.stringify({ alg: "HS256", typ: "JWT" }));
-    const payload = b64url(JSON.stringify({
-      role: "tasks_agent",
-      iat: Math.floor(Date.now() / 1000),
-    }));
-    const sig = crypto
-      .createHmac("sha256", secret)
-      .update(header + "." + payload)
-      .digest();
-    const sigB64 = b64url(sig);
-    process.stdout.write(header + "." + payload + "." + sigB64);
-  '
+  JWT_SECRET="${secret}" python3 -c '
+import os, hmac, hashlib, base64, json, time, sys
+secret = os.environ["JWT_SECRET"].encode()
+b64url = lambda b: base64.urlsafe_b64encode(b).decode().rstrip("=")
+header = b64url(json.dumps({"alg": "HS256", "typ": "JWT"}, separators=(",", ":")).encode())
+payload = b64url(json.dumps({"role": "tasks_agent", "iat": int(time.time())}, separators=(",", ":")).encode())
+signing_input = (header + "." + payload).encode()
+sig = b64url(hmac.new(secret, signing_input, hashlib.sha256).digest())
+sys.stdout.write(header + "." + payload + "." + sig)
+'
 }
 
 # ── Pass 1 — fill plain __GENERATE__ values, capture JWT_SECRET if we made it.
@@ -95,7 +91,7 @@ while IFS= read -r line; do
         DEFERRED_JWT=1
         continue
         ;;
-      POSTGRES_OBS_PASSWORD|POSTGRES_TASKS_PASSWORD|TASKS_AGENT_PASSWORD|TASKS_HUMAN_PASSWORD)
+      BRAIN_DB_PASSWORD|POSTGRES_TASKS_PASSWORD|TASKS_AGENT_PASSWORD|TASKS_HUMAN_PASSWORD)
         value="$(gen_password)"
         ;;
       *)

@@ -2,6 +2,9 @@
 .env
 .env.local
 .env.*.local
+# Per-client env files (hold secrets — never commit)
+*.env
+suffolk.env
 
 # Vendored third-party repos (cloned at build time).
 vendor/
@@ -39,3 +42,4 @@ __pycache__/
 
 # Data (watermarks, attachments, caches)
 data/
+.claude/knowledge/_sessions/

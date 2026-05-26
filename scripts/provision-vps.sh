@@ -252,6 +252,13 @@ curl -fsS http://localhost:11434/api/tags >/dev/null \
   || fail "Ollama daemon not responding on :11434." \
           "Check 'systemctl status ollama' and 'journalctl -u ollama -n 100'."
 
+# Pull the local embedding model the safeclaw-brain (GBrain) uses. Embeddings
+# run on-host via Ollama (no egress); the brain points OLLAMA_BASE_URL here.
+ollama pull nomic-embed-text \
+  || fail "Could not pull the nomic-embed-text embedding model." \
+          "Check connectivity to ollama.com and 'ollama list'."
+echo "  ✓ Embedding model nomic-embed-text ready on :11434"
+
 # ─── 8. Boot the onboarding webapp ─────────────────────────────────────────
 step "Starting the onboarding webapp (other services boot at customer Submit)"
 docker compose up -d onboarding \

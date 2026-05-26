@@ -33,6 +33,10 @@ You also need somewhere to point Hermes for inference. The shipped default is
 `:cloud` model calls. Other OpenAI-compatible endpoints (Anthropic, OpenAI,
 self-hosted vLLM) work too — just override the `HERMES_*` values in `.env`.
 
+The brain (`safeclaw-brain`, the GBrain engine) embeds locally through the same
+host Ollama daemon, so also pull the embedding model once:
+`ollama pull nomic-embed-text` (~280 MB, CPU-only, no egress).
+
 ---
 
 ## Step 1 — Clone
@@ -134,16 +138,39 @@ When all services show `healthy` or `running`, run the foundation check:
 bash scripts/verify-stack.sh --phase 0
 ```
 
+On first boot, `safeclaw-brain` (the GBrain engine) initializes itself,
+runs `gbrain apply-migrations --yes`, and starts serving on `:3131` on the
+internal network (no host port). Wait for it to be `healthy` before the next
+step.
+
+---
+
+## Step 5.5 — Mint the brain access tokens
+
+The two Hermes agents talk to `safeclaw-brain` over HTTP MCP with a static
+bearer token each. Mint one per agent from the running brain and paste the
+printed `gbrain_<hex>` values into `.env`:
+
+```bash
+docker compose exec safeclaw-brain gbrain auth create reader
+docker compose exec safeclaw-brain gbrain auth create actor
+# → SAFECLAW_BRAIN_READER_TOKEN / SAFECLAW_BRAIN_ACTOR_TOKEN in .env
+docker compose up -d hermes-reader hermes-actor   # restart so they load the tokens
+```
+
+(The onboarding provisioner does this for you; this is the manual equivalent.)
+
 ---
 
 ## Step 6 — Bootstrap the brain
 
-The brain folder is empty by design. The bootstrap script:
+The brain is empty by design. The bootstrap script:
 
 1. Seeds the PARA-style markdown brain folder into `./brain/`.
 2. Pulls 90 days of Gmail history through the Composio Reader MCP, extracts
-   unique senders into `brain/People/`, sender domains into
-   `brain/Companies/`, and sent-mail bodies into `postgres-obs.style_samples`.
+   unique senders into `brain/People/` (and GBrain People pages), sender domains
+   into `brain/Companies/` (and GBrain Companies pages), sent-mail bodies into
+   GBrain style-sample pages, and seeds the `identity/soul` page.
 3. Writes a summary report to `brain/2 - Live Logs/bootstrap-{timestamp}.md`.
 
 Run it:
@@ -165,7 +192,8 @@ After it finishes you should see:
 
 - `brain/People/<slug>.md` files for each unique correspondent
 - `brain/Companies/<domain>.md` files for each unique sender domain
-- Rows in `postgres-obs.style_samples` with your sent-mail bodies
+- GBrain pages for People, Companies, and style samples — confirm with
+  `docker compose exec safeclaw-brain gbrain stats`
 - A summary log at `brain/2 - Live Logs/bootstrap-<timestamp>.md`
 
 ---
@@ -190,7 +218,7 @@ IMPLEMENTATION-PLAN.md §Phase 4.
 | See all services | `docker compose ps` |
 | Tail reader logs | `docker compose logs -f hermes-reader` |
 | Tail actor logs | `docker compose logs -f hermes-actor` |
-| See recent observations | `docker compose exec postgres-obs psql -U obs_user -d safeclaw_obs -c 'SELECT sender, subject, is_critical, processed_at FROM observations ORDER BY processed_at DESC LIMIT 20;'` |
+| Inspect the brain | `docker compose exec safeclaw-brain gbrain stats` / `gbrain list_pages` / `gbrain query "..."` |
 | See pending approvals | Check Telegram (v1) — the Actor DMs you the cards. |
 | Re-bootstrap (incremental) | `bash scripts/bootstrap-brain.sh` |
 | Re-bootstrap (full reset) | `bash scripts/bootstrap-brain.sh --reset` |
@@ -202,14 +230,14 @@ IMPLEMENTATION-PLAN.md §Phase 4.
 ## How the assistant actually helps you (day to day)
 
 1. **Email arrives** → Reader sees it via the Composio Reader MCP, classifies
-   intent, extracts entities, writes a structured observation to
-   `postgres-obs`. If the email matches critical rules, the Actor sends you a
-   Telegram card.
+   intent, extracts entities, writes a structured observation into the brain
+   (`safeclaw-brain` via GBrain MCP). If the email matches critical rules, the
+   Actor sends you a Telegram card.
 
 2. **You DM the bot** (`draft a reply to alice@example.com about the closing`)
-   → Actor looks up Alice in the brain, pulls 3–5 of your past emails to her
-   as style samples, drafts a reply in your voice, and creates a Gmail draft.
-   It DMs you a preview card.
+   → Actor looks up Alice in the brain (GBrain `query`/`recall`), pulls 3–5 of
+   your past emails to her as style samples, drafts a reply in your voice, and
+   creates a Gmail draft. It DMs you a preview card.
 
 3. **You tap Approve** → the draft stays in your Gmail drafts folder for you
    to review and send (Phase 1). After the 30-day clean run, you can flip
@@ -217,8 +245,9 @@ IMPLEMENTATION-PLAN.md §Phase 4.
    whitelisted recipients.
 
 4. **Reflector runs weekly** (Mondays 06:00 UTC) → reads your last 7 days of
-   approve / reject decisions and proposes Soul + preference updates. You
-   confirm each proposed rule via the chat surface.
+   approve / reject decisions and proposes revisions to the `identity/soul`
+   brain page (and related preference pages). You confirm each proposed change
+   via the chat surface before it lands.
 
 ---
 
@@ -239,9 +268,11 @@ IMPLEMENTATION-PLAN.md §Phase 4.
   created or that you explicitly opened with its Drive integration. By
   design.
 
-- **Soul file vs DB** — `brain/0 - Identity/soul.md` is human-readable and
-  intended for you to edit. Changes you make there sync to `user_profile`
-  on the next reflector run. The DB version is what the agent reads.
+- **Soul page** — the agent reads its identity from the GBrain page at slug
+  `identity/soul` (via `get_page`). `brain/0 - Identity/` holds the human-
+  readable scaffold; the bootstrap seeds the `identity/soul` page from it, and
+  the reflector proposes revisions for your approval. To inspect what the agent
+  actually reads: `docker compose exec safeclaw-brain gbrain get_page identity/soul`.
 
 ---
 
@@ -252,12 +283,14 @@ IMPLEMENTATION-PLAN.md §Phase 4.
 ├── .env                    ← secrets (chmod 600, NEVER commit)
 ├── docker-compose.yml      ← the stack definition
 ├── config/                 ← Hermes reader/actor YAML
-├── db/                     ← SQL migrations
-├── brain/                  ← human-editable second brain (gitignored;
-│                             cloned from the Evolving Brain Template at
-│                             install time)
-├── mcp-tools/              ← tasks-api + brain-api MCP servers (TypeScript)
-├── services/               ← embedder + reflector (Python)
+├── db/                     ← task-side SQL migrations (GBrain owns the brain schema)
+├── docker/safeclaw-brain/  ← GBrain engine image (Dockerfile + entrypoint)
+├── brain/                  ← human-editable second brain (gitignored; PARA-style
+│                             markdown vault seeded at install time)
+├── mcp-tools/              ← tasks-api MCP server (brain-api removed; GBrain
+│                             serves its own MCP over HTTP)
+├── services/               ← reflector (Python; embedder removed — GBrain embeds
+│                             via host Ollama)
 ├── scripts/                ← init-secrets.sh, bootstrap-brain.sh, verify-stack.sh
 ├── vendor/hermes-agent/    ← cloned from upstream (gitignored)
 └── drive-mirror/           ← rclone'd Drive folder (created on first sync)
@@ -269,8 +302,9 @@ IMPLEMENTATION-PLAN.md §Phase 4.
 
 1. `docker compose ps` — which service is not healthy?
 2. `docker compose logs <service> --tail 50` — what's the error?
-3. For agent errors: check the `observations` table for the most recent row;
-   the `raw_tags` column shows exactly what input the agent got.
+3. For brain issues: `docker compose exec safeclaw-brain gbrain doctor`
+   (health check) and `docker compose logs safeclaw-brain --tail 50`.
 4. Hard reset (nuclear): `docker compose down -v && docker compose up -d`
-   — **this wipes the databases**. Back up first:
-   `docker compose exec postgres-obs pg_dump -U obs_user safeclaw_obs > obs-backup.sql`.
+   — **this wipes the databases** (including the brain) and you'll need to
+   re-mint the brain tokens (Step 5.5). Back up first:
+   `docker compose exec postgres-brain pg_dump -U "$BRAIN_DB_USER" "$BRAIN_DB_NAME" > brain-backup.sql`.

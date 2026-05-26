@@ -100,60 +100,125 @@ def validate_openai(api_key: str, base_url: str, model: str) -> tuple[bool, str]
 
 
 # ── Composio ─────────────────────────────────────────────────────────────────
-def provision_composio_mcps(api_key: str, user_id: str) -> dict[str, str]:
-    """Programmatically create the Reader and Actor MCP servers.
-    Returns {READER_URL, ACTOR_URL}. Raises on error."""
-    
-    headers = {"x-api-key": api_key, "Content-Type": "application/json"}
-    
-    # Tool definitions derived from ARCHITECTURE.md and setup.html.
-    # Drive operations have been migrated off Composio — Hermes calls the
-    # local drive-api MCP server (mcp-tools/drive-api/main.py), which uses a
-    # Google service account configured in Step 5 of onboarding.
-    READER_TOOLS = ["GMAIL_FETCH_EMAILS", "GMAIL_LIST_THREADS", "GMAIL_GET_PROFILE"]
-    ACTOR_TOOLS = [
-        "GMAIL_CREATE_EMAIL_DRAFT", "GMAIL_REPLY_TO_THREAD", "SLACK_SEND_MESSAGE",
-    ]
+COMPOSIO_API_BASE = "https://backend.composio.dev/api/v3"
 
-    urls = {}
-    for name, tools in [("safeclaw-reader", READER_TOOLS), ("safeclaw-actor", ACTOR_TOOLS)]:
-        # 1. Create the server
-        payload = {
+# Composio is used ONLY for Gmail. Slack runs through the native bot-token MCP
+# (slack-api-mcp), and Drive through the local drive-api MCP (Google service
+# account) — neither goes through Composio, so no Slack/Drive auth config or
+# toolkit is created here.
+COMPOSIO_READER_TOOLS = ["GMAIL_FETCH_EMAILS", "GMAIL_LIST_THREADS", "GMAIL_GET_PROFILE"]
+COMPOSIO_ACTOR_TOOLS = ["GMAIL_CREATE_EMAIL_DRAFT", "GMAIL_REPLY_TO_THREAD"]
+
+
+def _composio_gmail_auth_config_id(headers: dict) -> str:
+    """Return the id of a Composio-managed Gmail auth config, creating one if
+    none exists.
+
+    In Composio v3 an MCP server must reference an existing auth config
+    (``auth_config_ids``) rather than bare ``app_names`` — this is the change
+    that broke the old ``/api/v3/mcp/create`` flow.
+    """
+    # Reuse an existing Composio-managed Gmail auth config if one is present.
+    resp = requests.get(
+        f"{COMPOSIO_API_BASE}/auth_configs",
+        params={"toolkit_slug": "gmail", "is_composio_managed": "true", "limit": 1},
+        headers=headers,
+        timeout=TIMEOUT,
+    )
+    resp.raise_for_status()
+    items = resp.json().get("items", [])
+    if items and items[0].get("id"):
+        return items[0]["id"]
+
+    # None yet — create a Composio-managed one. (The customer still has to
+    # connect their Gmail account in Composio before tool calls actually
+    # succeed; this only wires up the auth config + MCP server.)
+    resp = requests.post(
+        f"{COMPOSIO_API_BASE}/auth_configs",
+        json={
+            "toolkit": {"slug": "gmail"},
+            "auth_config": {"type": "use_composio_managed_auth"},
+        },
+        headers=headers,
+        timeout=TIMEOUT,
+    )
+    resp.raise_for_status()
+    return resp.json()["auth_config"]["id"]
+
+
+def _composio_server_mcp_url(headers: dict, name: str, auth_config_ids: list[str],
+                             allowed_tools: list[str]) -> str:
+    """Create (or find, if it already exists) an MCP server and return its
+    ``mcp_url``."""
+    resp = requests.post(
+        f"{COMPOSIO_API_BASE}/mcp/servers",
+        json={
             "name": name,
-            "user_id": user_id,
-            "app_names": ["gmail", "slack"],
-            "use_composio_auth": True
-        }
-        
-        try:
-            resp = requests.post("https://backend.composio.dev/api/v3/mcp/create", 
-                               json=payload, headers=headers, timeout=TIMEOUT)
-            
-            if resp.status_code in (409, 400):
-                 # Fetch existing if it already exists
-                 list_resp = requests.get("https://backend.composio.dev/api/v3/mcp", 
-                                       headers=headers, timeout=TIMEOUT)
-                 servers = list_resp.json().get("items", [])
-                 server = next((s for s in servers if s["name"] == name), None)
-                 if not server:
-                     raise Exception(f"Could not create or find MCP server: {name}")
-            else:
-                resp.raise_for_status()
-                server = resp.json()
+            "auth_config_ids": auth_config_ids,
+            "allowed_tools": allowed_tools,
+            "managed_auth_via_composio": True,
+        },
+        headers=headers,
+        timeout=TIMEOUT,
+    )
 
-            base_url = server.get("url")
-            if not base_url:
-                raise Exception(f"Composio returned no URL for {name}")
-            
-            # 2. Append the user_id suffix as required by SafeClaw architecture
-            urls[name] = f"{base_url.rstrip('/')}/mcp?user_id={user_id}"
+    if resp.status_code in (400, 409):
+        # Most likely the named server already exists — look it up.
+        listed = requests.get(
+            f"{COMPOSIO_API_BASE}/mcp/servers",
+            params={"name": name, "limit": 1},
+            headers=headers,
+            timeout=TIMEOUT,
+        )
+        listed.raise_for_status()
+        items = listed.json().get("items", [])
+        server = next((s for s in items if s.get("name") == name),
+                      items[0] if items else None)
+        if not server:
+            raise RuntimeError(
+                f"could not create or find MCP server '{name}' "
+                f"(HTTP {resp.status_code}: {resp.text[:200]})"
+            )
+    else:
+        resp.raise_for_status()
+        server = resp.json()
 
-        except Exception as exc:
-            raise Exception(f"Failed to provision {name}: {str(exc)}")
+    mcp_url = server.get("mcp_url")
+    if not mcp_url:
+        raise RuntimeError(f"Composio returned no mcp_url for '{name}'")
+    return mcp_url
+
+
+def _with_user_id(mcp_url: str, user_id: str) -> str:
+    """Scope an MCP server URL to a single end user via the user_id query param."""
+    sep = "&" if "?" in mcp_url else "?"
+    return f"{mcp_url}{sep}user_id={user_id}"
+
+
+def provision_composio_mcps(api_key: str, user_id: str) -> dict[str, str]:
+    """Programmatically create the Reader and Actor Gmail MCP servers via the
+    Composio v3 API. Returns {COMPOSIO_READER_MCP_URL, COMPOSIO_ACTOR_MCP_URL}.
+    Raises on error.
+
+    v3 flow (the old ``/api/v3/mcp/create`` endpoint was removed):
+      1. ensure a Composio-managed Gmail auth config exists  -> auth_config_id
+      2. POST /api/v3/mcp/servers with that auth_config_id + allowed_tools
+      3. scope each returned mcp_url to this user via ?user_id=
+    """
+    headers = {"x-api-key": api_key, "Content-Type": "application/json"}
+
+    try:
+        gmail_ac = _composio_gmail_auth_config_id(headers)
+        reader_url = _composio_server_mcp_url(
+            headers, "safeclaw-reader", [gmail_ac], COMPOSIO_READER_TOOLS)
+        actor_url = _composio_server_mcp_url(
+            headers, "safeclaw-actor", [gmail_ac], COMPOSIO_ACTOR_TOOLS)
+    except requests.RequestException as exc:
+        raise RuntimeError(f"Composio request failed: {_safe_msg(exc)}") from exc
 
     return {
-        "COMPOSIO_READER_MCP_URL": urls["safeclaw-reader"],
-        "COMPOSIO_ACTOR_MCP_URL": urls["safeclaw-actor"]
+        "COMPOSIO_READER_MCP_URL": _with_user_id(reader_url, user_id),
+        "COMPOSIO_ACTOR_MCP_URL": _with_user_id(actor_url, user_id),
     }
 
 
@@ -345,21 +410,16 @@ def validate_slack(form: dict[str, Any]) -> dict[str, str]:
     if not ok:
         errors["SLACK_APP_TOKEN"] = msg
 
+    # Workspace ID / admin user / home channel / ingest channels are all
+    # OPTIONAL config (not auth) — only format-check the ones that are supplied.
+    # Channels can be set/auto-discovered later; never block provisioning on them.
     workspace = form.get("SLACK_WORKSPACE_ID", "").strip()
-    if not workspace.startswith("T"):
+    if workspace and not workspace.startswith("T"):
         errors["SLACK_WORKSPACE_ID"] = "Workspace ID must start with 'T'"
 
     admin = form.get("SLACK_BOT_ADMIN_USER_ID", "").strip()
-    if not admin.startswith("U"):
+    if admin and not admin.startswith("U"):
         errors["SLACK_BOT_ADMIN_USER_ID"] = "Admin user ID must start with 'U'"
-
-    home = form.get("SLACK_HOME_CHANNEL", "").strip()
-    if not home:
-        errors["SLACK_HOME_CHANNEL"] = "Home channel is required (e.g. C0123456789)"
-
-    ingest = form.get("SLACK_INGEST_CHANNELS", "").strip()
-    if not ingest:
-        errors["SLACK_INGEST_CHANNELS"] = "At least one ingest channel is required"
 
     return errors
 
@@ -447,7 +507,10 @@ def validate_gdrive(form: dict[str, Any]) -> dict[str, str]:
 # provisioner.LLM_PRESETS is the source of truth at write time.
 _LLM_DEFAULTS = {
     "ollama-cloud": (
-        "http://host.docker.internal:11435/v1",
+        # Ollama Cloud DIRECT API (OpenAI-compatible). The local-daemon :cloud
+        # routing on :11435 fails headless; this endpoint + API key works and
+        # matches the Hermes config (config/*-hermes.yaml).
+        "https://ollama.com/v1",
         "glm-5.1:cloud",
     ),
     "anthropic": (
@@ -485,16 +548,20 @@ def validate_all(form: dict[str, Any]) -> dict[str, str]:
     if not ok:
         errors["llm"] = msg
 
-    # Composio (required, customer-supplied)
-    errors.update(validate_composio(form))
+    # Deployment policy: the LLM is the ONLY hard requirement. Every other
+    # integration is OPTIONAL — validate a section only when its primary
+    # credential is supplied, so a missing integration never blocks
+    # provisioning (that feature simply stays off until configured later).
+    if (form.get("COMPOSIO_API_KEY") or "").strip():
+        errors.update(validate_composio(form))
 
-    # Slack (required)
-    errors.update(validate_slack(form))
+    if (form.get("SLACK_BOT_TOKEN") or "").strip():
+        errors.update(validate_slack(form))
 
-    # Telegram (optional)
+    # Telegram already self-gates on `telegram_enabled`.
     errors.update(validate_telegram(form))
 
-    # Google Drive (required — service account for file upload)
-    errors.update(validate_gdrive(form))
+    if (form.get("GDRIVE_SERVICE_ACCOUNT_JSON") or "").strip():
+        errors.update(validate_gdrive(form))
 
     return errors

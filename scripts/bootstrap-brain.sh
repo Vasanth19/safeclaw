@@ -6,10 +6,13 @@
 #      there yet. Creates the standard vault layout (Identity, Aspirations,
 #      Live Logs, Daily Journal, Meetings, Projects, Areas, Resources,
 #      Operations, People, Companies).
-#   2. Execs scripts/lib/bootstrap_brain.py inside the embedder container
-#      (which already has Python + psycopg). The Python script pulls Gmail
-#      history through the Composio Reader MCP, populates People/, Companies/,
-#      and the postgres-obs.style_samples table.
+#   2. Runs scripts/lib/bootstrap_brain.py inside a one-off `reflector`
+#      container (python:3.12-slim, on safeclaw_net so it can reach
+#      safeclaw-brain). The Python script pulls Gmail history through the
+#      Composio Reader MCP and writes people/, companies/, style/ and a
+#      starter identity/soul page into the GBrain `safeclaw-brain` service
+#      via its HTTP MCP endpoint. GBrain embeds the pages itself — nothing
+#      here embeds anything.
 #
 # Idempotent: re-running clones nothing if brain/ exists, and the Python
 # script only fetches messages newer than the watermark in
@@ -59,8 +62,7 @@ require_running() {
   fi
 }
 
-require_running "postgres-obs"
-require_running "embedder"
+require_running "safeclaw-brain"
 # hermes-actor isn't strictly required for the bootstrap (we call Composio
 # Reader directly via HTTP for Gmail, and Google Drive directly via service
 # account for attachment uploads), but if the operator turned it off we
@@ -93,13 +95,11 @@ set +o allexport
 required_env=(
   COMPOSIO_API_KEY
   COMPOSIO_READER_MCP_URL
-  POSTGRES_OBS_USER
-  POSTGRES_OBS_PASSWORD
-  POSTGRES_OBS_DB
-  BRAIN_USER_KEY
+  SAFECLAW_BRAIN_HTTP_URL
+  SAFECLAW_BRAIN_ACTOR_TOKEN
 )
 for v in "${required_env[@]}"; do
-  if [[ -z "${!v:-}" || "${!v}" == "__FILL_IN__" || "${!v}" == "__GENERATE__" ]]; then
+  if [[ -z "${!v:-}" || "${!v}" == "__FILL_IN__" || "${!v}" == "__GENERATE__" || "${!v}" == "__MINTED__" ]]; then
     echo "ERROR: ${v} is not set in .env (or still has a placeholder)." >&2
     exit 1
   fi
@@ -124,34 +124,37 @@ else
   echo "brain/ already exists — skipping seed."
 fi
 
-# ── Step 2: run the Python script inside an ephemeral embedder container ──
-# The embedder image already has Python 3.12 + psycopg installed (see
-# services/embedder/requirements.txt), so we don't need a separate runtime.
-# We use `docker compose run --rm` (not `exec`) because we need to mount the
-# repo into the container — `exec` cannot add volumes to a running container.
+# ── Step 2: run the Python script inside a one-off reflector container ────
+# The embedder is gone (GBrain owns embedding now). We need a container that
+# has Python 3 + network access to safeclaw-brain on the safeclaw_net bridge.
+# The `reflector` service image is python:3.12-slim and already sits on
+# safeclaw_net, so it's the simplest runtime — the bootstrap now needs only
+# the Python stdlib (urllib) to talk to GBrain's HTTP MCP. We use
+# `docker compose run --rm` (not `exec`) because we mount the repo, and
+# `--entrypoint ""` so we run our own python command instead of the service's.
 #
-# postgres-obs is reachable as 'postgres-obs' on the safeclaw_net bridge.
-# We override BRAIN_OBS_DATABASE_URL so the script doesn't depend on whatever
-# value the operator has in .env (which often says 'localhost' for the host).
-INTERNAL_DB_URL="postgresql://${POSTGRES_OBS_USER}:${POSTGRES_OBS_PASSWORD}@postgres-obs:5432/${POSTGRES_OBS_DB}"
+# safeclaw-brain is reachable as 'safeclaw-brain:3131' on safeclaw_net. We pass
+# SAFECLAW_BRAIN_HTTP_URL through unchanged — .env already points it at the
+# internal hostname (http://safeclaw-brain:3131).
 
-echo "Running bootstrap_brain.py inside an embedder container..."
+echo "Running bootstrap_brain.py inside a one-off reflector container..."
 echo
 
 docker compose run --rm \
   --no-deps \
   --entrypoint "" \
   -T \
-  -e BRAIN_OBS_DATABASE_URL="${INTERNAL_DB_URL}" \
+  -e SAFECLAW_BRAIN_HTTP_URL="${SAFECLAW_BRAIN_HTTP_URL}" \
+  -e SAFECLAW_BRAIN_ACTOR_TOKEN="${SAFECLAW_BRAIN_ACTOR_TOKEN}" \
   -e COMPOSIO_API_KEY="${COMPOSIO_API_KEY}" \
   -e COMPOSIO_USER_ID="${COMPOSIO_USER_ID:-}" \
   -e COMPOSIO_READER_MCP_URL="${COMPOSIO_READER_MCP_URL}" \
   -e COMPOSIO_ACCOUNT_IDS="${COMPOSIO_ACCOUNT_IDS:-}" \
   -e GDRIVE_CREDENTIALS_PATH=/repo/config/drive_credentials.json \
-  -e BRAIN_USER_KEY="${BRAIN_USER_KEY}" \
   -e BOOTSTRAP_DAYS="${BOOTSTRAP_DAYS:-90}" \
+  -e BOOTSTRAP_EXTRACT_FACTS="${BOOTSTRAP_EXTRACT_FACTS:-1}" \
   -e BRAIN_DIR=/repo/brain \
   -e BRAIN_STATE_DIR=/repo/brain \
   -v "${REPO_ROOT}:/repo:rw" \
-  embedder \
+  reflector \
   python /repo/scripts/lib/bootstrap_brain.py ${PY_ARGS[@]+"${PY_ARGS[@]}"}

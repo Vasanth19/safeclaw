@@ -24,6 +24,19 @@
 FROM ghcr.io/astral-sh/uv:0.11.6-python3.13-trixie@sha256:b3c543b6c4f23a5f2df22866bd7857e5d304b67a564f4feab6ac22044dde719b AS uv_source
 FROM tianon/gosu:1.19-trixie@sha256:3b176695959c71e123eb390d427efc665eeb561b1540e82679c15e992006b8b9 AS gosu_source
 
+# ─── Stage: clone the upstream Hermes source (build-on-VPS, any arch) ──────────
+# Cloned at build time (pinned SHA) instead of COPY-ing a local vendored tree,
+# so the image builds natively on ANY VPS architecture (amd64/arm64) straight
+# from `git clone safeclaw && docker compose build` — no vendor/ to ship.
+ARG HERMES_REF=6f1eed3968318dc1d6ca3fb3ded2de6fc8e50308
+FROM alpine/git AS hermes_src
+ARG HERMES_REF
+WORKDIR /src
+RUN git clone https://github.com/NousResearch/hermes-agent.git . \
+    && ( git fetch --depth 1 origin "${HERMES_REF}" 2>/dev/null && git checkout FETCH_HEAD \
+         || git checkout "${HERMES_REF}" ) \
+    && rm -rf .git
+
 FROM debian:13.4 AS hermes_base
 
 ENV PYTHONUNBUFFERED=1
@@ -47,8 +60,8 @@ WORKDIR /opt/hermes
 # ── Layer-cached node deps ──────────────────────────────────────────────────
 # Copy only the package manifests first so npm install + Playwright stay
 # cached unless a lockfile actually changes.
-COPY vendor/hermes-agent/package.json vendor/hermes-agent/package-lock.json ./
-COPY vendor/hermes-agent/web/package.json vendor/hermes-agent/web/package-lock.json web/
+COPY --from=hermes_src /src/package.json /src/package-lock.json ./
+COPY --from=hermes_src /src/web/package.json /src/web/package-lock.json web/
 
 RUN npm install --prefer-offline --no-audit && \
     npx playwright install --with-deps chromium --only-shell && \
@@ -59,9 +72,9 @@ RUN npm install --prefer-offline --no-audit && \
     ln -sf /opt/hermes/node_modules/.bin/agent-browser /usr/local/bin/agent-browser
 
 # ── Source ──────────────────────────────────────────────────────────────────
-# Pull the entire hermes-agent tree into /opt/hermes. The .dockerignore at
-# repo root excludes node_modules so the installs above survive.
-COPY --chown=hermes:hermes vendor/hermes-agent/ .
+# Pull the entire hermes-agent tree into /opt/hermes from the pinned clone
+# stage. node_modules from the install above survive (the clone has none).
+COPY --from=hermes_src --chown=hermes:hermes /src/ .
 
 # Build web dashboard (Vite outputs to hermes_cli/web_dist/).
 RUN cd web && npm run build

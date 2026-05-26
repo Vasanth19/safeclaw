@@ -166,3 +166,39 @@ CREATE INDEX IF NOT EXISTS idx_comments_task_created
 
 CREATE INDEX IF NOT EXISTS idx_transitions_task_time
     ON status_transitions (task_id, transitioned_at DESC);
+
+-- ─── Review queue (human approval) ─────────────────────────────────────────────
+-- Relocated here from the retired postgres-obs (001_obs_schema.sql) when the
+-- brain moved to GBrain. PostgREST already fronts this DB, so the agents reach
+-- the queue over HTTP. The reflector queues Soul/preference proposals here;
+-- the actor queues outbound-action proposals here; a human approves/rejects.
+CREATE TABLE IF NOT EXISTS review_queue (
+    id               UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    action_type      TEXT        NOT NULL,   -- gmail_draft | slack_post | drive_move | task_create | soul_update | preference_update
+    payload          JSONB       NOT NULL,
+    proposed_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    approved_by      TEXT,
+    approved_at      TIMESTAMPTZ,
+    rejected_at      TIMESTAMPTZ,
+    rejection_reason TEXT,
+    CONSTRAINT one_outcome CHECK (approved_at IS NULL OR rejected_at IS NULL)
+);
+
+ALTER TABLE review_queue ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY IF NOT EXISTS review_queue_human_all ON review_queue
+    FOR ALL TO tasks_human USING (true) WITH CHECK (true);
+
+-- agent may propose (INSERT) and read its proposals, but not approve (UPDATE is human-only)
+CREATE POLICY IF NOT EXISTS review_queue_agent_select ON review_queue
+    FOR SELECT TO tasks_agent USING (true);
+
+CREATE POLICY IF NOT EXISTS review_queue_agent_insert ON review_queue
+    FOR INSERT TO tasks_agent WITH CHECK (true);
+
+GRANT SELECT, INSERT ON review_queue TO tasks_agent;
+GRANT ALL            ON review_queue TO tasks_human;
+
+CREATE INDEX IF NOT EXISTS idx_review_queue_pending
+    ON review_queue (proposed_at DESC)
+    WHERE approved_at IS NULL AND rejected_at IS NULL;

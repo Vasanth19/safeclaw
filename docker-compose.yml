@@ -12,8 +12,10 @@ networks:
     # by iptables allowlist on the host, giving more precise domain-level control.
 
 volumes:
-  obs_data:
-    name: safeclaw_obs_data
+  safeclaw_brain_db:
+    name: safeclaw_brain_db
+  safeclaw_brain_data:
+    name: safeclaw_brain_data
   tasks_data:
     name: safeclaw_tasks_data
   attachments:
@@ -23,32 +25,71 @@ volumes:
   hermes_actor_data:
     name: safeclaw_hermes_actor_data
 
-# ─── Postgres: Observation Database ──────────────────────────────────────────
+# ─── Postgres: Brain Database (GBrain backend) ───────────────────────────────
 services:
-  postgres-obs:
+  postgres-brain:
     # pgvector/pgvector:pg16 = Postgres 16 + pgvector extension preinstalled.
-    # Required for the Brain layer (observation_embeddings, fact_embeddings, style_sample_embeddings).
+    # Backs the safeclaw-brain (GBrain) engine. GBrain owns its own schema and
+    # migrations (run by `gbrain apply-migrations` in the brain entrypoint), so
+    # we mount NO migration files here — the cluster starts empty.
     image: pgvector/pgvector:pg16
-    container_name: safeclaw-postgres-obs
+    container_name: safeclaw-postgres-brain
     restart: unless-stopped
     networks:
       - safeclaw_net
     environment:
-      POSTGRES_USER: ${POSTGRES_OBS_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_OBS_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_OBS_DB}
+      POSTGRES_USER: ${BRAIN_DB_USER}
+      POSTGRES_PASSWORD: ${BRAIN_DB_PASSWORD}
+      POSTGRES_DB: ${BRAIN_DB_NAME}
     volumes:
-      - obs_data:/var/lib/postgresql/data
-      - ./db/001_obs_schema.sql:/migrations/001_obs_schema.sql:ro
-      - ./db/003_brain_schema.sql:/migrations/003_brain_schema.sql:ro
-      - ./db/004_brain_docs.sql:/migrations/004_brain_docs.sql:ro
+      - safeclaw_brain_db:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_OBS_USER} -d ${POSTGRES_OBS_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U ${BRAIN_DB_USER} -d ${BRAIN_DB_NAME}"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 20s
     # Do NOT expose port 5432 to the host. Internal traffic only.
+
+  # ─── safeclaw-brain — GBrain engine (HTTP + MCP) ──────────────────────────
+  # The permanent knowledge layer. Compiled GBrain CLI served over HTTP on
+  # :3131 (internal docker network only — NO published host port). MCP tool
+  # calls hit /mcp with `Authorization: Bearer <token>`; health at /health.
+  # Embeddings are local Ollama (nomic-embed-text, 768 dims) via the host
+  # daemon. Build locally OR pull the published image.
+  safeclaw-brain:
+    build:
+      context: ./docker/safeclaw-brain
+      args:
+        # Pins the GBrain source. Upstream does not tag releases; this SHA is
+        # the v0.37.11.0 commit on origin/master. Override via .env if needed.
+        GBRAIN_REF: ${GBRAIN_REF:-d0d0e2a64a83ad27768b193521ec4f9f0bfdd4ae}
+    image: ghcr.io/vasanth19/safeclaw-brain:${GBRAIN_VERSION}
+    container_name: safeclaw-brain
+    restart: unless-stopped
+    networks:
+      - safeclaw_net
+    # Linux Docker doesn't resolve host.docker.internal by default. Map it to
+    # the host gateway so GBrain can reach the host Ollama daemon on :11434
+    # (where provision-vps.sh installs Ollama and pulls nomic-embed-text).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      DATABASE_URL: postgres://${BRAIN_DB_USER}:${BRAIN_DB_PASSWORD}@postgres-brain:5432/${BRAIN_DB_NAME}
+      OLLAMA_BASE_URL: http://host.docker.internal:11434/v1
+      GBRAIN_HOME: /data/safeclaw-brain
+    volumes:
+      - safeclaw_brain_data:/data/safeclaw-brain
+    depends_on:
+      postgres-brain:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3131/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    # NO published ports — internal docker network only.
 
   # ─── Postgres: Task Database ───────────────────────────────────────────────
   # Holds the task queue + review queue served by PostgREST. OAuth tokens are
@@ -152,11 +193,11 @@ services:
   # Devs who want to rebuild from source can comment-toggle the build: block.
   hermes-reader:
     image: ghcr.io/vasanth19/safeclaw-hermes:1.2
-    # Dev-only: rebuild from source. Uncomment to use; the `image:` tag above
-    # still controls the local tag name. Needed when the baked-MCP layer changed.
-    # build:
-    #   context: .
-    #   dockerfile: docker/Dockerfile.safeclaw-hermes
+    # Build on the VPS natively (any arch). The Dockerfile clones the pinned
+    # Hermes source at build time, so no vendored tree is needed in context.
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.safeclaw-hermes
     container_name: safeclaw-hermes-reader
     restart: unless-stopped
     networks:
@@ -172,9 +213,13 @@ services:
       - .env
     environment:
       HERMES_INFERENCE_PROVIDER: ollama-cloud
-      OLLAMA_BASE_URL: http://host.docker.internal:11435/v1
-      OLLAMA_API_KEY: ollama-local
-      HERMES_DEFAULT_MODEL: glm-5.1:cloud
+      # Ollama Cloud DIRECT API. The local-daemon :11435 routing fails headless
+      # (APIConnectionError) — the cloud endpoint + a real key is what works.
+      OLLAMA_BASE_URL: https://ollama.com/v1
+      # OLLAMA_API_KEY is intentionally NOT hardcoded here — it flows from
+      # env_file (.env) so the real secret isn't committed and isn't shadowed by
+      # a placeholder. (Was `ollama-local`, which 401'd / pointed at the dead :11435.)
+      HERMES_DEFAULT_MODEL: kimi-k2.5   # agentic tool-routing; glm-4.6 tripped a tool-call parse bug ('str' has no .get)
       # Reader is a background ingest agent — it does NOT bind to Telegram or Slack.
       # The Actor owns the user-facing chat; blanking these tokens here prevents
       # dual-listener conflicts (two Socket Mode connections = dropped events).
@@ -205,6 +250,9 @@ services:
       # Init wrapper — chmods docker socket before privilege drop so hermes user
       # (uid 10000) can run docker exec for the rclone sidecar.
       - ./scripts/hermes-docker-init.sh:/hermes-init.sh:ro
+      # Cron-sync — translates config `schedules:` into real Hermes cron jobs
+      # at startup (this Hermes version's config loader ignores `schedules:`).
+      - ./scripts/safeclaw-cron-sync.py:/safeclaw/cron-sync.py:ro
       # Brain (filesystem vault) mount is deferred — needs HERMES_UID/GID
       # alignment to avoid chown failure on bind-mount permissions. Agent
       # reads brain via the baked brain_api MCP → postgres-obs path until
@@ -214,22 +262,21 @@ services:
     # config-copy + privilege drop + skill sync, then hands off to hermes.
     command: ["gateway", "run", "--accept-hooks"]
     depends_on:
-      - postgres-obs
       # brain_api is now spawned as a direct Node subprocess inside hermes-reader
-      # (baked at /opt/mcp-tools/brain-api). It still needs postgres-obs healthy.
-      - embedder
+      # (baked at /opt/mcp-tools/brain-api). It talks to safeclaw-brain over HTTP.
+      safeclaw-brain:
+        condition: service_healthy
 
   # ─── hermes-actor — Write/Action Agent (Phase 2+) ─────────────────────────
   # Disabled by default (ACTOR_ENABLED=false). Set ACTOR_ENABLED=true in .env
   # to start this service in Phase 2.
   hermes-actor:
-    # Same pre-built SafeClaw distribution image as hermes-reader (shared layer cache).
+    # Same SafeClaw distribution image as hermes-reader (shared layer cache).
     image: ghcr.io/vasanth19/safeclaw-hermes:1.2
-    # Dev-only: rebuild from source. Uncomment to use; the `image:` tag above
-    # still controls the local tag name.
-    # build:
-    #   context: .
-    #   dockerfile: docker/Dockerfile.safeclaw-hermes
+    # Build on the VPS natively (any arch) — clones pinned Hermes at build time.
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.safeclaw-hermes
     container_name: safeclaw-hermes-actor
     restart: unless-stopped
     ports:
@@ -246,13 +293,12 @@ services:
     env_file:
       - .env
     environment:
-      # Hermes inference provider override — these are static, not from .env.
+      # Hermes inference provider override — static, except the API key.
       HERMES_INFERENCE_PROVIDER: ollama-cloud
-      OLLAMA_BASE_URL: http://host.docker.internal:11435/v1
-      OLLAMA_API_KEY: ollama-local
-      # Kimi K2.5 — Moonshot's agentic model. Better at multi-step tool
-      # routing than glm-5.1; required for the brain-first memory protocol.
-      HERMES_DEFAULT_MODEL: glm-5.1:cloud
+      # Ollama Cloud DIRECT API — :11435 local-daemon routing fails headless.
+      OLLAMA_BASE_URL: https://ollama.com/v1
+      # OLLAMA_API_KEY comes from env_file (.env), not hardcoded here.
+      HERMES_DEFAULT_MODEL: kimi-k2.5   # agentic tool-routing; glm-4.6 tripped a tool-call parse bug ('str' has no .get)
     volumes:
       # Operator config as read-only template; entrypoint copies it into
       # /opt/data/config.yaml so /sethome + `hermes config set` can rewrite.
@@ -271,6 +317,9 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Init wrapper — chmods docker socket before privilege drop.
       - ./scripts/hermes-docker-init.sh:/hermes-init.sh:ro
+      # Cron-sync — translates config `schedules:` into real Hermes cron jobs
+      # at startup (this Hermes version's config loader ignores `schedules:`).
+      - ./scripts/safeclaw-cron-sync.py:/safeclaw/cron-sync.py:ro
       # Brain mount — read-write so the agent can write back to the vault
       # (People/, .inbox/manual/, etc.) in addition to searching it.
       - ./brain:/opt/brain:rw
@@ -288,42 +337,15 @@ services:
         exec /opt/hermes/.venv/bin/hermes gateway run --accept-hooks
       '
     depends_on:
-      - postgrest
-      # brain_api + tasks_api are now spawned as direct Node subprocesses
-      # inside hermes-actor (baked at /opt/mcp-tools/). Compose dependency on
-      # postgrest + postgres-obs (transitive via embedder) suffices.
-      - hermes-reader   # reader pulls the shared image; actor reuses it
-      - embedder
-
-  # ─── Brain: Embedder ───────────────────────────────────────────────────────
-  # Polls postgres-obs every 30s for rows missing embeddings (observations,
-  # facts, style_samples) and writes 384-dim vectors via pgvector. Also runs a
-  # tiny HTTP server on :8000 so brain-api can turn queries into vectors.
-  embedder:
-    image: ghcr.io/vasanth19/safeclaw-embedder:1.0
-    # Dev-only: rebuild from source. Uncomment to use; the `image:` tag above
-    # still controls the local tag name.
-    # build:
-    #   context: ./services/embedder
-    #   dockerfile: Dockerfile
-    container_name: safeclaw-embedder
-    restart: unless-stopped
-    networks:
-      - safeclaw_net
-    ports:
-      - "127.0.0.1:8000:8000"   # Localhost-only; internal clients use http://embedder:8000.
-    environment:
-      DATABASE_URL: ${BRAIN_OBS_DATABASE_URL}
-      BRAIN_EMBEDDING_MODEL: ${BRAIN_EMBEDDING_MODEL}
-    depends_on:
-      postgres-obs:
+      # brain_api + tasks_api are spawned as direct Node subprocesses inside
+      # hermes-actor (baked at /opt/mcp-tools/). brain_api talks to
+      # safeclaw-brain over HTTP; tasks_api talks to postgrest.
+      postgrest:
+        condition: service_started
+      hermes-reader:   # reader pulls the shared image; actor reuses it
+        condition: service_started
+      safeclaw-brain:
         condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "python -c 'import urllib.request,sys; sys.exit(0 if urllib.request.urlopen(\"http://localhost:8000/health\", timeout=3).status==200 else 1)'"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 60s
 
   # ─── Brain: Reflector ──────────────────────────────────────────────────────
   # Runs at startup, then weekly (Mon 06:00 UTC). Reads observations + review
@@ -338,20 +360,25 @@ services:
     networks:
       - safeclaw_net
     environment:
-      DATABASE_URL: ${BRAIN_OBS_DATABASE_URL}
+      # Reflector reads/writes the human-approval review_queue in postgres-tasks
+      # and reads recent activity from the GBrain-backed safeclaw-brain.
+      DATABASE_URL: postgres://${POSTGRES_TASKS_USER}:${POSTGRES_TASKS_PASSWORD}@postgres-tasks:5432/${POSTGRES_TASKS_DB}
+      SAFECLAW_BRAIN_HTTP_URL: ${SAFECLAW_BRAIN_HTTP_URL}
+      SAFECLAW_BRAIN_ACTOR_TOKEN: ${SAFECLAW_BRAIN_ACTOR_TOKEN}
       HERMES_LLM_API_KEY: ${HERMES_LLM_API_KEY}
       HERMES_LLM_BASE_URL: ${HERMES_LLM_BASE_URL}
       HERMES_MODEL: ${HERMES_MODEL}
-      BRAIN_USER_KEY: ${BRAIN_USER_KEY}
     depends_on:
-      postgres-obs:
+      postgres-tasks:
+        condition: service_healthy
+      safeclaw-brain:
         condition: service_healthy
 
-  # brain-api MCP — was a sidecar container; now baked into the Hermes image
-  # (see Dockerfile.safeclaw-hermes Stage B). Spawned by hermes-reader and
-  # hermes-actor as a direct Node subprocess via mcp_servers.brain_api in their
-  # respective config files. Env (DATABASE_URL, EMBEDDER_URL, BRAIN_USER_KEY)
-  # is passed through the MCP env: block in those configs from .env.
+  # Brain access — the legacy brain-api MCP (5 brain_* tools over postgres-obs +
+  # embedder) is retired. Both hermes agents now reach the GBrain-backed
+  # safeclaw-brain service over HTTP MCP (mcp_servers.safeclaw_brain in their
+  # config files) with a static Authorization: Bearer token minted at
+  # provisioning. See the safeclaw-brain service above.
 
   # ─── Onboarding webapp ────────────────────────────────────────────────────
   # Customer self-service install UI — Flask + SSE on port 8080. Fronted by

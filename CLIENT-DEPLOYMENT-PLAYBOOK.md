@@ -14,8 +14,23 @@
 
 ---
 
+## Get the code — track `main` (NOT the Suffolk branch)
+
+New client boxes always clone the **`main`** branch — the stable, merged line (GBrain swap merged via PR #1, 2026-05-26):
+
+```bash
+git clone -b main https://github.com/Vasanth19/safeclaw.git /opt/safeclaw
+# idempotent re-sync on the box later:
+git -C /opt/safeclaw fetch && git -C /opt/safeclaw reset --hard origin/main
+```
+
+> ⚠️ **Do NOT clone `feat/safeclaw-brain-gbrain` for a new client.** That branch is the **Suffolk-only** in-flight line (LLM/model fixes still landing). It is kept open on purpose; only the Suffolk box at `/opt/safeclaw` tracks it. Everyone else tracks `main`.
+
+---
+
 ## Pre-flight checklist (do these before/early in any client deploy)
 
+- [ ] **Clone `main`** (see above) — never the Suffolk feature branch.
 - [ ] **Confirm coexistence:** what else runs on the box? Record its ports, app dir, nginx vhost, and `/health` URL. Never edit the client's vhost. Pick a non-conflicting port (Suffolk used 8443) on an internal docker net.
 - [ ] **Embeddings reachability:** GBrain embeds via host Ollama (`nomic-embed-text`). The brain reaches the host at `host.docker.internal` → `172.17.0.1`. Host Ollama defaults to binding `127.0.0.1` → **connection refused**. Fix with a systemd drop-in (see below). Bind to the **bridge IP `172.17.0.1`**, NOT `0.0.0.0` (an unfirewalled box would expose the unauthenticated Ollama API publicly).
 - [ ] **LLM provider decided up front.** Ollama Cloud free tier is NOT sufficient for production ingest (per-model weekly caps, exhausted by normal use + testing). Prefer a **hosted Anthropic key** (`sk-ant-…`, native Hermes support, no quota wall, best tool-calling). If using Ollama Cloud, confirm the key's account is funded AND on a plan tier whose weekly limit clears the workload.

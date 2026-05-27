@@ -20,12 +20,11 @@ model:
   # Ollama on :11434 is used only for the brain's embeddings.
   base_url: https://ollama.com/v1
   api_key: ${OLLAMA_API_KEY}
-  default: kimi-k2.5   # PROVEN: the only model that has actually written brain pages here (all 37).
-                       # New funded key gives it quota. Scorecard: glm-4.6 = tool-call parse bug;
-                       # gpt-oss:120b = empty content after tool calls (never reaches put_page);
-                       # qwen3-coder:480b = correct but very slow + APITimeouts on big runs.
-                       # IMPORTANT: a wide (36-channel) run takes many minutes — do NOT --force-recreate
-                       # mid-run (SIGTERM aborts it before pages are written). Trigger once, let it finish.
+  default: glm-4.7   # FAST + barely reasons (~1s/call, ~240 chars reasoning under heavy tool load) —
+                     # benchmarked fastest clean tool-caller on Ollama Cloud. kimi-k2.5 reasons for
+                     # MINUTES per step in Hermes (78-tool load) so even 1 channel never finishes;
+                     # gpt-oss = empty content; qwen3-coder:480b/qwen3-next = slow / no tool_call;
+                     # glm-4.6 = old tool-call parse bug. glm-4.7 is the newer GLM (parse bug expected fixed).
   temperature: 0.0
 
 # ── MCP Servers (Composio HTTP transport) ────────────────────────────────────

@@ -189,15 +189,15 @@ system_prompt: |
 platforms: []   # reader does not listen on Slack as a bot — ingestion is cron-driven below
 
 # ── Slack ingestion cron ──────────────────────────────────────────────────────
-# Every 6 hours: pull recent messages from all channels the bot is in via
+# Hourly: pull recent messages from all channels the bot is in via
 # mcp_slack_native_slack_get_channel_history, write structured observations into
 # the GBrain-backed brain via mcp_safeclaw_brain_put_page (GBrain embeds them so
-# SafeClaw can recall them). Cadence chosen to stay well under the LLM provider's
-# usage budget — kimi-k2.5 is an agentic thinking model (~13 calls/run), so a
-# 30-min cadence exhausted the Ollama Cloud weekly free tier (HTTP 429).
+# SafeClaw can recall them). Hourly cadence is safe now that the LLM runs on the
+# upgraded Ollama account (naughty_bose_129 primary) + goofy_hugle_463 fallback in
+# the credential pool, with glm-4.7 (fast, non-reasoning) — no more 429 quota wall.
 schedules:
   slack_ingest:
-    cron: "0 */6 * * *"
+    cron: "0 * * * *"
     description: >
       For each channel in SLACK_INGEST_CHANNELS:
       1. Call mcp_slack_native_slack_get_channel_history (newest 50 messages).

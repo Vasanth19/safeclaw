@@ -227,11 +227,57 @@ PYEOF
     fi
 fi
 
-# ─── Step 5: Hand off to the upstream entrypoint ────────────────────────────
-if [ ! -x "${UPSTREAM_ENTRYPOINT}" ]; then
-    echo "safeclaw-entrypoint: missing upstream entrypoint at ${UPSTREAM_ENTRYPOINT}" >&2
+# ─── Step 5: Bootstrap data dir + launch the gateway directly ───────────────
+# The upstream hermes-agent moved to an s6-overlay runtime: docker/entrypoint.sh
+# is now a deprecated shim that runs the cont-init hook (stage2-hook.sh, which
+# calls `s6-setuidgid` — NOT installed in this debian + gosu/tini image) and
+# does NOT exec the CMD. Handing off to it crash-loops the container (exit 127).
+# So we replicate the essential parts of stage2-hook.sh here (seed the data-dir
+# structure + sync bundled skills, all owned by the hermes user via gosu) and
+# exec the gateway directly. Works regardless of whether the upstream entrypoint
+# is the pre-s6 or s6 variant. See HOOVER-DEPLOYMENT-GUIDE.md for the diagnosis.
+export HERMES_HOME
+HERMES_USER="hermes"
+GOSU="$(command -v gosu || echo /usr/local/bin/gosu)"
+HERMES_BIN="${INSTALL_DIR}/.venv/bin/hermes"
+PYTHON_BIN="${INSTALL_DIR}/.venv/bin/python"
+SKILLS_SYNC="${INSTALL_DIR}/tools/skills_sync.py"
+
+if [ ! -x "${HERMES_BIN}" ]; then
+    echo "safeclaw-entrypoint: hermes binary not found/executable at ${HERMES_BIN}" >&2
     exit 1
 fi
 
-log "handing off to upstream entrypoint: ${UPSTREAM_ENTRYPOINT} $*"
-exec "${UPSTREAM_ENTRYPOINT}" "$@"
+if [ "$(id -u)" = "0" ] && [ -x "${GOSU}" ]; then
+    # Seed the data-dir structure owned by the hermes user.
+    "${GOSU}" "${HERMES_USER}" mkdir -p \
+        "${HERMES_HOME}/cron"     "${HERMES_HOME}/sessions" "${HERMES_HOME}/logs" \
+        "${HERMES_HOME}/hooks"    "${HERMES_HOME}/memories" "${HERMES_HOME}/skills" \
+        "${HERMES_HOME}/skins"    "${HERMES_HOME}/plans"    "${HERMES_HOME}/workspace" \
+        "${HERMES_HOME}/home" 2>/dev/null || true
+    printf 'docker\n' | "${GOSU}" "${HERMES_USER}" tee "${HERMES_HOME}/.install_method" >/dev/null 2>&1 || true
+    if [ -f "${SKILLS_SYNC}" ] && [ -x "${PYTHON_BIN}" ]; then
+        "${GOSU}" "${HERMES_USER}" "${PYTHON_BIN}" "${SKILLS_SYNC}" || log "skills_sync.py failed; continuing"
+    fi
+    log "bootstrap complete — launching as ${HERMES_USER}: $*"
+    # CMD form varies per service: reader passes hermes subcommands
+    # ("gateway run …") so we prepend the hermes binary; actor passes a full
+    # wrapper ("sh -c 'exec …'") or an absolute path, which we run as-is.
+    case "${1:-}" in
+        sh|bash|/*) exec "${GOSU}" "${HERMES_USER}" "$@" ;;
+        *)          exec "${GOSU}" "${HERMES_USER}" "${HERMES_BIN}" "$@" ;;
+    esac
+else
+    # Already non-root (rootless) — seed + launch directly without gosu.
+    mkdir -p \
+        "${HERMES_HOME}/cron"     "${HERMES_HOME}/sessions" "${HERMES_HOME}/logs" \
+        "${HERMES_HOME}/hooks"    "${HERMES_HOME}/memories" "${HERMES_HOME}/skills" \
+        "${HERMES_HOME}/skins"    "${HERMES_HOME}/plans"    "${HERMES_HOME}/workspace" \
+        "${HERMES_HOME}/home" 2>/dev/null || true
+    [ -f "${SKILLS_SYNC}" ] && "${PYTHON_BIN}" "${SKILLS_SYNC}" 2>/dev/null || true
+    log "bootstrap complete — launching: $*"
+    case "${1:-}" in
+        sh|bash|/*) exec "$@" ;;
+        *)          exec "${HERMES_BIN}" "$@" ;;
+    esac
+fi

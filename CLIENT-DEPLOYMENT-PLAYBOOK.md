@@ -84,6 +84,29 @@ Effective model = the config template's `model.default`. Stale `HERMES_DEFAULT_M
 - Add **`files:read`** scope *before* handoff if attachments matter (reinstall after). The bot also joins only **1 channel by default** — `/invite` it into every channel to ingest.
 - The app is in the **client's** Slack workspace; the operator must be signed into that workspace to edit it.
 
+### 9. Hermes image s6-overlay mismatch — crash loop (exit 127) on fresh on-box build (Hoover, 2026-05)
+The pinned `HERMES_REF` (currently `6f1eed3`) ships an **s6-overlay** runtime: `docker/stage2-hook.sh` calls `s6-setuidgid`, and `docker/entrypoint.sh` is a deprecated shim that does NOT exec the CMD. But `docker/Dockerfile.safeclaw-hermes` builds a plain `debian:13.4` + `gosu`/`tini` image with **no s6 installed**. A fresh on-box build crash-loops both agents with `s6-setuidgid: not found` (exit 127). Suffolk only escapes it because it's running a months-old image built before the upstream switched to s6.
+**Fix (in `docker/safeclaw-entrypoint.sh` Step 5):** bypass the dead shim and exec the gateway directly via `gosu`. Replicate the bootstrap (seed `$HERMES_HOME` dirs + `skills_sync.py` as the hermes user). Handle both CMD forms with a `case`:
+```sh
+case "${1:-}" in
+    sh|bash|/*) exec "$GOSU" hermes "$@" ;;          # actor: ["sh","-c","exec hermes …"] runs as-is
+    *)          exec "$GOSU" hermes "$HERMES_BIN" "$@" ;;  # reader: ["gateway","run",…] prepends hermes
+esac
+```
+The `case` is load-bearing: an earlier version using `[ -x "$1" ]` matched the `gateway` *directory* (dirs are `-x`-true) and routed the reader to the wrong branch. `safeclaw-entrypoint.sh` is **baked into the image** (Dockerfile COPY), so each change needs a rebuild — Docker cache makes it fast (only the COPY layer at line ~110 invalidates).
+
+### 10. `db/002_task_schema.sql` — invalid `CREATE POLICY IF NOT EXISTS` silently denies tasks_agent
+Postgres has never supported `IF NOT EXISTS` for `CREATE POLICY`. The migration enables RLS on all four task tables, then all 13 `CREATE POLICY IF NOT EXISTS …` statements fail with syntax errors — leaving RLS *enabled* with **zero policies**, which default-denies the `tasks_agent` role (PostgREST → actor) on every table. Easy to miss because `psql` continues past the errors and the table count looks right.
+**Fix:** idempotent `DROP POLICY IF EXISTS … ; CREATE POLICY …`:
+```sh
+sed -E -i 's/CREATE POLICY IF NOT EXISTS ([a-zA-Z_]+) ON ([a-zA-Z_]+)/DROP POLICY IF EXISTS \1 ON \2;\nCREATE POLICY \1 ON \2/' db/002_task_schema.sql
+```
+Then re-run; verify `SELECT count(*) FROM pg_policies WHERE schemaname='public'` = 13.
+
+### 11. `sed -i` on a single-file bind mount → container keeps the OLD file
+`sed -i` writes a temp file and renames it over the target, creating a **new inode**. Single-file Docker bind mounts (e.g. `./db/002_task_schema.sql:/migrations/002_task_schema.sql:ro`) pin the old inode at mount time, so the container keeps reading the unedited file even after `sed -i` updates the host path. Symptoms: re-running the migration shows the same errors you just "fixed."
+**Fix:** `docker compose up -d --force-recreate <service>` after a `sed -i` to remount the new inode. Or edit preserving inode (`cp tmp.sql original`).
+
 ---
 
 ## Standard verification after every change

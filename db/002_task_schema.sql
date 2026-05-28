@@ -99,39 +99,49 @@ ALTER TABLE comments           ENABLE ROW LEVEL SECURITY;
 ALTER TABLE status_transitions ENABLE ROW LEVEL SECURITY;
 
 -- tasks_human: full access
-CREATE POLICY IF NOT EXISTS tasks_human_all ON tasks
+DROP POLICY IF EXISTS tasks_human_all ON tasks;
+CREATE POLICY tasks_human_all ON tasks
     FOR ALL TO tasks_human USING (true) WITH CHECK (true);
 
-CREATE POLICY IF NOT EXISTS comments_human_all ON comments
+DROP POLICY IF EXISTS comments_human_all ON comments;
+CREATE POLICY comments_human_all ON comments
     FOR ALL TO tasks_human USING (true) WITH CHECK (true);
 
-CREATE POLICY IF NOT EXISTS transitions_human_all ON status_transitions
+DROP POLICY IF EXISTS transitions_human_all ON status_transitions;
+CREATE POLICY transitions_human_all ON status_transitions
     FOR ALL TO tasks_human USING (true) WITH CHECK (true);
 
 -- tasks_agent: SELECT all rows
-CREATE POLICY IF NOT EXISTS tasks_agent_select ON tasks
+DROP POLICY IF EXISTS tasks_agent_select ON tasks;
+CREATE POLICY tasks_agent_select ON tasks
     FOR SELECT TO tasks_agent USING (true);
 
-CREATE POLICY IF NOT EXISTS comments_agent_select ON comments
+DROP POLICY IF EXISTS comments_agent_select ON comments;
+CREATE POLICY comments_agent_select ON comments
     FOR SELECT TO tasks_agent USING (true);
 
-CREATE POLICY IF NOT EXISTS transitions_agent_select ON status_transitions
+DROP POLICY IF EXISTS transitions_agent_select ON status_transitions;
+CREATE POLICY transitions_agent_select ON status_transitions
     FOR SELECT TO tasks_agent USING (true);
 
 -- tasks_agent: INSERT tasks and comments
-CREATE POLICY IF NOT EXISTS tasks_agent_insert ON tasks
+DROP POLICY IF EXISTS tasks_agent_insert ON tasks;
+CREATE POLICY tasks_agent_insert ON tasks
     FOR INSERT TO tasks_agent WITH CHECK (true);
 
-CREATE POLICY IF NOT EXISTS comments_agent_insert ON comments
+DROP POLICY IF EXISTS comments_agent_insert ON comments;
+CREATE POLICY comments_agent_insert ON comments
     FOR INSERT TO tasks_agent WITH CHECK (true);
 
 -- tasks_agent: INSERT status_transitions (audit trail)
-CREATE POLICY IF NOT EXISTS transitions_agent_insert ON status_transitions
+DROP POLICY IF EXISTS transitions_agent_insert ON status_transitions;
+CREATE POLICY transitions_agent_insert ON status_transitions
     FOR INSERT TO tasks_agent WITH CHECK (true);
 
 -- tasks_agent: UPDATE status only — restricted to valid transitions
 -- Transition matrix: open→in_progress, in_progress→blocked, blocked→in_progress, any→done, any→cancelled
-CREATE POLICY IF NOT EXISTS tasks_agent_update_status ON tasks
+DROP POLICY IF EXISTS tasks_agent_update_status ON tasks;
+CREATE POLICY tasks_agent_update_status ON tasks
     FOR UPDATE TO tasks_agent
     USING (true)
     WITH CHECK (
@@ -186,14 +196,17 @@ CREATE TABLE IF NOT EXISTS review_queue (
 
 ALTER TABLE review_queue ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY IF NOT EXISTS review_queue_human_all ON review_queue
+DROP POLICY IF EXISTS review_queue_human_all ON review_queue;
+CREATE POLICY review_queue_human_all ON review_queue
     FOR ALL TO tasks_human USING (true) WITH CHECK (true);
 
 -- agent may propose (INSERT) and read its proposals, but not approve (UPDATE is human-only)
-CREATE POLICY IF NOT EXISTS review_queue_agent_select ON review_queue
+DROP POLICY IF EXISTS review_queue_agent_select ON review_queue;
+CREATE POLICY review_queue_agent_select ON review_queue
     FOR SELECT TO tasks_agent USING (true);
 
-CREATE POLICY IF NOT EXISTS review_queue_agent_insert ON review_queue
+DROP POLICY IF EXISTS review_queue_agent_insert ON review_queue;
+CREATE POLICY review_queue_agent_insert ON review_queue
     FOR INSERT TO tasks_agent WITH CHECK (true);
 
 GRANT SELECT, INSERT ON review_queue TO tasks_agent;

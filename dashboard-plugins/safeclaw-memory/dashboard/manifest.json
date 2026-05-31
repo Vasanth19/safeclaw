@@ -1,0 +1,13 @@
+{
+  "name": "safeclaw-memory",
+  "label": "Memory",
+  "description": "3D constellation of SafeClaw's brain (GBrain). Every page is a star; pages cluster around their type. A live map of what your assistant knows.",
+  "icon": "Brain",
+  "version": "0.1.0",
+  "tab": {
+    "path": "/memory",
+    "position": "after:skills"
+  },
+  "entry": "dist/index.js",
+  "api": "plugin_api.py"
+}

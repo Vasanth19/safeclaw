@@ -14,14 +14,18 @@
 > (run on the orgo computer via the `/bash` API).
 >
 > **Worked example throughout:** `mark-agent` in **Jake McKinney's (paid)
-> workspace**. Where you see `<CLIENT>=mark` substitute your client's slug.
+> workspace** — the FIRST real end-to-end install (completed 2026-06-01). Stack:
+> **Hermes 0.15.1 + gbrain 0.42.1**, tunnel **`safeclaw-mark-v2`**, **6 tmux
+> sessions** (`brain`, `cf`, `gw`, `hd`, `sui`, `wd`). Where you see
+> `<CLIENT>=mark` substitute your client's slug. This template folds in the **24
+> fixes** found during that live install (each tagged "issue N" inline).
 >
 > **No secrets in this file.** Placeholders: `<ORGO_API_KEY>`, `<CLIENT>`,
 > `<CID>` (computer id), `<WSID>` (workspace id), `<TELEGRAM_BOT_TOKEN>`,
 > `<TELEGRAM_NUMERIC_USER_ID>`, `<COMPOSIO_API_KEY>`, `<COMPOSIO_USER_ID>`,
 > `<CONNECTED_ACCOUNT_ID>`, `<READER_MCP_BASE_URL>`, `<ACTOR_MCP_BASE_URL>`,
 > `<OLLAMA_API_KEY>`, `<OLLAMA_FALLBACK_KEY>`, `<OPENROUTER_API_KEY>`,
-> `<OPENAI_API_KEY>`, `<UI_PASSWORD>`, `<TUNNEL_ID>`,
+> `<OPENAI_API_KEY>`, `<GBRAIN_HTTP_TOKEN>`, `<UI_PASSWORD>`, `<TUNNEL_ID>`,
 > `<SLACK_BOT_TOKEN>` (`xoxb-…`), `<SLACK_APP_TOKEN>` (`xapp-…`),
 > `<SLACK_WORKSPACE_ID>` (`T…`), `<SLACK_USER_ID>` (`U…`).
 
@@ -46,18 +50,22 @@
   │  cloudflared (tmux cf) ──► 127.0.0.1:8899  SafeClaw Console (Flask, tmux sui)         │
   │                       └──► 127.0.0.1:9119  Hermes dashboard (--tui, tmux hd)          │
   │                                                                                       │
+  │  GBrain HTTP server (tmux brain): ONE gbrain serve --http --port 3131 (single-writer  │
+  │    PGLite lock) — ALL Hermes consumers wire it as a URL MCP, never stdio (see Step 2c)│
+  │                                                                                       │
   │  Hermes profiles (isolated HERMES_HOME each):                                         │
   │    • default  → dashboard's embedded --tui gateway (NO telegram token, NO slack app)  │
-  │    • reader   → gbrain MCP + Gmail READ MCP + slack_native(reader, read-only)         │
-  │    • actor    → gbrain MCP + Gmail DRAFT MCP + slack_native(actor, post) + Telegram    │
+  │    • reader   → gbrain URL MCP + Gmail READ MCP + slack_native(reader, read-only)     │
+  │    • actor    → gbrain URL MCP + Gmail DRAFT MCP + slack_native(actor, post) + Telegram│
   │                 gateway (tmux gw) + Slack Socket Mode (ONLY the actor opens it)        │
   │                                                                                       │
   │  Hermes cron (in the actor gateway):  gbrain dream  nightly @ 03:00                   │
-  │  GBrain (PGLite, gbrain serve, stdio MCP — 87 tools) wired into BOTH profiles         │
+  │    (the dream script STOPS the brain tmux session, runs dream, RESTARTS it)           │
+  │  GBrain (PGLite, ONE HTTP server :3131 — 88 tools) wired into BOTH profiles as URL MCP│
   │  Embeddings: OpenRouter text-embedding-3-small (required for dream's embed phase)     │
   │  LLM: Ollama Cloud (glm-4.7) — off-box inference (NOT kimi-k2.5; see Step 1 note)     │
   │                                                                                       │
-  │  Watchdog (tmux wd): checks 8899/9119/cf/gw, restarts dead, re-syncs clock /30s,      │
+  │  Watchdog (tmux wd): checks 8899/9119/3131/cf/gw, restarts dead, re-syncs clock /30s, │
   │                      nightly 04:00 restarts actor+reader gateways (slack 8h-stale fix) │
   └───────────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -85,35 +93,88 @@
 | **Cloudflare zone `growthsystems.ai`** | Already a CF zone on the operator Mac's cloudflared (`~/.cloudflared/cert.pem`). **No new API token needed** — the named tunnel is minted from this existing cert. **⚠️ Zone settings pre-flight (one-time, in the CF dashboard):** **Network → WebSockets = ON** and **Security → Bots → Bot Fight Mode = OFF**. If WebSockets is off (or Bot Fight Mode interferes), Cloudflare strips the WS `Upgrade` header and the Hermes dashboard's terminal chat (`/api/pty`) gets 401 through the tunnel even though Hermes accepts the same handshake locally (verified on Mark, 2026-06-01). |
 | **Ollama Cloud API key(s)** | LLM inference (`glm-4.7` — the proven agentic model; **NOT** kimi-k2.5, see Step 1). Off-box; keeps the box light. Bring **at least two keys** so the credential pool can fail over on a 429 (Step 1 "Credential pool"). |
 | **GBrain source** | The brain engine is cloned + built from `https://github.com/garrytan/gbrain` (bun). No separate account needed; the box clones it in Step 1. |
-| **Embeddings key (OpenRouter or OpenAI)** | **NOW REQUIRED — no longer deferred.** GBrain's nightly `dream` has an `embed` phase; Ollama Cloud has **no** `/v1/embeddings` endpoint, so embeddings must come from OpenRouter/OpenAI (`openrouter:openai/text-embedding-3-small`, 1536 dims). |
+| **Embeddings key (OpenRouter or OpenAI)** | **NOW REQUIRED — no longer deferred.** GBrain's nightly `dream` has an `embed` phase; Ollama Cloud has **no** `/v1/embeddings` endpoint, so embeddings must come from OpenRouter/OpenAI (`openrouter:openai/text-embedding-3-small`, 1536 dims). **⚠️ Budget note (issue 7):** gbrain **0.42 auto-sets `chat_model = openrouter:openai/gpt-5.2`**, so dream's LLM phases (synthesize/extract/patterns) **bill the same OpenRouter key** — not just embeddings. Expect real OpenRouter spend on every nightly dream; size the key's budget accordingly. |
 | **Composio account + API key** | OAuth + MCP for the Gmail trust split (`ak_…`). |
 | **Telegram bot PER CLIENT** | One dedicated bot from **@BotFather** per box. Telegram allows exactly one `getUpdates` consumer — a second poller = permanent conflict. |
 | **Slack app PER CLIENT** | One Slack app per workspace (Step 11a). Produces `xoxb-` bot token, `xapp-` app token, `T…` workspace id, `U…` user id. |
 
-### Operator helper — calling the orgo /bash API
+### Operator helper — calling the orgo /bash API (PURE-PYTHON, retry-hardened)
 
-Put this at the top of your shell. Every **[BOX]** command below assumes it.
+> **⚠️ Replaced the old bash+curl helper.** During the Mark live install the
+> orgo API threw recurring **503/502/connection-refused bursts that lasted
+> 30–60+ seconds** at a time. A thin `curl` wrapper silently returned `exit -1`
+> with an empty body and the operator could not tell "command failed to land"
+> from "command landed but returned nothing." The proven helper is a **pure-Python
+> `urllib` client with 6 retries and exponential backoff (5→30 s)**. **Hard rule:
+> every deploy command must be VERIFIED to have landed with a separate read-only
+> follow-up command — never assume a mutating call succeeded** (issues 1, 19).
+
+Save this as `orgo_bash.py` on the operator Mac and source the wrapper. Every
+**[BOX]** command below assumes `orgo_bash "…"` resolves to it.
 
 ```bash
 export ORGO_API_KEY="<ORGO_API_KEY>"   # the paid-workspace key, NEVER commit
 export CID="<CID>"                      # set after Step 0 creates the computer
+```
 
-orgo_bash() {  # usage: orgo_bash "command"
-  curl -s -m 120 -X POST "https://www.orgo.ai/api/computers/$CID/bash" \
-    -H "Authorization: Bearer $ORGO_API_KEY" -H "Content-Type: application/json" \
-    -d "$(python3 -c 'import json,sys; print(json.dumps({"command": sys.argv[1]}))' "$1")"
-}
+```python
+# orgo_bash.py — pure-Python orgo /bash client. urllib only (no deps).
+# Usage: python3 orgo_bash.py "command string"
+import json, os, sys, time, urllib.request, urllib.error
+
+API_KEY = os.environ["ORGO_API_KEY"]
+CID     = os.environ["CID"]
+URL     = f"https://www.orgo.ai/api/computers/{CID}/bash"
+
+def run(cmd, retries=6):
+    body = json.dumps({"command": cmd}).encode()
+    backoff = 5
+    last = None
+    for attempt in range(1, retries + 1):
+        try:
+            req = urllib.request.Request(
+                URL, data=body, method="POST",
+                headers={"Authorization": f"Bearer {API_KEY}",
+                         "Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=180) as r:
+                return r.read().decode()
+        except (urllib.error.HTTPError, urllib.error.URLError, ConnectionError, TimeoutError) as e:
+            # orgo throws 503/502/connection-refused bursts that last 30-60s.
+            last = e
+            code = getattr(e, "code", "conn")
+            sys.stderr.write(f"[orgo_bash] attempt {attempt}/{retries} failed ({code}); "
+                             f"retrying in {backoff}s\n")
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 30)   # 5,10,20,30,30…
+    raise SystemExit(f"[orgo_bash] all {retries} attempts failed: {last}")
+
+if __name__ == "__main__":
+    print(run(sys.argv[1]))
+```
+
+```bash
+# Shell wrapper so every [BOX] step can call orgo_bash "<cmd>".
+orgo_bash() { python3 /path/to/orgo_bash.py "$1"; }
 ```
 
 > **/bash API gotchas (apply to EVERY [BOX] step):**
-> - The endpoint is **intermittently flaky** — it returns `exit_code: -1` with
->   empty output, or empty non-JSON bodies. **Always retry**, and **always
->   verify mutating commands with a follow-up read-only command** rather than
->   trusting the mutating call's response.
-> - **Never `pkill -f "<string>"` where `<string>` also appears in the command
->   you're sending** — the orgo bash wrapper's own cmdline contains your full
->   command text, so the pkill kills its own in-flight command. Use the
->   regex-bracket trick `pkill -f "hermes dashboar[d]"` or `pkill -x <exactname>`.
+> - **Failure bursts last 30–60+ seconds** (503/502/connection-refused, or
+>   `exit_code: -1` with empty output). The Python helper above retries 6× with
+>   5→30 s backoff. **Always verify mutating commands with a follow-up read-only
+>   command** — never trust the mutating call's own response (issues 1, 19).
+> - **NEVER put `sleep N` inside an orgo /bash command** — a long-running
+>   in-call sleep trips the API into timeouts/503s. **Pattern:** launch the work
+>   in tmux in one call, then *poll status in separate calls*, doing the waiting
+>   on the operator's Mac (e.g. a Python `time.sleep` between `orgo_bash` calls),
+>   NOT inside the box command (issue 13). (The few `sleep 3/5/8` in this doc are
+>   short, post-`tmux new-session` settles — keep them tiny; never `sleep 30+`.)
+> - **The `pkill -f` self-kill trap is worse than it looks.** `pkill -f
+>   "<string>"` matches your *own* command's FULL cmdline **including heredoc
+>   contents** — so if your command writes a launcher script that contains the
+>   text `gbrain serve` and you also `pkill -f "gbrain.*serv[e]"`, you kill your
+>   own in-flight command. **Kill by PID (`ps … | … | kill`) or by exact name
+>   (`pkill -x <exactname>`) only** — never `pkill -f` on a string that appears
+>   anywhere in the command you're sending (issue 23).
 > - `nohup`/`setsid` background jobs get **reaped** by orgo. **Only tmux
 >   survives.** No systemd, no cron/crontab on orgo boxes. (Hermes has its OWN
 >   in-process cron — that's what runs `gbrain dream`, Step 4.)
@@ -128,7 +189,7 @@ orgo_bash() {  # usage: orgo_bash "command"
 | orgo computer | `<CLIENT>-agent` | `mark-agent` (`7136d3d6-dde9-4888-a564-ffecc7ebe763`) |
 | Console hostname | `safeclaw-<CLIENT>.growthsystems.ai` | `safeclaw-mark.growthsystems.ai` |
 | Hermes dash hostname | `hermes-<CLIENT>.growthsystems.ai` | `hermes-mark.growthsystems.ai` |
-| Cloudflare tunnel | `safeclaw-<CLIENT>` | `safeclaw-mark` |
+| Cloudflare tunnel | `safeclaw-<CLIENT>` | `safeclaw-mark-v2` (the `-v2` is the split-brain re-point — issue 17, Step 8a) |
 | Telegram bot | client's own, e.g. `@<CLIENT>_outbound_bot` | `@mark_outbound_bot` |
 | Slack app | `<Client> Assistant` | `Mark's Assistant` |
 
@@ -218,8 +279,11 @@ orgo_bash 'set -e
 # repo (track main — new client deploys follow main, NOT the Suffolk branch)
 git clone -b main https://github.com/Vasanth19/safeclaw /opt/safeclaw 2>/dev/null || \
   (cd /opt/safeclaw && git fetch && git reset --hard origin/main)
-# python deps for the Console + provisioning
-apt-get update -y && apt-get install -y python3-pip
+# python deps for the Console + provisioning.
+# NOTE: unzip is REQUIRED — bun s installer unzips its release and fresh
+# Ubuntu 24.04 orgo boxes do NOT ship unzip (issue 2). Without it the bun
+# install in the next block fails silently and gbrain never builds.
+apt-get update -y && apt-get install -y python3-pip unzip
 pip3 install --break-system-packages flask pyyaml requests
 # Node 20 static tarball — vite (Hermes web) AND the Slack MCP build need Node 20+
 cd /tmp && curl -fsSLO https://nodejs.org/dist/v20.18.1/node-v20.18.1-linux-x64.tar.xz \
@@ -241,7 +305,11 @@ orgo_bash 'node --version && cloudflared --version'
 Expected: `v20.18.1` and a `cloudflared version …` line. If `cloudflared:
 command not found`, Step 8's tunnel will never start.
 
-Install **gbrain** and **Hermes**, then wire the brain into Hermes as an MCP.
+Install **gbrain** and **Hermes**. **Do NOT wire the brain into Hermes here** —
+all gbrain MCP wiring now happens **after Step 2** (issue 5: `hermes mcp add
+gbrain` validates by spawning `gbrain serve`, which fails/hangs on an
+uninitialized brain — and the final wiring is a *URL* MCP to the HTTP server, not
+stdio; see Step 2c).
 
 > **Hermes version decision (per hermes_internals notes).** Hermes **0.11**
 > already ships the in-process **cron** scheduler we need for dreaming (Step 4),
@@ -251,28 +319,51 @@ Install **gbrain** and **Hermes**, then wire the brain into Hermes as an MCP.
 > must pre-build the web bundle once (`cd /opt/hermes/web && npm run build`).
 > Cron is present in both; **the gateway must be running for cron to fire.**
 
+> **⚠️ NEVER pipe the install script through `| tail -N`** (issue 4). A pipe
+> masks the script's exit code (`set -o pipefail` is not on by default), so a
+> failed Hermes install looks like success. **Run `setup-hermes.sh` bare, check
+> its exit status, THEN tail the log** — as the block below does.
+
 ```bash
 orgo_bash 'set -e
 export PATH=/tmp/node-v20.18.1-linux-x64/bin:$PATH
 # --- gbrain (bun CLI) — source is github.com/garrytan/gbrain ---
 curl -fsSL https://bun.sh/install | bash && export PATH="$HOME/.bun/bin:$PATH"
+# 🚨 CRITICAL: gbrain s shebang is `#!/usr/bin/env bun`. Symlink BOTH gbrain AND
+# bun globally (issue 21). Without the bun symlink, every NON-interactive spawn
+# of gbrain (the HTTP server, the dream cron, the watchdog, the Console) dies with
+#   /usr/bin/env: bun: No such file or directory
+# even though gbrain resolves on PATH.
+ln -sf /root/.bun/bin/bun /usr/local/bin/bun
 # NO "|| true" here — a failed clone must abort, not silently leave gbrain absent.
 git clone https://github.com/garrytan/gbrain.git /opt/gbrain-src
 (cd /opt/gbrain-src && bun install && bun link)
 # Make gbrain globally resolvable in EVERY fresh orgo /bash shell (and the dream
 # cron + Console /api/chat) — do not rely on a PATH export persisting.
 ln -sf "$(command -v gbrain)" /usr/local/bin/gbrain
-# --- Hermes (>=0.11 for cron; prefer 0.15.1) ---
-bash /opt/safeclaw/scripts/setup-hermes.sh   # installs Hermes into /opt/hermes,
-                                              # symlinks /usr/local/bin/hermes,
-                                              # installs croniter (cron dep)
+echo GBRAIN_INSTALLED'
+
+# --- Hermes (>=0.11 for cron; prefer 0.15.1). Run BARE, then check exit. ---
+orgo_bash 'set -e
+export PATH=/tmp/node-v20.18.1-linux-x64/bin:$PATH
+bash /opt/safeclaw/scripts/setup-hermes.sh; echo "SETUP_HERMES_EXIT=$?"'
+# Verify SETUP_HERMES_EXIT=0 in the output BEFORE proceeding. If you want the log,
+# read it in a SEPARATE call (never `... | tail` the install itself — issue 4):
+orgo_bash 'tail -20 /var/log/setup-hermes.log 2>/dev/null || echo "(no log file)"'
+
 # --- default profile: LLM = Ollama Cloud glm-4.7 (NOT kimi-k2.5, see note) ---
+orgo_bash 'set -e
 export HERMES_HOME=/root/.hermes
 hermes config set model.provider ollama
 hermes config set model.default glm-4.7
+# 🚨 CRITICAL base_url fix (issue 20): Hermes 0.15.1 s installer ships
+#   model.base_url: https://openrouter.ai/api/v1
+# in the DEFAULT config. Setting model.provider=ollama does NOT change it, and the
+# provider resolver then DEMANDS an OPENROUTER_API_KEY for chat. EVERY profile
+# (default here; reader/actor in Step 3) MUST repoint base_url at Ollama Cloud:
+hermes config set model.base_url https://ollama.com/v1
 echo "OLLAMA_API_KEY=<OLLAMA_API_KEY>" >> /root/.hermes/.env
-# brain MCP (stdio) — 87 tools
-hermes mcp add gbrain --command gbrain --args serve
+# NOTE: gbrain MCP is NOT added here — it is wired as a URL MCP after Step 2 (Step 2c).
 echo STACK_DONE'
 ```
 
@@ -284,18 +375,22 @@ echo STACK_DONE'
 > (`glm-5` / `minimax-m2` are acceptable fallbacks; avoid `glm-4.6` parser bug,
 > `gpt-oss` empty-content, and the `qwen3` variants).
 
-**Verify Hermes + gbrain both resolve and the brain MCP is wired:**
+**Verify Hermes + gbrain + bun all resolve and base_url is repointed:**
 ```bash
 orgo_bash 'export HERMES_HOME=/root/.hermes
 which hermes
 hermes --version
-hermes mcp list | grep -c gbrain
 which gbrain
-gbrain --version'
+which bun
+gbrain --version
+hermes config show | grep -i base_url'
 ```
-Expected: `/usr/local/bin/hermes`, a Hermes version `>= 0.11`, `1` (gbrain MCP
-present), `/usr/local/bin/gbrain`, and a gbrain version line. If `which hermes`
-or `which gbrain` is empty, STOP — nothing downstream will work. Hermes
+Expected: `/usr/local/bin/hermes`, a Hermes version `>= 0.11`,
+`/usr/local/bin/gbrain`, `/usr/local/bin/bun`, a gbrain version line (gbrain
+**0.42.x**), and `model.base_url: https://ollama.com/v1` (NOT openrouter — issue
+20). If `which hermes`, `which gbrain`, or `which bun` is empty, STOP — nothing
+downstream will work (the missing `bun` symlink is issue 21; every non-interactive
+gbrain spawn fails without it). The gbrain MCP is wired in Step 2c; Hermes
 answering from the brain end-to-end is verified in Step 13.
 
 ### Step 1 (cont.) — Credential pool (multi-key Ollama failover)  **[BOX]**
@@ -330,57 +425,155 @@ This same pool is added to the reader and actor profiles in Step 3.
 
 ---
 
-## Step 2 — GBrain init (PGLite) + EMBEDDINGS  **[BOX]**
+## Step 2 — GBrain init (PGLite) + EMBEDDINGS + sync repo  **[BOX]**
 
 GBrain initialises as PGLite (serverless, on-box). **Embeddings are now required**
 because the nightly `dream` (Step 4) runs an `embed` phase, and Ollama Cloud has
-**no** embeddings endpoint. The embedding model goes in the **FILE config**
-(`.gbrain/config.json`), NOT via `gbrain config set` — a known gotcha: if the
-model only lives in the DB, `gbrain embed --stale` fails looking for
-`ZEROENTROPY_API_KEY`.
+**no** embeddings endpoint.
+
+> **⚠️ gbrain 0.42 changed init — the old file-config hack is OBSOLETE (issue 6).**
+> In 0.42 the embedding model is passed **at init time** with
+> `--embedding-model`. Plain `gbrain init --pglite` **stalls on an interactive
+> provider prompt** (orgo /bash is non-interactive → it hangs forever). The
+> earlier Step-2 python edit of `.gbrain/config.json` is **deleted** — do not use
+> it. `OPENROUTER_API_KEY` MUST be exported **in the same shell as init**.
 
 ```bash
 orgo_bash 'set -e
 export GBRAIN_HOME=/opt/brain
-export PATH="$HOME/.bun/bin:$PATH"
+export PATH=/usr/local/bin:$HOME/.bun/bin:$PATH
+export OPENROUTER_API_KEY=<OPENROUTER_API_KEY>   # MUST be in the init shell
 # NO "2>/dev/null || true" — if gbrain failed to install in Step 1, init MUST
-# fail loudly here rather than silently "succeeding" and surfacing much later.
-gbrain init --pglite
-
-# Put embedding model + dims in the FILE config (load-bearing — not config set):
-python3 - <<"PY"
-import json, pathlib
-p = pathlib.Path("/opt/brain/.gbrain/config.json")
-cfg = json.loads(p.read_text()) if p.exists() else {}
-cfg["embedding_model"] = "openrouter:openai/text-embedding-3-small"
-cfg["embedding_dimensions"] = 1536
-p.write_text(json.dumps(cfg, indent=2))
-print("wrote", p)
-PY
-
-# embedding key in the gbrain env (and reused by dream later)
+# fail loudly here. Embedding model is passed AT INIT (0.42; issue 6):
+gbrain init --pglite --embedding-model openrouter:openai/text-embedding-3-small
+# embedding key in the gbrain env (reused by the HTTP server + dream later)
 echo "OPENROUTER_API_KEY=<OPENROUTER_API_KEY>" >> /opt/brain/.env
-echo BRAIN_EMBED_DONE'
+echo BRAIN_INIT_DONE'
 ```
 
-> **Restart `gbrain serve` after editing `config.json`** — the running MCP
-> caches config at boot. The Step 1 `hermes mcp add gbrain` spawns `gbrain serve`
-> on demand; if a serve is already running, recycle it.
+> **OpenAI key instead of OpenRouter?** gbrain supports both. With an OpenAI key,
+> pass `--embedding-model openai:text-embedding-3-small` (same 1536 dims) and put
+> `OPENAI_API_KEY` in `/opt/brain/.env` (and the Step 4 dream cron) in place of
+> `OPENROUTER_API_KEY`.
 
-> **OpenAI key instead of OpenRouter?** gbrain supports both providers. If the
-> client only has an OpenAI key, use
-> `embedding_model = openai:text-embedding-3-small` (same 1536 dims) in the FILE
-> config and put `OPENAI_API_KEY` in `/opt/brain/.env` **and** the Step 4 dream
-> cron command (in place of `OPENROUTER_API_KEY`).
+### Step 2 (cont.) — sync repo (so dream's filesystem phases run)  **[BOX]**
 
-**Verify:**
+> **A DB-only PGLite brain SKIPS dream's filesystem phases** (lint / backlinks /
+> sync / synthesize / patterns) (issue 14). dream needs a git working tree to
+> sync against. **REQUIRED:** create a git repo and point `sync.repo_path` at it,
+> and make **≥1 commit** (the `sync` phase fails with zero commits).
+
 ```bash
-orgo_bash 'export GBRAIN_HOME=/opt/brain PATH="$HOME/.bun/bin:$PATH"
-python3 -c "import json;c=json.load(open(\"/opt/brain/.gbrain/config.json\"));print(c[\"embedding_model\"],c[\"embedding_dimensions\"])"
+orgo_bash 'set -e
+export GBRAIN_HOME=/opt/brain PATH=/usr/local/bin:$HOME/.bun/bin:$PATH
+mkdir -p /opt/brain/repo && cd /opt/brain/repo
+git init
+git config user.email "brain@safeclaw.local"
+git config user.name  "SafeClaw Brain"
+gbrain config set sync.repo_path /opt/brain/repo
+echo SYNC_REPO_DONE'
+```
+
+(The first commit is made in Step 2b, right after the seed page is written.)
+
+**Verify init + embeddings + sync repo:**
+```bash
+orgo_bash 'export GBRAIN_HOME=/opt/brain PATH=/usr/local/bin:$HOME/.bun/bin:$PATH
+gbrain config show 2>/dev/null | grep -iE "embedding_model|repo_path"
 export OPENROUTER_API_KEY=<OPENROUTER_API_KEY>; gbrain embed --stale 2>&1 | tail -3'
 ```
-Expected: `openrouter:openai/text-embedding-3-small 1536` and an embed run that
-does NOT error about `ZEROENTROPY_API_KEY` (0 stale is fine on a fresh brain).
+Expected: `embedding_model` = `openrouter:openai/text-embedding-3-small`,
+`sync.repo_path` = `/opt/brain/repo`, and an embed run with NO
+`ZEROENTROPY_API_KEY` error (0 stale on a fresh brain is fine).
+
+---
+
+## Step 2c — ONE persistent GBrain HTTP server (PGLite single-writer lock)  **[BOX]**
+
+> **🚨 THE most important architecture change from the Mark install (issue 22).**
+> **PGLite allows exactly ONE writer process.** If every Hermes consumer (the
+> actor gateway + the dashboard `--tui` gateway + every Console chat) spawns its
+> **own** `gbrain serve` stdio MCP, they all fight for the single PGLite writer
+> lock and all but one fail with **`GBrain: Timed out waiting for PGLite lock`**.
+> The old stdio `hermes mcp add gbrain --command gbrain --args serve` pattern
+> CANNOT work with multiple consumers — it is **replaced** by ONE shared HTTP
+> brain server that every profile reaches as a **URL MCP** (this mirrors the
+> original VPS architecture).
+
+**2c-a. Launcher + persistent HTTP server in tmux `brain`.** The launcher exports
+`GBRAIN_HOME`, `PATH`, and sources `/opt/brain/.env` so the server has the embed
+key:
+
+```bash
+orgo_bash 'cat > /opt/launch-brain.sh <<"EOF"
+#!/usr/bin/env bash
+export GBRAIN_HOME=/opt/brain
+export PATH=/usr/local/bin:/root/.bun/bin:$PATH
+set -a; [ -f /opt/brain/.env ] && . /opt/brain/.env; set +a
+exec gbrain serve --http --port 3131
+EOF
+chmod +x /opt/launch-brain.sh
+tmux kill-session -t brain 2>/dev/null
+tmux new-session -d -s brain /opt/launch-brain.sh
+echo BRAIN_HTTP_UP'
+```
+
+**2c-b. Mint a bearer token for Hermes.**
+
+> **⚠️ `gbrain auth create` needs the `--name` flag** (issue 22b). A *positional*
+> name (`gbrain auth create hermes`) just prints usage and creates nothing.
+
+```bash
+orgo_bash 'export GBRAIN_HOME=/opt/brain PATH=/usr/local/bin:/root/.bun/bin:$PATH
+# Mint, then capture the token into a chmod-600 file the wiring step reads.
+gbrain auth create --name hermes | tee /opt/brain/.hermes-token.raw
+# Extract just the token (a gbrain_… string) into the final file:
+grep -oE "gbrain_[A-Za-z0-9]+" /opt/brain/.hermes-token.raw | head -1 > /opt/brain/.hermes-token
+chmod 600 /opt/brain/.hermes-token && rm -f /opt/brain/.hermes-token.raw
+test -s /opt/brain/.hermes-token && echo TOKEN_SAVED'
+```
+
+**2c-c. Wire gbrain as a URL MCP into EVERY profile** (default + reader + actor)
+via PyYAML — same pattern as the Gmail MCP (Step 11). Each profile points at the
+one HTTP server with a Bearer header:
+
+```bash
+orgo_bash 'TOKEN=$(cat /opt/brain/.hermes-token); export TOKEN
+python3 - <<"PY"
+import os, yaml, pathlib
+token = os.environ["TOKEN"]
+for role, home in {
+    "default": "/root/.hermes",
+    "reader":  "/root/.hermes/profiles/reader",
+    "actor":   "/root/.hermes/profiles/actor",
+}.items():
+    cfg_path = pathlib.Path(home) / "config.yaml"
+    cfg = yaml.safe_load(cfg_path.read_text()) if cfg_path.exists() else {}
+    cfg = cfg or {}
+    cfg.setdefault("mcp_servers", {})["gbrain"] = {
+        "url": "http://127.0.0.1:3131/mcp",
+        "headers": {"Authorization": f"Bearer {token}"},
+        "timeout": 120, "connect_timeout": 30,
+    }
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg_path.write_text(yaml.safe_dump(cfg, sort_keys=False, allow_unicode=True))
+    print("wired gbrain URL MCP into", cfg_path)
+PY'
+```
+
+> **Why a URL MCP, not `hermes mcp add gbrain --command gbrain --args serve`:**
+> the stdio form spawns a *new* `gbrain serve` per consumer → PGLite lock fight
+> (issue 22). The reader/actor profiles do not exist yet at this point if you run
+> 2c before Step 3 — run **Step 3 first**, then 2c-c, OR (proven on Mark) run 2c-a
+> and 2c-b here and fold 2c-c in right after Step 3 creates the profiles. Either
+> way: **every profile gets the URL MCP; none gets a stdio gbrain.**
+
+**Verify the HTTP brain server is alive (405 on a bare GET = healthy MCP endpoint):**
+```bash
+orgo_bash 'curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:3131/mcp'
+```
+Expected: `405` (the MCP endpoint rejects a plain GET — that IS the alive signal;
+a connection failure means the `brain` tmux session died — check `tmux ls`).
 
 ---
 
@@ -392,33 +585,51 @@ Step 13's deliverable (`hermes chat "what do you know about <CLIENT>?"`) returns
 nothing. Seed **at least one identity/client page** so embeddings exist on a real
 page and the end-to-end chat answer references seeded content.
 
+> **⚠️ `gbrain put-page` does NOT exist in 0.42 (issue 8).** The command is
+> `gbrain put <slug>` reading the page body from **stdin**:
+> `gbrain put <slug> < file.md`. Also: **0.42 auto-embeds at put time**, so seeing
+> `Embedded 0 chunks (0 stale found)` immediately after a put is NORMAL (the chunks
+> were already embedded by the put) — it is not an error and not an empty no-op.
+
 ```bash
-orgo_bash 'export GBRAIN_HOME=/opt/brain PATH="$HOME/.bun/bin:$PATH" OPENROUTER_API_KEY=<OPENROUTER_API_KEY>
-# Seed a starter identity/client page. (If the repo bootstrap is appropriate for
-# the client, run scripts/bootstrap-brain.sh instead — but at minimum seed one
-# page so retrieval has real content.)
-gbrain put-page "people/<CLIENT>" "# <CLIENT>
+orgo_bash 'set -e
+export GBRAIN_HOME=/opt/brain PATH=/usr/local/bin:$HOME/.bun/bin:$PATH OPENROUTER_API_KEY=<OPENROUTER_API_KEY>
+# Seed a starter identity/client page via STDIN (0.42 has no put-page). If the
+# repo bootstrap fits the client, run scripts/bootstrap-brain.sh instead — but at
+# minimum seed one page so retrieval has real content.
+gbrain put "people/<CLIENT>" <<"MD"
+# <CLIENT>
 
 SafeClaw is the AI email/Slack/Telegram assistant deployed for <CLIENT>.
 This is the seed identity page so the brain has content to embed and recall.
-Replace/expand with real client context (entities, markets, contacts) as known."
-# embed the freshly-seeded page
+Replace/expand with real client context (entities, markets, contacts) as known.
+MD
+# 0.42 auto-embeds at put time; this confirms (0 stale is fine — already embedded):
 gbrain embed --stale 2>&1 | tail -3
 echo SEED_DONE'
 ```
 
+**Make the first sync commit (issue 14)** — the dream `sync` phase fails with zero
+commits in the sync repo:
+```bash
+orgo_bash 'cd /opt/brain/repo && git add -A && git commit -m "initial seed" 2>&1 | tail -2'
+```
+(If the put did not materialise files into `/opt/brain/repo`, the first `gbrain
+dream` `sync` phase will write them — but make at least an empty initial commit so
+the repo has history: `git commit --allow-empty -m "initial seed"`.)
+
 **Verify the seed page exists and is embedded:**
 ```bash
-orgo_bash 'export GBRAIN_HOME=/opt/brain PATH="$HOME/.bun/bin:$PATH"
-gbrain list_pages | grep -i "<CLIENT>"
+orgo_bash 'export GBRAIN_HOME=/opt/brain PATH=/usr/local/bin:$HOME/.bun/bin:$PATH
+gbrain list_pages 2>/dev/null | grep -i "<CLIENT>"
 export OPENROUTER_API_KEY=<OPENROUTER_API_KEY>; gbrain query "<CLIENT>" 2>&1 | head -5'
 ```
 Expected: the `people/<CLIENT>` page listed, and the query returns the seeded
-content (proves embeddings are real, not an empty-brain no-op). Step 13's chat
-deliverable now has something to answer with.
+content (proves embeddings are real). Step 13's chat deliverable now has something
+to answer with.
 
-> If `gbrain put-page` arg shape differs on the installed gbrain version, check
-> `gbrain put-page --help`; the goal is simply "one real page, embedded."
+> If `gbrain put` arg shape differs on the installed gbrain version, check
+> `gbrain put --help`; the goal is simply "one real page, embedded, + 1 commit."
 
 ---
 
@@ -429,35 +640,58 @@ Each Hermes **profile** is an isolated `HERMES_HOME`
 servers / skills. Profiles give the reader and actor **different tools**, not
 just a different voice. The trust split:
 
-- **reader** → gbrain MCP + Gmail **read-only** MCP + Slack `reader` MCP. No
+- **reader** → gbrain URL MCP + Gmail **read-only** MCP + Slack `reader` MCP. No
   send/draft/post tool exists in it.
-- **actor** → gbrain MCP + Gmail **draft** MCP + Slack `actor` MCP + the Telegram
-  gateway + the Slack Socket Mode connection.
+- **actor** → gbrain URL MCP + Gmail **draft** MCP + Slack `actor` MCP + the
+  Telegram gateway + the Slack Socket Mode connection.
 - **default** → ONLY the dashboard's embedded `--tui` gateway. **No Telegram
   token, no Slack app token** (critical — see Steps 4, 7, 11/12).
+
+> **⚠️ Hermes 0.15.1 has NO `-p <profile>` flag (issue 9).** Profiles are created
+> with **`hermes profile create <name>`** (note: singular **`profile`**, not
+> `profiles`) and every per-profile command is run with
+> **`HERMES_HOME=/root/.hermes/profiles/<name>`** as an env var — there is no
+> `-p`. The loop below is rewritten accordingly.
+>
+> **⚠️ `hermes profile create` COPIES the default profile (issue 11)** — its
+> `config.yaml` (so the base_url, model, token-economy knobs) AND its credential
+> pool. So set the default profile's keys/knobs in Step 1 **before** creating
+> profiles to inherit them. **Proven concurrency pattern on Mark:** give actor and
+> reader **DIFFERENT primary keys** (actor = a dedicated key, reader = the shared
+> key), each carrying the *other* as a pool fallback → true concurrency isolation
+> (see the concurrency-starvation box below).
 
 ```bash
 orgo_bash 'set -e
 export HERMES_HOME=/root/.hermes
 for p in reader actor; do
+  # Create the profile (copies default config + cred pool — issue 11).
+  hermes profile create $p 2>&1 | tail -1
   D=/root/.hermes/profiles/$p
   mkdir -p $D/logs
-  hermes -p $p config set model.provider ollama
-  hermes -p $p config set model.default glm-4.7       # NOT kimi-k2.5 (Step 1 note)
+  # All per-profile commands use HERMES_HOME=$D (NO -p flag — issue 9).
+  HERMES_HOME=$D hermes config set model.provider ollama
+  HERMES_HOME=$D hermes config set model.default glm-4.7   # NOT kimi-k2.5 (Step 1)
+  HERMES_HOME=$D hermes config set model.base_url https://ollama.com/v1  # issue 20
   # --- TOKEN-ECONOMY KNOBS (the single biggest operational fix) ---
   # Defaults (compression-state-dependent, max_turns=90, retries=3) produced
   # O(n^2) token growth (observed 94-turn runs sending 61,485 tokens in ONE call)
   # that vaporized the weekly Ollama cap in ~1 day. Apply to BOTH profiles.
-  hermes -p $p config set agent.auxiliary.compression.enabled true
-  hermes -p $p config set agent.max_turns 25
-  hermes -p $p config set agent.api_max_retries 2
-  echo "OLLAMA_API_KEY=<OLLAMA_API_KEY>" >> $D/.env
-  # credential pool (multi-key failover) into BOTH profiles — see Step 1 gotchas
-  HERMES_HOME=$D hermes auth add ollama-cloud --type api-key --api-key <OLLAMA_FALLBACK_KEY> --label fallback
-  # brain MCP into BOTH profiles
-  hermes -p $p mcp add gbrain --command gbrain --args serve
+  HERMES_HOME=$D hermes config set agent.auxiliary.compression.enabled true
+  HERMES_HOME=$D hermes config set agent.max_turns 25
+  HERMES_HOME=$D hermes config set agent.api_max_retries 2
 done
+# --- Per-profile PRIMARY keys (different keys = concurrency isolation, issue 11) ---
+# actor gets the DEDICATED key as primary; reader gets the SHARED key; each carries
+# the other as a pool fallback.
+echo "OLLAMA_API_KEY=<OLLAMA_API_KEY>"          >> /root/.hermes/profiles/actor/.env
+echo "OLLAMA_API_KEY=<OLLAMA_FALLBACK_KEY>"     >> /root/.hermes/profiles/reader/.env
+HERMES_HOME=/root/.hermes/profiles/actor  hermes auth add ollama-cloud --type api-key --api-key <OLLAMA_FALLBACK_KEY> --label fallback
+HERMES_HOME=/root/.hermes/profiles/reader hermes auth add ollama-cloud --type api-key --api-key <OLLAMA_API_KEY>      --label fallback
 echo PROFILES_DONE'
+# NOTE: gbrain is wired into BOTH profiles as a URL MCP in Step 2c-c (NOT a stdio
+# `hermes mcp add gbrain` — that fights the PGLite single-writer lock, issue 22).
+# Run Step 2c-c now if you have not already.
 ```
 
 > **Why these three knobs are mandatory** (see
@@ -483,15 +717,16 @@ echo PROFILES_DONE'
 > A direct probe returns `too many concurrent requests` (NOT a usage-limit
 > message). See `knowledge/gotchas/openclaw-ollama-concurrency-conflict.md`.
 
-**Verify (MCP + token-economy knobs applied to both profiles):**
+**Verify (MCP + token-economy knobs applied to both profiles).** Note: **`hermes
+config get` does NOT exist (issue 10)** — use `hermes config show | grep <key>`:
 ```bash
 orgo_bash 'for p in reader actor; do echo "== $p =="; \
   HERMES_HOME=/root/.hermes/profiles/$p hermes mcp list; \
-  HERMES_HOME=/root/.hermes/profiles/$p hermes config get agent.max_turns; \
-  HERMES_HOME=/root/.hermes/profiles/$p hermes config get agent.auxiliary.compression.enabled; \
+  HERMES_HOME=/root/.hermes/profiles/$p hermes config show | grep -iE "max_turns|compression|base_url"; \
   HERMES_HOME=/root/.hermes/profiles/$p hermes auth list; done'
 ```
-Expected: both list `gbrain`; `max_turns=25`; `compression.enabled=true`;
+Expected: both list `gbrain` (the URL MCP from Step 2c-c); `max_turns: 25`;
+`compression.enabled: true`; `base_url: https://ollama.com/v1`; and
 `ollama-cloud (2 credentials)`. (Gmail + Slack MCPs are added in Steps 8, 11, 12.)
 
 ---
@@ -507,22 +742,58 @@ Expected: both list `gbrain`; `max_turns=25`; `compression.enabled=true`;
 **What dreaming does** — `gbrain dream` is the 11-phase nightly maintenance pass:
 `lint → backlinks → sync → synthesize → extract → patterns →
 recompute_emotional_weight → consolidate → embed → orphans → purge`. The `embed`
-phase is why the OpenRouter
-key (Step 2) is mandatory. `purge` hard-deletes soft-deleted pages after 72 h.
-Without dreaming the brain accumulates orphans, stale embeddings, and missing
-backlinks — retrieval quality degrades over weeks.
+phase is why the OpenRouter key (Step 2) is mandatory. `purge` hard-deletes
+soft-deleted pages after 72 h. Without dreaming the brain accumulates orphans,
+stale embeddings, and missing backlinks — retrieval quality degrades over weeks.
 
+> **⚠️ Hermes 0.15.1 cron syntax is COMPLETELY different from the old template
+> (issue 12):**
+> - the schedule is **POSITIONAL** (first arg), e.g. `"0 3 * * *"` — there is
+>   **NO `--schedule` and NO `--command` flag**;
+> - the job runs a **script file** that must live at
+>   `$HERMES_HOME/scripts/<name>.sh` (passed via `--script <name>.sh`);
+> - **`--no-agent`** runs the script directly **without burning any LLM tokens**
+>   (the old `--command "hermes chat …"` form spent tokens every night).
+>
+> Form: `hermes cron create "0 3 * * *" --name gbrain-dream --script gbrain-dream.sh --no-agent`.
+> The cron only fires **while a gateway runs** — the actor gateway (Step 7).
+
+> **⚠️ The dream script MUST stop+restart the brain HTTP server (issue 22d).**
+> `gbrain dream` runs its own CLI which needs the **PGLite writer lock** — but the
+> persistent `gbrain serve --http` (tmux `brain`, Step 2c) already holds it. So the
+> script: stops the `brain` tmux session, runs `gbrain dream`, then restarts the
+> `brain` session. Otherwise dream deadlocks on the lock the HTTP server holds.
+
+**Write the dream script** at the actor profile's `scripts/` dir:
 ```bash
-orgo_bash 'set -e
-A=/root/.hermes/profiles/actor
-# dream needs GBRAIN_HOME + the embed key in its environment; the cron command
-# exports them inline so it does not depend on shell state.
-export HERMES_HOME=$A
-hermes cron create gbrain-dream \
-  --schedule "0 3 * * *" \
-  --command "bash -lc '"'"'export GBRAIN_HOME=/opt/brain OPENROUTER_API_KEY=<OPENROUTER_API_KEY> PATH=$HOME/.bun/bin:$PATH; gbrain dream >> /opt/brain/dream.log 2>&1'"'"'"
-# (cron needs croniter; setup-hermes.sh installs it. cron fires only while a
-#  gateway runs — the actor gateway from Step 7 is that gateway.)
+orgo_bash 'A=/root/.hermes/profiles/actor; mkdir -p $A/scripts
+cat > $A/scripts/gbrain-dream.sh <<"EOF"
+#!/usr/bin/env bash
+# Nightly gbrain dream. Stops the HTTP brain server (it holds the PGLite writer
+# lock), runs dream, restarts it. Logs to /opt/brain/dream.log.
+export GBRAIN_HOME=/opt/brain
+export PATH=/usr/local/bin:/root/.bun/bin:$PATH
+set -a; [ -f /opt/brain/.env ] && . /opt/brain/.env; set +a   # OPENROUTER_API_KEY etc.
+{
+  echo "=== dream start $(date -u) ==="
+  tmux kill-session -t brain 2>/dev/null   # release the PGLite writer lock
+  sleep 3
+  gbrain dream
+  tmux new-session -d -s brain /opt/launch-brain.sh   # restart the HTTP server
+  echo "=== dream end $(date -u) ==="
+} >> /opt/brain/dream.log 2>&1
+EOF
+chmod +x $A/scripts/gbrain-dream.sh
+echo DREAM_SCRIPT_WRITTEN'
+```
+
+**Register the cron** (new 0.15.1 syntax — positional schedule, `--script`,
+`--no-agent`):
+```bash
+orgo_bash 'export HERMES_HOME=/root/.hermes/profiles/actor
+hermes cron create "0 3 * * *" --name gbrain-dream --script gbrain-dream.sh --no-agent
+# (cron needs croniter; setup-hermes.sh installs it. cron fires only while the
+#  actor gateway runs — Step 7.)
 echo CRON_DONE'
 ```
 
@@ -539,15 +810,18 @@ orgo_bash 'HERMES_HOME=/root/.hermes/profiles/actor hermes cron list'
 ```
 Expected: a `gbrain-dream` entry, schedule `0 3 * * *`, next-run timestamp set.
 
-**Verify the gbrain pipeline (force one run):**
+**Verify the gbrain pipeline (force one run via the SCRIPT — it stops/restarts the
+brain server):**
 ```bash
-# force a run now to prove the gbrain dream pipeline end-to-end:
-orgo_bash 'export GBRAIN_HOME=/opt/brain OPENROUTER_API_KEY=<OPENROUTER_API_KEY> PATH=$HOME/.bun/bin:$PATH
-gbrain dream >> /opt/brain/dream.log 2>&1; tail -15 /opt/brain/dream.log'
+# Run the dream script itself (it releases the PGLite lock, dreams, restarts brain):
+orgo_bash 'bash /root/.hermes/profiles/actor/scripts/gbrain-dream.sh; tail -20 /opt/brain/dream.log'
+# Confirm the brain HTTP server came back up after the dream:
+orgo_bash 'curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:3131/mcp'   # 405 = back up
 ```
-Expected: `dream.log` shows all 11 phases completing (look for `lint … patterns …
-embed … purge` and a final summary), no `ZEROENTROPY_API_KEY` error in the embed
-phase.
+Expected: `dream.log` shows all 11 phases completing (look for `lint … sync …
+patterns … embed … purge` and a final summary), no `ZEROENTROPY_API_KEY` error in
+the embed phase, no `sync` failure (the Step 2b commit prevents that), and the
+`brain` HTTP server returns `405` again (restarted by the script).
 
 **Verify the SCHEDULER actually fires the job (not just the gbrain binary).** The
 manual run above proves the pipeline but NOT that Hermes' in-process cron triggers
@@ -577,11 +851,18 @@ job: a named cron entry in the profile whose gateway runs it.
 Typical client routines (register only the ones the client asked for):
 
 ```bash
-# Morning inbox triage digest at 07:00 (reader profile drafts observations,
-# actor profile delivers via Telegram/Slack):
-orgo_bash 'HERMES_HOME=/root/.hermes/profiles/actor hermes cron create morning-digest \
-  --schedule "0 7 * * 1-5" \
-  --command "hermes -p actor chat -q -Q \"Summarize overnight email + Slack and DM me the top 5 items\""'
+# Morning inbox triage digest at 07:00 weekdays. New 0.15.1 syntax (issue 12):
+# schedule is POSITIONAL; a script lives at $HERMES_HOME/scripts/. This routine
+# DOES want an LLM (so NOT --no-agent) — it agentically summarizes + DMs.
+orgo_bash 'A=/root/.hermes/profiles/actor; mkdir -p $A/scripts
+cat > $A/scripts/morning-digest.sh <<"EOF"
+#!/usr/bin/env bash
+export HERMES_HOME=/root/.hermes/profiles/actor
+export PATH=/usr/local/bin:/tmp/node-v20.18.1-linux-x64/bin:$PATH
+hermes chat -q -Q "Summarize overnight email + Slack and DM me the top 5 items"
+EOF
+chmod +x $A/scripts/morning-digest.sh
+HERMES_HOME=$A hermes cron create "0 7 * * 1-5" --name morning-digest --script morning-digest.sh'
 ```
 
 > **Rule:** every client routine is a `hermes cron` entry in the **actor** profile
@@ -722,10 +1003,28 @@ tunnel's credentials. Both get copied to the box; nothing else is minted.
 
 **8a. Create the tunnel + DNS  [MAC]:**
 
+> **⚠️ ALWAYS pass the tunnel UUID — NOT the name — to `route dns` (issue 18).**
+> `cloudflared tunnel route dns <name> …` can silently resolve the name to the
+> **WRONG** tunnel (observed on Mark: DNS got routed to an unrelated tunnel).
+> Capture the UUID from `tunnel create` (or `tunnel list`) and use it everywhere.
+
+> **⚠️ Re-pointing an EXISTING tunnel to a NEW box = split-brain (issue 17).** If
+> the **old** box is still running `cloudflared` on that same tunnel, requests
+> randomly hit either box → **intermittent 401s**. If you cannot reach the old box
+> to stop its `cloudflared`, do **NOT** reuse the tunnel — **create a NEW tunnel**
+> (e.g. `safeclaw-<CLIENT>-v2`) and repoint DNS with
+> `cloudflared tunnel route dns --overwrite-dns <TUNNEL_UUID> <hostname>`. The old
+> box then serves an orphaned tunnel harmlessly. **This is why the Mark reference
+> tunnel is `safeclaw-mark-v2`.**
+
 ```bash
-cloudflared tunnel create safeclaw-<CLIENT>      # prints a <TUNNEL_ID> + creds JSON
-cloudflared tunnel route dns safeclaw-<CLIENT> safeclaw-<CLIENT>.growthsystems.ai
-cloudflared tunnel route dns safeclaw-<CLIENT> hermes-<CLIENT>.growthsystems.ai
+# Capture the UUID — route DNS by UUID, never by name (issue 18).
+cloudflared tunnel create safeclaw-<CLIENT>      # prints a <TUNNEL_ID> (UUID) + creds JSON
+TUNNEL_UUID=$(cloudflared tunnel list | awk '/safeclaw-<CLIENT>/{print $1; exit}')
+cloudflared tunnel route dns "$TUNNEL_UUID" safeclaw-<CLIENT>.growthsystems.ai
+cloudflared tunnel route dns "$TUNNEL_UUID" hermes-<CLIENT>.growthsystems.ai
+# Re-pointing an existing hostname from an old box? add --overwrite-dns (issue 17):
+#   cloudflared tunnel route dns --overwrite-dns "$TUNNEL_UUID" safeclaw-<CLIENT>.growthsystems.ai
 ```
 
 **8b. Copy creds to the box  [MAC]→[BOX]:**
@@ -804,11 +1103,21 @@ curl -s -o /dev/null -w "%{http_code}\n" "https://hermes-<CLIENT>.growthsystems.
 
 No systemd, no OS cron, and `nohup`/`setsid` jobs get reaped — **only tmux
 survives.** A `while-true` supervisor loop in tmux `wd` runs the watchdog every
-30 s. It checks 8899 / 9119 / cloudflared / the actor gateway (so the cron
-scheduler AND `gbrain dream` stay alive), restarts any dead one, and **re-syncs
-the clock** (orgo suspend/resume drifts the VM clock — breaks TLS / Telegram /
-Composio). It ALSO performs a **nightly 04:00 gateway restart** as the
-Slack-stale mitigation (Step 12e).
+30 s. It checks 8899 / 9119 / **3131 (brain HTTP server)** / cloudflared / the
+actor gateway (so the cron scheduler AND `gbrain dream` stay alive), restarts any
+dead one, and **re-syncs the clock** (orgo suspend/resume drifts the VM clock —
+breaks TLS / Telegram / Composio). It ALSO performs a **nightly 04:00 gateway
+restart** as the Slack-stale mitigation (Step 12e).
+
+> **⚠️ Two health-check subtleties baked into the script below:**
+> - **The Console `/healthz` is auth-gated (issue 16):** it returns **401**
+>   without creds. The watchdog therefore treats **both 401 AND 200 as alive** —
+>   only a connection failure / other code means dead. (A naive `curl -fsS` would
+>   see the 401 as failure and restart a perfectly healthy Console in a loop.)
+> - **The brain HTTP server (`:3131`) check (issue 22e):** a bare `GET /mcp`
+>   returns **405** when alive — treat 405 (and any 2xx/4xx) as alive; only a
+>   connection failure means the `brain` tmux session died and must be restarted
+>   via `/opt/launch-brain.sh`.
 
 ```bash
 orgo_bash 'cat > /opt/safeclaw-watchdog.sh <<"EOF"
@@ -818,11 +1127,21 @@ N20=/tmp/node-v20.18.1-linux-x64/bin
 A=/root/.hermes/profiles/actor
 R=/root/.hermes/profiles/reader
 
-# Console :8899
-curl -fsS -m 5 http://127.0.0.1:8899/healthz >/dev/null 2>&1 || \
-  tmux new-session -d -s sui "export HERMES_HOME=/root/.hermes \
-    SAFECLAW_UI_USER=<CLIENT> SAFECLAW_UI_PASS=$(cat /opt/safeclaw-ui/.uipass) \
-    PATH=$N20:\$PATH PORT=8899 HOST=127.0.0.1; exec python3 /opt/safeclaw-ui/app.py"
+# Console :8899 — /healthz is AUTH-GATED: 401 AND 200 both mean ALIVE (issue 16).
+# Only a connection failure (000) / other code means dead.
+SUI_CODE=$(curl -s -o /dev/null -w "%{http_code}" -m 5 http://127.0.0.1:8899/healthz 2>/dev/null)
+case "$SUI_CODE" in
+  200|401) : ;;   # alive
+  *) tmux new-session -d -s sui "export HERMES_HOME=/root/.hermes \
+       SAFECLAW_UI_USER=<CLIENT> SAFECLAW_UI_PASS=$(cat /opt/safeclaw-ui/.uipass) \
+       PATH=$N20:\$PATH PORT=8899 HOST=127.0.0.1; exec python3 /opt/safeclaw-ui/app.py" ;;
+esac
+
+# GBrain HTTP server :3131 — bare GET /mcp returns 405 when ALIVE (issue 22e).
+# Any HTTP response (405/2xx/4xx) = alive; only a connection failure = dead.
+BRAIN_CODE=$(curl -s -o /dev/null -w "%{http_code}" -m 5 http://127.0.0.1:3131/mcp 2>/dev/null)
+[ "$BRAIN_CODE" = "000" ] && { tmux has-session -t brain 2>/dev/null || \
+  tmux new-session -d -s brain /opt/launch-brain.sh; }
 
 # Hermes dashboard :9119
 curl -fsS -m 5 -H "Host: localhost" http://127.0.0.1:9119/ >/dev/null 2>&1 || \
@@ -914,8 +1233,9 @@ echo TG_UP'
 ```bash
 orgo_bash 'sleep 8; grep -iE "connected|polling|conflict|tools loaded|redaction" /root/.hermes/profiles/actor/logs/gateway.log | tail'
 ```
-Expected: a clean "connected / polling" line, **0 conflicts**, `gbrain 87 tools`
-loaded, and secret-redaction on. Then DM the bot from the allowed user and
+Expected: a clean "connected / polling" line, **0 conflicts**, `gbrain 88 tools`
+loaded (gbrain 0.42 exposes 88), and secret-redaction on. Then DM the bot from the
+allowed user and
 confirm the message is **accepted** (not logged as `unauthorized`) and gets a
 brain-backed reply:
 ```bash
@@ -962,6 +1282,21 @@ Each server's **base URL** is shown on its Composio detail page (the
 > bound to that account's `auth_config` or execution fails with **"No connected
 > account found."** The Console wire code maps `ca → auth_config` and self-heals
 > mismatches — if wiring by hand, bind each server to the matching account.
+
+> **⚠️ ALWAYS re-list IDs before wiring — they go stale (issue 24).** Composio
+> `user_id`s and `connected_account_id`s change whenever an account is recreated.
+> Do **not** trust IDs from docs/memory/a previous deploy. Re-fetch them live:
+> ```bash
+> # Find the gmail connected account + its user_id:
+> curl -s "https://backend.composio.dev/api/v3/connected_accounts" \
+>   -H "x-api-key: <COMPOSIO_API_KEY>" | python3 -m json.tool | grep -iE "id|user_id|gmail" | head
+> # Get the reader/actor MCP server URLs:
+> curl -s "https://backend.composio.dev/api/v3/mcp/servers" \
+>   -H "x-api-key: <COMPOSIO_API_KEY>" | python3 -m json.tool | grep -iE "name|url|id" | head
+> ```
+> Plug the freshly-listed `connected_account_id`, `user_id`, and server base URLs
+> into the wiring block below. (The Console `/api/gmail/wire` path re-lists
+> automatically — by hand you must do it yourself.)
 
 If wiring by hand, also mind these two load-bearing gotchas:
 
@@ -1253,7 +1588,7 @@ curl -s -o /dev/null -w "Console (auth):     %{http_code}\n" -u <CLIENT>:<UI_PAS
 curl -s -o /dev/null -w "Hermes dashboard:   %{http_code}\n" https://hermes-<CLIENT>.growthsystems.ai                         # 200
 
 # ── [BOX] every service tmux session present ──────────────────────────────────
-orgo_bash 'tmux ls'   # expect: cf, wd, sui, hd, gw
+orgo_bash 'tmux ls'   # expect 6 sessions: brain, cf, gw, hd, sui, wd
 
 # ── [BOX] brain answers end-to-end (must reference the Step 2b seed page) ──────
 orgo_bash 'HERMES_HOME=/root/.hermes hermes chat -q "what do you know about <CLIENT>?" -Q'
@@ -1279,7 +1614,7 @@ orgo_bash 'tail -5 /opt/brain/dream.log'   # 11 phases completed, no embed error
 |-------|----------|
 | Console URL (no auth / auth) | 401 / 200 |
 | Hermes URL | 200 |
-| `tmux ls` | cf, wd, sui, hd, gw all present |
+| `tmux ls` | 6 sessions: brain, cf, gw, hd, sui, wd all present |
 | Telegram DM | brain-backed reply, 0 conflicts |
 | Gmail via actor | drafts only; **never sends** |
 | Slack | actor posts; reader read-only; 1 Socket Mode conn |
@@ -1324,6 +1659,7 @@ image — the native stack, profiles, Slack MCP build, watchdog, dream cron):
 
 | Session | Runs | Restart command |
 |---------|------|-----------------|
+| `brain` | **ONE** GBrain HTTP server (`gbrain serve --http --port 3131`) — the single PGLite writer; ALL profiles reach it as a URL MCP (Step 2c) | `tmux new-session -d -s brain /opt/launch-brain.sh` |
 | `cf` | cloudflared named tunnel (http2) | `tmux new-session -d -s cf "cloudflared tunnel --no-autoupdate --protocol http2 run safeclaw-<CLIENT>"` |
 | `wd` | watchdog supervisor (while-true, 30 s; nightly 04:00 slack restart) | `tmux new-session -d -s wd /opt/safeclaw-supervisor.sh` |
 | `sui` | SafeClaw Console (Flask, :8899) | re-run the Step 6 tmux block |
@@ -1334,7 +1670,9 @@ image — the native stack, profiles, Slack MCP build, watchdog, dream cron):
 > If everything 530/1033s at once: the box napped (shouldn't on paid — recheck
 > Step 0c) or `cf`+`wd` died. Recreate `cf` and `wd`; the watchdog brings the
 > rest back. **Dreaming and Slack Socket Mode both live inside `gw`** — if `gw`
-> is down, the brain won't dream and Slack won't respond.
+> is down, the brain won't dream and Slack won't respond. **If `brain` is down,
+> EVERY profile's gbrain tool calls fail** (the URL MCP has nothing to talk to) —
+> the watchdog restarts it, or `tmux new-session -d -s brain /opt/launch-brain.sh`.
 
 ---
 
@@ -1355,7 +1693,12 @@ image — the native stack, profiles, Slack MCP build, watchdog, dream cron):
 | **Slack: duplicate replies / flapping presence** | A SECOND Socket Mode connection — the reader got a real `SLACK_BOT_TOKEN`/`SLACK_APP_TOKEN`. Blank the reader's `SLACK_BOT_TOKEN`; route its token only via `SLACK_MCP_BOT_TOKEN`. |
 | **Slack: "missing_scope"** | Scope added after install — reinstall the app (Walkthrough Step 8). |
 | **Dream never runs** | The cron only fires while a gateway runs — confirm `gw` (actor) is up (`tmux ls`); `hermes cron list` must show `gbrain-dream`. |
-| **Dream embed phase errors `ZEROENTROPY_API_KEY`** | Embedding model only in DB, not in `/opt/brain/.gbrain/config.json`; or `OPENROUTER_API_KEY` not exported in the cron command. Put model+dims in the FILE config and the key inline in the cron command. |
+| **`GBrain: Timed out waiting for PGLite lock`** | Multiple consumers each spawned a `gbrain serve` stdio MCP and are fighting the single PGLite writer lock (issue 22). Run ONE HTTP server (`tmux brain`, Step 2c) and wire EVERY profile as a URL MCP (`http://127.0.0.1:3131/mcp` + Bearer) — never `hermes mcp add gbrain --command gbrain --args serve`. |
+| **`/usr/bin/env: 'bun': No such file or directory`** | The `bun` symlink is missing (issue 21). gbrain's shebang is `#!/usr/bin/env bun`; non-interactive spawns (HTTP server, cron, watchdog, Console) need `bun` on PATH: `ln -sf /root/.bun/bin/bun /usr/local/bin/bun`. |
+| **Hermes demands `OPENROUTER_API_KEY` for chat even with provider=ollama** | The installer left `model.base_url: https://openrouter.ai/api/v1` (issue 20). `hermes config set model.base_url https://ollama.com/v1` on EVERY profile. |
+| **`gbrain init`/`gbrain auth create` hangs or prints usage** | init hangs on an interactive provider prompt — pass `--embedding-model …` (issue 6). `auth create` needs the `--name` flag (a positional name prints usage — issue 22b). |
+| **Dream `sync` phase fails / filesystem phases skipped** | DB-only PGLite brain with no sync repo or zero commits (issue 14). `git init /opt/brain/repo`, `gbrain config set sync.repo_path /opt/brain/repo`, and make ≥1 commit. |
+| **Dream embed phase errors `ZEROENTROPY_API_KEY`** | Embedding model not set at init, or `OPENROUTER_API_KEY` not in the dream script's sourced `/opt/brain/.env`. Re-init with `--embedding-model openrouter:openai/text-embedding-3-small` and ensure the dream script sources `/opt/brain/.env`. |
 | **GBrain query/search returns [] but get_page works** | The slug uses a hard-excluded prefix (`test/`, `archive/`, `attachments/`, `.raw/`). Use real prefixes like `people/…`; verify with `scripts/smoke-brain.sh`. |
 | **Ollama hangs (idle CPU, no error)** | Concurrency-cap HANG (not a 429) — another consumer (e.g. OpenClaw) is sharing the Ollama account. Give it a separate key or stop it. Per-call timeout defaults to 1800s, so a hang won't surface fast. |
 | **Weekly Ollama cap vaporizes in ~1 day** | `auxiliary.compression.enabled:false` → O(n²) tokens. Set compression `true`, `max_turns: 25`, `api_max_retries: 2`. |

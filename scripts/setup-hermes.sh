@@ -37,17 +37,41 @@ curl -fsSL https://hermes-agent.nousresearch.com/install.sh | HERMES_VERSION="${
 
 # Make hermes globally resolvable in every fresh shell (orgo /bash spawns a new
 # shell per call — do NOT rely on a PATH export persisting).
-if [ -x "${HERMES_INSTALL_DIR}/bin/hermes" ]; then
-  ln -sf "${HERMES_INSTALL_DIR}/bin/hermes" /usr/local/bin/hermes
+#
+# ⚠️ SYMLINK PATH FIX (live-install issue 3): the Nous installer puts the binary at
+#   /opt/hermes/venv/bin/hermes   (and ~/.local/bin/hermes)
+# NOT at /opt/hermes/bin/hermes. Probe the real locations in priority order.
+HERMES_BIN=""
+for cand in \
+  "${HERMES_INSTALL_DIR}/venv/bin/hermes" \
+  "${HOME}/.local/bin/hermes" \
+  "${HERMES_INSTALL_DIR}/bin/hermes"; do
+  if [ -x "$cand" ]; then HERMES_BIN="$cand"; break; fi
+done
+if [ -n "$HERMES_BIN" ]; then
+  ln -sf "$HERMES_BIN" /usr/local/bin/hermes
+else
+  echo "FATAL: could not find the hermes binary in venv/bin, ~/.local/bin, or bin/"; exit 1
 fi
 
 command -v hermes >/dev/null 2>&1 || { echo "FATAL: hermes not on PATH after install"; exit 1; }
-echo "[setup-hermes] hermes resolved at: $(command -v hermes)"
+echo "[setup-hermes] hermes resolved at: $(command -v hermes) -> $HERMES_BIN"
 hermes --version
 
 # ── 2. Cron dependency — the in-process scheduler needs croniter ───────────
 # Step 4 (gbrain dream nightly cron) will not fire without this.
 pip3 install --break-system-packages croniter
+
+# ── 2b. base_url fix (live-install issues 15 + 20) ─────────────────────────
+# Hermes 0.15.1's installer ships `model.base_url: https://openrouter.ai/api/v1`
+# in the DEFAULT config. Setting model.provider=ollama does NOT change it, and the
+# provider resolver then demands an OPENROUTER_API_KEY for chat. Repoint the
+# DEFAULT profile's base_url at Ollama Cloud here so the default --tui gateway
+# works; reader/actor profiles are repointed in Step 3 (they copy from default,
+# but we set them explicitly there too). Best-effort — never abort the install.
+HERMES_HOME="${HERMES_HOME:-/root/.hermes}" hermes config set model.base_url https://ollama.com/v1 2>/dev/null \
+  && echo "[setup-hermes] default model.base_url -> https://ollama.com/v1" \
+  || echo "[setup-hermes] WARN: could not preset model.base_url (set it in Step 1/3)"
 
 # ── 3. Hermes 0.11 dashboard web bundle pre-build (no --skip-build there) ──
 HERMES_MAJMIN="$(hermes --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+' | head -1)"

@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>SafeClaw Console</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body{background:#0a0f0d;color:#e6ebe8;font-family:ui-sans-serif,system-ui,-apple-system,sans-serif}
+    .nav-item{cursor:pointer;border-left:2px solid transparent}
+    .nav-item.active{border-left-color:#3ddc97;background:rgba(61,220,151,.08);color:#3ddc97}
+    .panel{display:none}.panel.active{display:block}
+    input,textarea{background:#0f1714;border:1px solid #233029;color:#e6ebe8}
+    input:focus,textarea:focus{outline:none;border-color:#3ddc97}
+    .card{background:#0d1411;border:1px solid #1c2722}
+    .btn{background:#3ddc97;color:#06120c;font-weight:600}
+    .btn:hover{background:#34c489}.btn:disabled{opacity:.5;cursor:not-allowed}
+    .chip{border:1px solid #233029}
+    .help{background:rgba(61,220,151,.04);border:1px solid #1c2722}
+    .help code{color:#3ddc97;background:#0f1714;padding:0 4px;border-radius:3px}
+    .help a{color:#3ddc97;text-decoration:underline}
+    .bubble-u{background:#13251c;border:1px solid #1f4031}
+    .bubble-a{background:#0f1714;border:1px solid #233029}
+  </style>
+</head>
+<body class="min-h-screen">
+<div class="flex min-h-screen">
+  <!-- Sidebar -->
+  <aside class="w-60 shrink-0 border-r border-[#1c2722] p-4 flex flex-col gap-1">
+    <div class="flex items-center gap-2 mb-5 px-2">
+      <span class="text-2xl">🐾</span>
+      <div><div class="font-bold text-[#3ddc97] leading-tight">SafeClaw</div>
+        <div class="text-[11px] text-gray-500">Console</div></div>
+    </div>
+    <div class="nav-item active px-3 py-2 rounded text-sm" data-p="dashboard">Dashboard</div>
+    <div class="nav-item px-3 py-2 rounded text-sm" data-p="chat">💬 Chat</div>
+    <div class="text-[11px] uppercase text-gray-600 px-3 mt-4 mb-1">Integrations</div>
+    <div class="nav-item px-3 py-2 rounded text-sm" data-p="slack">Slack</div>
+    <div class="nav-item px-3 py-2 rounded text-sm" data-p="telegram">Telegram</div>
+    <div class="nav-item px-3 py-2 rounded text-sm" data-p="gmail">Gmail</div>
+    <div class="nav-item px-3 py-2 rounded text-sm" data-p="gdrive">Google Drive</div>
+    <div class="nav-item px-3 py-2 rounded text-sm" data-p="zapier">Zapier / MCP</div>
+    <div class="text-[11px] uppercase text-gray-600 px-3 mt-4 mb-1">Links</div>
+    <a href="{{ hermes_dash_url }}" target="_blank" class="px-3 py-2 rounded text-sm text-gray-300 hover:text-[#3ddc97] hover:bg-[rgba(61,220,151,.06)]">🤖 Hermes Dashboard ↗</a>
+    <div class="nav-item px-3 py-2 rounded text-sm flex items-center gap-2" data-p="chat">💬 Quick Chat</div>
+    <a href="https://ad5b35a1.orgo.dev" target="_blank" class="px-3 py-2 rounded text-sm text-gray-300 hover:text-[#3ddc97] hover:bg-[rgba(61,220,151,.06)]">🖥️ Orgo Desktop ↗</a>
+    <a href="https://github.com/Vasanth19/safeclaw" target="_blank" class="px-3 py-2 rounded text-sm text-gray-300 hover:text-[#3ddc97] hover:bg-[rgba(61,220,151,.06)]">📦 SafeClaw Repo ↗</a>
+    <div class="mt-auto text-[11px] text-gray-600 px-3">Native Hermes + GBrain</div>
+  </aside>
+
+  <!-- Main -->
+  <main class="flex-1 p-8 max-w-3xl">
+    <!-- DASHBOARD -->
+    <section class="panel active" id="p-dashboard">
+      <h1 class="text-xl font-bold mb-1">Dashboard</h1>
+      <p class="text-sm text-gray-500 mb-5">Live status of your SafeClaw assistant.</p>
+      <div class="grid grid-cols-2 gap-3 mb-5">
+        <div class="card rounded p-4"><div class="text-[11px] text-gray-500">BRAIN PAGES</div>
+          <div id="s-pages" class="text-2xl font-bold text-[#3ddc97]">…</div></div>
+        <div class="card rounded p-4"><div class="text-[11px] text-gray-500">MODEL</div>
+          <div id="s-model" class="text-sm font-mono mt-2">…</div></div>
+      </div>
+      <div class="card rounded p-4 mb-4">
+        <div class="text-[11px] text-gray-500 mb-2">CONNECTED</div>
+        <div id="s-connected" class="flex flex-wrap gap-2"></div>
+      </div>
+      <div class="card rounded p-4 mb-4">
+        <div class="text-[11px] text-gray-500 mb-2">MCP SERVERS</div>
+        <div id="s-mcp" class="flex flex-col gap-1 text-sm font-mono"></div>
+      </div>
+      <div class="card rounded p-4">
+        <div class="flex items-center justify-between mb-2">
+          <div class="text-[11px] text-gray-500">SYSTEM TEST — is everything working?</div>
+          <button id="test-btn" class="btn px-4 py-2 rounded text-sm" onclick="runSelfTest(this)">Run full test</button>
+        </div>
+        <p class="text-xs text-gray-500 mb-2">Checks Hermes, the brain, Gmail (a real fetch per wired inbox), Telegram, the public URL and the box clock. Takes ~15–30 seconds.</p>
+        <div id="test-results" class="flex flex-col gap-1 text-sm"></div>
+      </div>
+    </section>
+
+    <!-- CHAT -->
+    <section class="panel" id="p-chat">
+      <h1 class="text-xl font-bold mb-1">Chat with SafeClaw</h1>
+      <p class="text-sm text-gray-500 mb-4">Talk to Hermes directly. It uses your brain (GBrain) to answer — try "what do you know about Mark?". Replies can take 20–40s (the agent thinks + calls tools).</p>
+      <div id="chat-log" class="card rounded p-4 mb-3 flex flex-col gap-2 overflow-y-auto" style="height:55vh"></div>
+      <div class="flex gap-2">
+        <input id="chat-input" class="flex-1 px-3 py-2 rounded" placeholder="Ask your assistant…" onkeydown="if(event.key==='Enter')sendChat()"/>
+        <button class="btn px-4 py-2 rounded" onclick="sendChat()" id="chat-send">Send</button>
+      </div>
+    </section>
+
+    <!-- SLACK -->
+    <section class="panel" id="p-slack">
+      <h1 class="text-xl font-bold mb-1">Slack</h1>
+      <p class="text-sm text-gray-500 mb-4">Socket-mode bot — no public URL needed.</p>
+      <div class="help rounded p-4 mb-4 text-sm text-gray-300">
+        <div class="font-semibold text-[#3ddc97] mb-2">How to get these tokens</div>
+        <ol class="list-decimal ml-5 space-y-1">
+          <li>Go to <a href="https://api.slack.com/apps" target="_blank">api.slack.com/apps</a> → <b>Create New App → From scratch</b>. Use <b>your own / dev workspace</b>, never a client's.</li>
+          <li><b>Socket Mode</b> → enable → generate an <b>App-Level Token</b> (scope <code>connections:write</code>) → this is <code>xapp-…</code>.</li>
+          <li><b>OAuth &amp; Permissions</b> → Bot Token Scopes: <code>chat:write</code>, <code>app_mentions:read</code>, <code>channels:history</code>, <code>im:history</code>, <code>files:read</code>.</li>
+          <li><b>Event Subscriptions</b> → on → subscribe <code>message.channels</code>, <code>message.im</code>, <code>app_mention</code>.</li>
+          <li><b>Install to Workspace</b> → copy the <b>Bot Token</b> (<code>xoxb-…</code>). In Slack, <code>/invite</code> the bot to channels it should read.</li>
+        </ol>
+      </div>
+      <div class="card rounded p-5 flex flex-col gap-3">
+        <label class="text-sm">Bot token <span class="text-gray-500">(xoxb-…)</span>
+          <input id="slack-bot" class="w-full mt-1 px-3 py-2 rounded" placeholder="xoxb-…"/></label>
+        <label class="text-sm">App token <span class="text-gray-500">(xapp-…)</span>
+          <input id="slack-app" class="w-full mt-1 px-3 py-2 rounded" placeholder="xapp-…"/></label>
+        <label class="text-sm">Home channel <span class="text-gray-500">(optional)</span>
+          <input id="slack-home" class="w-full mt-1 px-3 py-2 rounded" placeholder="C0…"/></label>
+        <button class="btn px-4 py-2 rounded w-fit" onclick="saveSlack(this)">Save &amp; validate</button>
+      </div>
+    </section>
+
+    <!-- TELEGRAM -->
+    <section class="panel" id="p-telegram">
+      <h1 class="text-xl font-bold mb-1">Telegram</h1>
+      <p class="text-sm text-gray-500 mb-4">Long-polling bot — chat from your phone.</p>
+      <div class="help rounded p-4 mb-4 text-sm text-gray-300">
+        <div class="font-semibold text-[#3ddc97] mb-2">How to get a bot token</div>
+        <ol class="list-decimal ml-5 space-y-1">
+          <li>In Telegram, open <b>@BotFather</b> → send <code>/newbot</code>.</li>
+          <li>Give a name + a username ending in <code>bot</code> (e.g. <code>mark_safeclaw_bot</code>).</li>
+          <li>Copy the <b>token</b> it returns (<code>123456:AAH…</code>).</li>
+          <li>Get your numeric ID: message <b>@userinfobot</b> → it replies with your <code>Id</code>.</li>
+        </ol>
+        <p class="text-[11px] text-gray-500 mt-2">⚠️ Use a <b>fresh bot</b> for this box — a bot running elsewhere will conflict (one listener per bot).</p>
+      </div>
+      <div class="card rounded p-5 flex flex-col gap-3">
+        <label class="text-sm">Bot token
+          <input id="tg-token" class="w-full mt-1 px-3 py-2 rounded" placeholder="123456:ABC-…"/></label>
+        <label class="text-sm">Allowed user IDs <span class="text-gray-500">(comma-separated)</span>
+          <input id="tg-users" class="w-full mt-1 px-3 py-2 rounded" placeholder="123456789"/></label>
+        <button class="btn px-4 py-2 rounded w-fit" onclick="saveTelegram(this)">Save &amp; validate</button>
+      </div>
+    </section>
+
+    <!-- GMAIL -->
+    <section class="panel" id="p-gmail">
+      <h1 class="text-xl font-bold mb-1">Gmail</h1>
+      <p class="text-sm text-gray-500 mb-4">Via <b>Composio</b>. Reader = read-only, Actor = draft-only. The trust split is enforced here — the agent can never send. Auto-provisions both MCP servers.</p>
+      <div class="help rounded p-4 mb-4 text-sm text-gray-300">
+        <div class="font-semibold text-[#3ddc97] mb-2">How to connect</div>
+        <ol class="list-decimal ml-5 space-y-1">
+          <li>Sign in at <a href="https://app.composio.dev" target="_blank">app.composio.dev</a>.</li>
+          <li>In Composio, <b>connect your Gmail account</b> (OAuth) so the tools are authorized.</li>
+          <li>Copy your <b>API key</b> (<code>ak_…</code>) and note your <b>user id</b>.</li>
+          <li>Paste both below → <b>Connect &amp; provision</b>. SafeClaw creates the Reader (read) + Actor (draft) MCP servers automatically.</li>
+        </ol>
+      </div>
+      <div class="card rounded p-5 flex flex-col gap-3">
+        <label class="text-sm">Composio API key <span class="text-gray-500">(ak_… — that's all we need)</span>
+          <input id="gm-key" class="w-full mt-1 px-3 py-2 rounded" placeholder="ak_…"/></label>
+        <button class="btn px-4 py-2 rounded w-fit" onclick="loadGmailAccounts(this)">List my Gmail accounts</button>
+        <div id="gm-accounts" class="flex flex-col gap-2 mt-2"></div>
+        <button id="gm-wire-btn" class="btn px-4 py-2 rounded w-fit hidden" onclick="wireGmail(this)">Wire selected accounts</button>
+        <p class="text-[11px] text-gray-500">Each selected account is wired separately (read-only → Reader, draft-only → Actor). Multiple Gmails stay distinct — routed by connected-account id, so they never overwrite each other.</p>
+      </div>
+    </section>
+
+    <!-- GDRIVE -->
+    <section class="panel" id="p-gdrive">
+      <h1 class="text-xl font-bold mb-1">Google Drive</h1>
+      <p class="text-sm text-gray-500 mb-4">Service-account JSON (draft/upload — never send).</p>
+      <div class="help rounded p-4 mb-4 text-sm text-gray-300">
+        <div class="font-semibold text-[#3ddc97] mb-2">How to get the key</div>
+        <ol class="list-decimal ml-5 space-y-1">
+          <li><a href="https://console.cloud.google.com" target="_blank">Google Cloud Console</a> → pick/create a project → <b>Enable APIs</b> → enable <b>Google Drive API</b>.</li>
+          <li><b>IAM &amp; Admin → Service Accounts</b> → Create service account.</li>
+          <li>Open it → <b>Keys → Add key → JSON</b> → download the file.</li>
+          <li>In Drive, <b>share</b> your target folder with the service account's <code>client_email</code> (Editor).</li>
+          <li>Paste the full JSON below → Save.</li>
+        </ol>
+      </div>
+      <div class="card rounded p-5 flex flex-col gap-3">
+        <label class="text-sm">Service-account key JSON
+          <textarea id="gd-json" rows="7" class="w-full mt-1 px-3 py-2 rounded font-mono text-xs" placeholder='{ "type": "service_account", … }'></textarea></label>
+        <button class="btn px-4 py-2 rounded w-fit" onclick="saveGdrive(this)">Save credentials</button>
+      </div>
+    </section>
+
+    <!-- ZAPIER / MCP -->
+    <section class="panel" id="p-zapier">
+      <h1 class="text-xl font-bold mb-1">Zapier / MCP Servers</h1>
+      <p class="text-sm text-gray-500 mb-4">Add any MCP server by URL — Zapier MCP exposes thousands of app actions through one endpoint. (For Gmail, prefer the Composio panel — it enforces the trust split.)</p>
+      <div class="help rounded p-4 mb-4 text-sm text-gray-300">
+        <div class="font-semibold text-[#3ddc97] mb-2">How to add a Zapier MCP</div>
+        <ol class="list-decimal ml-5 space-y-1">
+          <li>Go to <a href="https://mcp.zapier.com" target="_blank">mcp.zapier.com</a> → create an MCP server, pick the actions you want exposed.</li>
+          <li>Copy the generated <b>MCP URL</b> (<code>https://mcp.zapier.com/api/mcp/s/…</code>).</li>
+          <li>Name it + paste the URL below → Add. It registers instantly and appears on the Dashboard.</li>
+        </ol>
+        <p class="text-[11px] text-gray-500 mt-2">Any OpenAI/MCP-compatible server URL works here, not just Zapier.</p>
+      </div>
+      <div class="card rounded p-5 flex flex-col gap-3 mb-4">
+        <label class="text-sm">Server name
+          <input id="mcp-name" class="w-full mt-1 px-3 py-2 rounded" placeholder="zapier"/></label>
+        <label class="text-sm">MCP URL
+          <input id="mcp-url" class="w-full mt-1 px-3 py-2 rounded" placeholder="https://mcp.zapier.com/api/mcp/s/…"/></label>
+        <button class="btn px-4 py-2 rounded w-fit" onclick="addMcp(this)">Add MCP server</button>
+      </div>
+      <div class="card rounded p-4">
+        <div class="text-[11px] text-gray-500 mb-2">REGISTERED MCP SERVERS</div>
+        <div id="mcp-list" class="flex flex-col gap-2 text-sm"></div>
+      </div>
+    </section>
+
+    <div id="toast" class="fixed bottom-6 right-6 px-4 py-2 rounded text-sm hidden"></div>
+  </main>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+function toast(msg, ok=true){const t=$('#toast');t.textContent=msg;
+  t.className='fixed bottom-6 right-6 px-4 py-2 rounded text-sm '+(ok?'bg-[#13251c] text-[#3ddc97] border border-[#1f4031]':'bg-[#2a1414] text-red-300 border border-[#412020]');
+  t.classList.remove('hidden');setTimeout(()=>t.classList.add('hidden'),3500);}
+async function api(path, opts){const r=await fetch(path,opts);let b={};try{b=await r.json()}catch(e){}
+  if(!r.ok||b.ok===false)throw new Error(b.error||('HTTP '+r.status));return b;}
+
+document.querySelectorAll('.nav-item').forEach(n=>n.onclick=()=>{
+  document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(x=>x.classList.remove('active'));
+  n.classList.add('active');$('#p-'+n.dataset.p).classList.add('active');
+  if(n.dataset.p==='dashboard')loadStatus();if(n.dataset.p==='zapier')loadMcp();
+  if(n.dataset.p==='chat')$('#chat-input').focus();});
+
+async function loadStatus(){try{const s=await api('/api/status');
+  $('#s-pages').textContent=s.brain_pages??'—';$('#s-model').textContent=s.model||'—';
+  $('#s-connected').innerHTML=Object.entries(s.connected).map(([k,v])=>
+    `<span class="chip px-2 py-1 rounded text-xs ${v?'text-[#3ddc97]':'text-gray-500'}">${v?'●':'○'} ${k}</span>`).join('');
+  $('#s-mcp').innerHTML=(s.mcp_servers||[]).map(m=>`<div>● <span class="text-[#3ddc97]">${m.name}</span> <span class="text-gray-500">${m.transport}</span></div>`).join('')||'<span class="text-gray-500">none</span>';
+}catch(e){toast(e.message,false)}}
+
+// system self-test — one ✅/❌ row per check
+async function runSelfTest(btn){
+  btn.disabled=true;const t=btn.textContent;btn.textContent='Testing…';
+  const box=$('#test-results');
+  box.innerHTML='<span class="text-gray-500">Running checks (Gmail does a real fetch — give it ~20s)…</span>';
+  try{
+    const r=await api('/api/selftest');
+    box.innerHTML=(r.checks||[]).map(c=>
+      `<div class="flex items-start gap-2">
+         <span>${c.ok?'✅':'❌'}</span>
+         <div><span class="${c.ok?'text-[#3ddc97]':'text-red-300'}">${c.name}</span>
+           <span class="text-gray-500 text-xs"> — ${c.detail}</span></div>
+       </div>`).join('');
+    toast(r.ok?'All systems go ✅':'Some checks failed — see details',r.ok);
+  }catch(e){box.innerHTML='';toast(e.message,false);}
+  finally{btn.disabled=false;btn.textContent=t;}}
+async function loadMcp(){try{const s=await api('/api/mcp');
+  $('#mcp-list').innerHTML=(s.servers||[]).map(m=>
+    `<div class="flex items-center justify-between"><div>● <span class="text-[#3ddc97]">${m.name}</span> <span class="text-gray-500 text-xs font-mono">${m.transport}</span></div>
+     <button class="chip px-2 py-1 rounded text-xs text-gray-400 hover:text-red-300" onclick="delMcp('${m.name}')">remove</button></div>`).join('')||'<span class="text-gray-500">none</span>';
+}catch(e){toast(e.message,false)}}
+
+// chat
+function addBubble(text, who){const log=$('#chat-log');
+  const d=document.createElement('div');
+  d.className=(who==='u'?'bubble-u self-end':'bubble-a self-start')+' rounded px-3 py-2 text-sm max-w-[80%] whitespace-pre-wrap';
+  d.textContent=text;log.appendChild(d);log.scrollTop=log.scrollHeight;return d;}
+async function sendChat(){const inp=$('#chat-input');const msg=inp.value.trim();if(!msg)return;
+  inp.value='';$('#chat-send').disabled=true;addBubble(msg,'u');
+  const thinking=addBubble('thinking…','a');
+  try{const r=await api('/api/chat',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({message:msg})});
+    thinking.textContent=r.reply||'(no reply)';}
+  catch(e){thinking.textContent='⚠️ '+e.message;}
+  finally{$('#chat-send').disabled=false;$('#chat-log').scrollTop=$('#chat-log').scrollHeight;}}
+
+async function post(path,body,btn){btn.disabled=true;const t=btn.textContent;btn.textContent='Saving…';
+  try{await api(path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});toast('Saved ✓');}
+  catch(e){toast(e.message,false);}finally{btn.disabled=false;btn.textContent=t;}}
+const saveSlack=b=>post('/api/slack',{SLACK_BOT_TOKEN:$('#slack-bot').value,SLACK_APP_TOKEN:$('#slack-app').value,SLACK_HOME_CHANNEL:$('#slack-home').value},b);
+const saveTelegram=b=>post('/api/telegram',{TELEGRAM_BOT_TOKEN:$('#tg-token').value,TELEGRAM_ALLOWED_USERS:$('#tg-users').value},b);
+async function loadGmailAccounts(btn){const key=$('#gm-key').value.trim();if(!key)return toast('Enter your Composio API key',false);
+  btn.disabled=true;const t=btn.textContent;btn.textContent='Loading…';
+  try{const r=await api('/api/gmail/accounts?key='+encodeURIComponent(key));
+    const box=$('#gm-accounts');
+    if(!r.accounts.length){box.innerHTML='<p class="text-sm text-gray-500">No Gmail accounts connected to this key. Connect one at app.composio.dev first.</p>';$('#gm-wire-btn').classList.add('hidden');}
+    else{box.innerHTML=r.accounts.map((a,i)=>
+      `<label class="flex items-center gap-2 text-sm card p-2 rounded">
+         <input type="checkbox" class="gm-acct" data-ca="${a.ca_id}" checked/>
+         <span class="text-[#3ddc97] font-mono text-xs">${a.ca_id}</span>
+         <span class="text-gray-500 text-xs">· ${a.status} · ${a.created}</span>
+         <input class="gm-label ml-auto px-2 py-0.5 text-xs w-28" data-ca="${a.ca_id}" placeholder="label e.g. work" value="acct${i+1}"/>
+       </label>`).join('');
+      $('#gm-wire-btn').classList.remove('hidden');}
+    toast('Found '+r.accounts.length+' account(s)');
+  }catch(e){toast(e.message,false);}finally{btn.disabled=false;btn.textContent=t;}}
+async function wireGmail(btn){const key=$('#gm-key').value.trim();
+  const accounts=[...document.querySelectorAll('.gm-acct:checked')].map(cb=>({
+    ca_id:cb.dataset.ca,
+    label:document.querySelector('.gm-label[data-ca="'+cb.dataset.ca+'"]').value.trim()}));
+  if(!accounts.length)return toast('Select at least one account',false);
+  btn.disabled=true;btn.textContent='Wiring…';
+  try{const r=await api('/api/gmail/wire',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({key,accounts})});
+    toast('Wired '+r.wired.length+' MCP(s) — reloading actor');}
+  catch(e){toast(e.message,false);}finally{btn.disabled=false;btn.textContent='Wire selected accounts';}}
+const saveGdrive=b=>post('/api/gdrive',{GDRIVE_SERVICE_ACCOUNT_JSON:$('#gd-json').value},b);
+async function addMcp(btn){btn.disabled=true;try{await api('/api/mcp',{method:'POST',headers:{'content-type':'application/json'},
+  body:JSON.stringify({name:$('#mcp-name').value,url:$('#mcp-url').value})});$('#mcp-name').value='';$('#mcp-url').value='';toast('MCP added ✓');loadMcp();}
+  catch(e){toast(e.message,false);}finally{btn.disabled=false;}}
+async function delMcp(n){try{await api('/api/mcp/'+n,{method:'DELETE'});toast('Removed');loadMcp();}catch(e){toast(e.message,false);}}
+
+loadStatus();
+</script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+# SafeClaw on orgo — cloudflared named-tunnel ingress.
+#
+# Gives each client a STABLE public URL (https://safeclaw-<name>.<domain>) that
+# orgo itself can't provide. The tunnel runs INSIDE the orgo computer and dials
+# OUT to Cloudflare (no inbound ports opened on the box — matches the egress-only
+# posture). Cloudflare terminates TLS and forwards to the local Caddy gate.
+#
+# One-time per client (operator, in the Cloudflare dashboard or `cloudflared`):
+#   1. cloudflared tunnel create safeclaw-<name>      → prints a tunnel UUID + token
+#   2. point DNS:  safeclaw-<name>.<domain>  CNAME  <uuid>.cfargotunnel.com
+#   3. put the tunnel TOKEN in client.env as CLOUDFLARE_TUNNEL_TOKEN
+#
+# Run (token mode — no creds file needed):
+#   cloudflared tunnel --no-autoupdate run --token "$CLOUDFLARE_TUNNEL_TOKEN"
+#
+# If you prefer config-file mode instead of token mode, render this file:
+#   envsubst < orgo/access/cloudflared-config.yml.example > ~/.cloudflared/config.yml
+
+tunnel: ${CLOUDFLARE_TUNNEL_ID}
+credentials-file: /root/.cloudflared/${CLOUDFLARE_TUNNEL_ID}.json
+
+ingress:
+  # Public hostname → the authenticating Caddy gate (which fronts the dashboard).
+  - hostname: ${PUBLIC_HOSTNAME}
+    service: http://127.0.0.1:8443
+  # Everything else is refused.
+  - service: http_status:404

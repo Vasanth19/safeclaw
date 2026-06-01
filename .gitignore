@@ -43,3 +43,6 @@ __pycache__/
 # Data (watermarks, attachments, caches)
 data/
 .claude/knowledge/_sessions/
+
+# Claude Code scheduled-task lock (per-machine state)
+.claude/scheduled_tasks.lock

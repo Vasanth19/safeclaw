@@ -1,0 +1,72 @@
+# SafeClaw on orgo.ai — minimal BRAIN stack (gbrain + its Postgres).
+#
+# This is the only docker-compose stack that runs on an orgo computer. Hermes
+# itself runs natively on the box (gateway + web dashboard + plugins), NOT in
+# compose — it's a single process and is easier to manage/upgrade native.
+#
+# Dropped vs the full SafeClaw VPS stack (docker-compose.yml): the local LLM
+# (now hosted — Ollama Cloud / Anthropic), postgres-tasks, postgrest, reflector,
+# onboarding, rclone, and the two hermes-* containers. What remains is the
+# permanent knowledge layer the assistant can't run without.
+#
+# Embeddings: local `nomic-embed-text` via host Ollama on :11434 (small model,
+# low RAM — the heavy LLM is off-box). Hosted embeddings is a future option;
+# see ORGO-DEPLOY.md (needs GBrain-image verification before wiring).
+#
+# Validate:  docker compose -f orgo/docker-compose.brain.yml --env-file orgo/client.env config
+
+networks:
+  safeclaw_brain_net:
+    driver: bridge
+
+volumes:
+  safeclaw_brain_db:
+  safeclaw_brain_data:
+
+services:
+  postgres-brain:
+    image: pgvector/pgvector:pg16
+    container_name: safeclaw-postgres-brain
+    restart: unless-stopped
+    networks: [safeclaw_brain_net]
+    environment:
+      POSTGRES_USER: ${BRAIN_DB_USER}
+      POSTGRES_PASSWORD: ${BRAIN_DB_PASSWORD}
+      POSTGRES_DB: ${BRAIN_DB_NAME}
+    volumes:
+      - safeclaw_brain_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${BRAIN_DB_USER} -d ${BRAIN_DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    # No host port — internal only.
+
+  safeclaw-brain:
+    image: ghcr.io/vasanth19/safeclaw-brain:${GBRAIN_VERSION}
+    container_name: safeclaw-brain
+    restart: unless-stopped
+    networks: [safeclaw_brain_net]
+    # Reach the host Ollama daemon (embeddings) at :11434.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # Bind the HTTP/MCP port to LOOPBACK on the orgo box so native Hermes can
+    # reach it at 127.0.0.1:3131, but it is NOT exposed to the public internet.
+    ports:
+      - "127.0.0.1:3131:3131"
+    environment:
+      DATABASE_URL: postgres://${BRAIN_DB_USER}:${BRAIN_DB_PASSWORD}@postgres-brain:5432/${BRAIN_DB_NAME}
+      OLLAMA_BASE_URL: ${BRAIN_EMBEDDINGS_URL:-http://host.docker.internal:11434/v1}
+      GBRAIN_HOME: /data/safeclaw-brain
+    volumes:
+      - safeclaw_brain_data:/data/safeclaw-brain
+    depends_on:
+      postgres-brain:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3131/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s

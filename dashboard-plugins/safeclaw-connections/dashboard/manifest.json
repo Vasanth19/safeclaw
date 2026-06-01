@@ -1,0 +1,13 @@
+{
+  "name": "safeclaw-connections",
+  "label": "Connections",
+  "description": "Connect and manage SafeClaw's integrations — Gmail (multiple accounts), Slack, Telegram, Google Drive. Each connection binds to a single trust boundary (Reader or Actor) and is granted only that boundary's scope: Reader connections are read-only, Actor connections are draft-only. A connection can never grant a send/exfiltration tool.",
+  "icon": "Plug",
+  "version": "0.1.0",
+  "tab": {
+    "path": "/connections",
+    "position": "after:personas"
+  },
+  "entry": "dist/index.js",
+  "api": "plugin_api.py"
+}

@@ -79,6 +79,7 @@
 - [ ] Client routines = `hermes cron` entries in the **actor** profile, **new syntax** (positional schedule + `--script`; issue 12); only actor cron fires
 - [ ] Routine schedules kept **off 03:00 (dream) and 04:00 (watchdog gateway recycle)** windows
 - [ ] **Email-ingest routine** deployed (`orgo/routines/email-ingest.sh` → actor `scripts/`, runs reader profile): hourly `15 * * * *`, `category:primary` only, snippets-first fetch, `--max-turns 60` (reader caps at 25)
+- [ ] **Cron script timeout raised**: `cron.script_timeout_seconds: 1800` in actor `config.yaml` (default 120s kills any run that actually ingests; found live on mark-agent)
 - [ ] Email-ingest **tested manually in tmux first** — log ends with `INGEST RESULT:` line and brain has `emails/*` pages
 - [ ] Verify: `hermes cron list` (actor) shows all routines with next-run times
 

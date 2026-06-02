@@ -7,6 +7,8 @@ export PATH=/usr/local/bin:/tmp/node-v20.18.1-linux-x64/bin:$PATH
 
 hermes chat -Q --max-turns 60 -q 'You are the scheduled email-ingestion routine. Work silently and do not ask questions.
 
+CRITICAL - tool availability check FIRST: you MUST use the Gmail MCP tools (from the gmail_reader / gmail_acct1 / gmail_acct2 servers) for all email access. If those MCP tools are not in your tool list, do NOT improvise with CLI tools and do NOT report zero results - immediately stop and output exactly one line: INGEST ERROR: gmail MCP tools unavailable. Likewise if the gbrain tools are missing, output: INGEST ERROR: gbrain MCP tools unavailable.
+
 IMPORTANT - keep tool outputs SMALL. Never fetch full email bodies in a list call: list with snippets/headers only, and fetch the full body of ONE email at a time, only for emails that pass the filter.
 
 STEP 1 - LIST. For EACH connected Gmail inbox (gmail_reader / gmail_acct1 = mark-gsai inbox, gmail_acct2 = hyphenx inbox): list emails using the Gmail search query: in:inbox category:primary -in:spam -in:trash newer_than:2h

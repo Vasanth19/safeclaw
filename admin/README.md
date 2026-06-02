@@ -13,7 +13,6 @@ Current services:
 - Google Docs
 - Google Sheets
 - Google Tasks
-- WhatsApp Business
 
 Runtime secret requirement:
 

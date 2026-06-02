@@ -29,12 +29,6 @@ const SERVICES = {
     user_id: 'client:matt-hoover:googletasks',
     alias: 'matt-hoover-googletasks',
   },
-  whatsapp: {
-    label: 'WhatsApp Business',
-    toolkit_slug: 'whatsapp',
-    user_id: 'client:matt-hoover:whatsapp',
-    alias: 'matt-hoover-whatsapp',
-  },
 };
 
 exports.handler = async (event) => {

@@ -163,7 +163,7 @@ Admin agent:
 6. Creates OAuth connection links or a dynamic setup page backed by server-side link creation.
 7. Sends the setup page or links to the employee for client delivery.
 
-Current Matt Hoover source is captured at `admin/client-onboarding/matt-hoover/`. It includes Google Calendar, Gmail, Google Docs, Google Sheets, Google Tasks, and WhatsApp Business. WhatsApp uses Composio toolkit slug `whatsapp` and requires a WhatsApp Business account, not a personal WhatsApp account.
+Current Matt Hoover source is captured at `admin/client-onboarding/matt-hoover/`. It includes Google Calendar, Gmail, Google Docs, Google Sheets, and Google Tasks. Personal WhatsApp is intentionally excluded: Composio's WhatsApp connector is for WhatsApp Business, so it is not a useful onboarding target unless the client operates a WhatsApp Business account.
 
 ### Phase B: Client approves OAuth
 

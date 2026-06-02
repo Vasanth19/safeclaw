@@ -850,6 +850,11 @@ job: a named cron entry in the profile whose gateway runs it.
 
 Typical client routines (register only the ones the client asked for):
 
+> **⚠️ `hermes chat` flag order (0.15.1, hit live on mark-agent):** `-q` is
+> `--query` and TAKES the prompt as its argument; `-Q` is the separate quiet
+> flag. `hermes chat -q -Q "..."` fails with `error: argument -q/--query:
+> expected one argument`. Correct form: `hermes chat -Q -q "<prompt>"`.
+
 ```bash
 # Morning inbox triage digest at 07:00 weekdays. New 0.15.1 syntax (issue 12):
 # schedule is POSITIONAL; a script lives at $HERMES_HOME/scripts/. This routine
@@ -859,11 +864,40 @@ cat > $A/scripts/morning-digest.sh <<"EOF"
 #!/usr/bin/env bash
 export HERMES_HOME=/root/.hermes/profiles/actor
 export PATH=/usr/local/bin:/tmp/node-v20.18.1-linux-x64/bin:$PATH
-hermes chat -q -Q "Summarize overnight email + Slack and DM me the top 5 items"
+hermes chat -Q -q "Summarize overnight email + Slack and DM me the top 5 items"
 EOF
 chmod +x $A/scripts/morning-digest.sh
 HERMES_HOME=$A hermes cron create "0 7 * * 1-5" --name morning-digest --script morning-digest.sh'
 ```
+
+### Routine: hourly Gmail ingestion → brain (deployed on mark-agent 2026-06-02)
+
+The standard "the agent actually knows the inbox" routine. Gmail's own
+categorization does the hard filter (`category:primary` excludes Promotions /
+Social / Spam); the LLM then keeps only emails worth remembering and writes
+summary pages into gbrain under `emails/<date>-<subject>`.
+
+Pattern: the script exports `HERMES_HOME` of the **reader** profile (read-only
+Gmail — trust split preserved), but the cron entry registers in the **actor**
+scheduler (the only gateway that fires crons). `--no-agent` because the script
+itself runs `hermes chat`; its stdout is the run record.
+
+```bash
+# Script: fetch category:primary from BOTH inboxes → LLM filter → gbrain put_page
+# (full prompt in /root/.hermes/profiles/actor/scripts/email-ingest.sh on mark-agent;
+#  key elements: category:primary -in:spam -in:trash newer_than:2h, max 15/inbox,
+#  keep real-person + actionable mail, discard newsletters/OTP/notifications,
+#  dedup via get_page on slug emails/<YYYY-MM-DD>-<kebab-subject>,
+#  final line "INGEST RESULT: N fetched, K ingested, F filtered out, D already known")
+
+# Register: hourly at :15 (off the 03:00 dream + 04:00 recycle windows)
+orgo_bash 'HERMES_HOME=/root/.hermes/profiles/actor hermes cron create "15 * * * *" \
+  --name email-ingest --script email-ingest.sh --no-agent --deliver local'
+```
+
+> Cadence note: glm-4.7 under the full ~90-tool reader load takes minutes per
+> step; a single ingest run can take 10–30 min. **Hourly is the floor** — do not
+> schedule this every 15/30 min or runs will overlap.
 
 > **Rule:** every client routine is a `hermes cron` entry in the **actor** profile
 > (its gateway is the always-running one). The reader profile has no long-running

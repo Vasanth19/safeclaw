@@ -1,0 +1,43 @@
+version: 1
+clients:
+  example-client:
+    display_name: Example Client
+    status: planned
+    owner:
+      agency_admin: unassigned
+      client_primary_email: client-admin@example.com
+    orgo:
+      workspace_id: null
+      computer_id: null
+      computer_name: example-client-agent
+    composio:
+      project_id: null
+      project_key_secret_ref: null
+      user_id: null
+      reader_mcp_url_secret_ref: null
+      actor_mcp_url_secret_ref: null
+      connected_accounts:
+        gmail: pending
+        drive: pending
+        calendar: pending
+        slack: pending
+    slack:
+      team_id: null
+      enterprise_id: null
+      home_channel_id: null
+      admin_user_ids: []
+      gateway_route_status: pending
+    brain:
+      base_url: null
+      health_url: null
+      reader_token_secret_ref: null
+      actor_token_secret_ref: null
+      source_id: null
+    install:
+      runtime: hermes-gbrain
+      version: null
+      branch: null
+      installed_at: null
+      last_health_check_at: null
+      last_bootstrap_at: null
+      notes: Initial placeholder entry. Do not store secrets here.

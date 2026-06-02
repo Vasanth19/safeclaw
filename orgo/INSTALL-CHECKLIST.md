@@ -78,6 +78,8 @@
 ### Step 5 — Routines / workflows  **[B]**
 - [ ] Client routines = `hermes cron` entries in the **actor** profile, **new syntax** (positional schedule + `--script`; issue 12); only actor cron fires
 - [ ] Routine schedules kept **off 03:00 (dream) and 04:00 (watchdog gateway recycle)** windows
+- [ ] **Email-ingest routine** deployed (`orgo/routines/email-ingest.sh` → actor `scripts/`, runs reader profile): hourly `15 * * * *`, `category:primary` only, snippets-first fetch, `--max-turns 60` (reader caps at 25)
+- [ ] Email-ingest **tested manually in tmux first** — log ends with `INGEST RESULT:` line and brain has `emails/*` pages
 - [ ] Verify: `hermes cron list` (actor) shows all routines with next-run times
 
 ### Step 6 — SafeClaw Console (Flask) + basic-auth  **[B]**

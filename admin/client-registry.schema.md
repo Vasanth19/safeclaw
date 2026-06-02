@@ -25,6 +25,8 @@ clients:
       user_id: null
       reader_mcp_url_secret_ref: null
       actor_mcp_url_secret_ref: null
+      onboarding_page_url: null
+      onboarding_template_source: admin/client-onboarding/matt-hoover
       connected_accounts:
         gmail: pending | connected | failed | not_required
         drive: pending | connected | failed | not_required

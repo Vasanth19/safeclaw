@@ -163,6 +163,10 @@ Admin agent:
 6. Creates OAuth connection links or a dynamic setup page backed by server-side link creation.
 7. Sends the setup page or links to the employee for client delivery.
 
+The admin agent should create the client-facing OAuth setup pages during Orgo provisioning, not as a separate manual project. Use `admin/client-onboarding/matt-hoover/` as the initial working template: copy it to `admin/client-onboarding/<client_slug>/`, replace client labels/service cards/Composio IDs, and deploy it with a server-side `COMPOSIO_API_KEY`.
+
+Human-in-the-loop checkpoints are required for Composio project selection/creation, account-type confirmation, OAuth/auth config choices, and final connected-account verification. The client only receives the hosted setup page and approves OAuth links.
+
 Current Matt Hoover source is captured at `admin/client-onboarding/matt-hoover/`. It includes Google Calendar, Gmail, Google Docs, Google Sheets, and Google Tasks. Personal WhatsApp is intentionally excluded: Composio's WhatsApp connector is for WhatsApp Business, so it is not a useful onboarding target unless the client operates a WhatsApp Business account.
 
 ### Phase B: Client approves OAuth

@@ -6,6 +6,8 @@ This directory contains operator-facing artifacts for the SafeClaw admin onboard
 
 `client-onboarding/matt-hoover/` contains the current Netlify source for Matt Hoover's assistant setup page. It uses a server-side Netlify function to create fresh Composio connection links on click. The static HTML does not store link tokens.
 
+Use `client-onboarding/matt-hoover/` as the first reusable client-template implementation. The admin agent should copy this structure when provisioning a new Orgo client install, then replace client-specific labels, service cards, Composio user IDs, aliases, and auth config IDs. See `client-onboarding/README.md` for the human-in-the-loop Composio checkpoints.
+
 Current services:
 
 - Google Calendar

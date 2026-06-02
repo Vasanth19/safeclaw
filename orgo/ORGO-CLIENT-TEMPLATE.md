@@ -1205,6 +1205,21 @@ The token goes **ONLY** in the actor profile `.env`. default `.env` and reader
 dashboard's `--tui` gateway safe (Step 7). The actor gateway started in Step 7
 picks the token up; just append it and recycle.
 
+> **⚠️ Do NOT configure the token through the Hermes dashboard's Config/Keys page**
+> (live-install learning #25). The dashboard writes it to the **default** profile's
+> `.env` — the wrong profile. The dashboard's embedded `--tui` gateway then tries to
+> start Telegram itself (crashes/conflicts), and the actor gateway never sees the
+> token. If a user already did this: move both `TELEGRAM_*` lines from
+> `/root/.hermes/.env` into the actor `.env`, then recycle BOTH `hd` and `gw`.
+
+> **⚠️ Reusing a bot from a retired/old box** (live-install learning #26): the old
+> box's gateway keeps polling that bot until it is killed — Telegram then ping-pongs
+> the connection between boxes every ~45 s, and messages delivered to the old box are
+> **silently lost** ("Hermes stopped responding"). Before going live on the new box,
+> either (a) kill the old box's services / delete the box (see decommission note in
+> Step 14), or (b) revoke the token in @BotFather and use the new one — the old
+> box's poller dies on the next 401.
+
 ```bash
 orgo_bash 'A=/root/.hermes/profiles/actor
 echo "TELEGRAM_BOT_TOKEN=<TELEGRAM_BOT_TOKEN>" >> $A/.env
@@ -1626,6 +1641,35 @@ orgo_bash 'tail -5 /opt/brain/dream.log'   # 11 phases completed, no embed error
 
 ## Step 14 — Golden snapshot / clone for the next client  **[MAC]**
 
+### Decommissioning a replaced box (do this FIRST if migrating)
+
+A replaced box left running will sabotage its successor: its gateway steals the
+Telegram bot (~45 s ping-pong, silent message loss — learning #26) and its
+cloudflared fights for the tunnel (split-brain 401s — issue 17). Proven
+procedure (mark-agent migration, 2026-06-02):
+
+```bash
+# Use the OLD box's own orgo key (if not stored, it may be recoverable from the
+# session transcript that created it: rg "sk_live_" ~/.claude/projects/<project>/*.jsonl)
+OLD_KEY=<old box's orgo key>; OLD_CID=<old box's computer id>
+# 1. kill every service in one shot (gateway, cloudflared, console, watchdog)
+curl -s -X POST "https://www.orgo.ai/api/computers/$OLD_CID/bash" \
+  -H "Authorization: Bearer $OLD_KEY" -H "Content-Type: application/json" \
+  -d '{"command":"tmux kill-server"}'
+# 2. delete the computer entirely
+curl -s -X DELETE "https://www.orgo.ai/api/computers/$OLD_CID" \
+  -H "Authorization: Bearer $OLD_KEY"
+# 3. verify 404
+curl -s "https://www.orgo.ai/api/computers/$OLD_CID" -H "Authorization: Bearer $OLD_KEY"
+# 4. then revoke that orgo key (it's now useless anyway) + delete the old CF tunnel
+```
+
+If the old box's key is unrecoverable: revoke the Telegram bot token in
+@BotFather (kills its poller on the next 401) and `--overwrite-dns` the
+hostnames to a new tunnel (issue 17) — the box then idles harmlessly.
+
+### Golden snapshot
+
 Once a box is fully green, snapshot/clone it so the next client comes up in
 minutes:
 
@@ -1687,6 +1731,8 @@ image — the native stack, profiles, Slack MCP build, watchdog, dream cron):
 | **Hermes Chat tab present but terminal won't connect (WS `/api/pty` → 401 through tunnel)** | Cloudflare is stripping the WebSocket upgrade — NOT a Hermes problem (handshake returns 101 locally on the box). Fix in CF dashboard: zone → **Network → WebSockets ON**, **Security → Bots → Bot Fight Mode OFF**. Verify with the Step 8d curl (expect 101). Tunnel protocol (http2/QUIC) makes no difference. Until fixed, use Console Quick Chat. |
 | **`--skip-build` not recognized** | You're on Hermes 0.11 — drop the flag, pre-build `/opt/hermes/web` once. |
 | **Telegram "Conflict: terminated by other getUpdates"** | Second poller — token in default/reader `.env`, a `--tui` gateway also polling, an off-box instance on the same bot, or your own getUpdates probe. One bot per box; token only in actor `.env`; don't probe. |
+| **Telegram replies, then "stops responding", then replies again (intermittent)** | Conflict ping-pong with the **previous box** that owned this bot — its gateway is still alive and steals the connection every ~45 s; messages it receives are silently lost (learning #26). Kill/delete the old box (Step 14 decommission) or revoke the token in @BotFather. Diagnose: `grep -c conflict gateway.log` keeps growing forever. |
+| **Telegram never connects + dashboard Chat tab crashes (React #301)** | Token was configured via the dashboard Config page → it landed in the **default** profile `.env` (learning #25). Move both `TELEGRAM_*` lines to the actor `.env`, recycle `hd` + `gw`. |
 | **Gmail "not authenticated" / "user ID does not match"** | MCP URL missing `user_id` (or only `connected_account_id`), or the `x-api-key` header wasn't written into config.yaml. |
 | **An MCP with `__FILL_IN__` aborts the whole run** | Comment out any MCP whose creds aren't connected yet (Gmail stays commented until the customer connects). |
 | **Slack: `MCP tool …/call failed:` with empty error** | The ~8h stdio `slack_native` staleness (`ClosedResourceError`, empty `str()`). Recycle `gw` (respawns the MCP child); the nightly 04:00 watchdog restart is the standing mitigation. |

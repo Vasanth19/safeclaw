@@ -94,14 +94,18 @@
       <h1 class="text-xl font-bold mb-1">Slack</h1>
       <p class="text-sm text-gray-500 mb-4">Socket-mode bot — no public URL needed.</p>
       <div class="help rounded p-4 mb-4 text-sm text-gray-300">
-        <div class="font-semibold text-[#3ddc97] mb-2">How to get these tokens</div>
+        <div class="font-semibold text-[#3ddc97] mb-2">Set up from manifest (recommended — one paste, all scopes pre-configured)</div>
         <ol class="list-decimal ml-5 space-y-1">
-          <li>Go to <a href="https://api.slack.com/apps" target="_blank">api.slack.com/apps</a> → <b>Create New App → From scratch</b>. Use <b>your own / dev workspace</b>, never a client's.</li>
-          <li><b>Socket Mode</b> → enable → generate an <b>App-Level Token</b> (scope <code>connections:write</code>) → this is <code>xapp-…</code>.</li>
-          <li><b>OAuth &amp; Permissions</b> → Bot Token Scopes: <code>chat:write</code>, <code>app_mentions:read</code>, <code>channels:history</code>, <code>im:history</code>, <code>files:read</code>.</li>
-          <li><b>Event Subscriptions</b> → on → subscribe <code>message.channels</code>, <code>message.im</code>, <code>app_mention</code>.</li>
+          <li>Go to <a href="https://api.slack.com/apps" target="_blank">api.slack.com/apps</a> → <b>Create New App → From a manifest</b>. Use <b>your own / dev workspace</b>, never a client's.</li>
+          <li>Pick the workspace → switch to the <b>JSON</b> tab → paste the manifest below → <b>Create</b>.</li>
+          <li><b>Socket Mode</b> → generate an <b>App-Level Token</b> (scope <code>connections:write</code>) → this is <code>xapp-…</code>.</li>
           <li><b>Install to Workspace</b> → copy the <b>Bot Token</b> (<code>xoxb-…</code>). In Slack, <code>/invite</code> the bot to channels it should read.</li>
         </ol>
+        <div class="mt-3 flex items-center justify-between">
+          <span class="font-semibold text-[#3ddc97]">App manifest JSON</span>
+          <button class="btn px-3 py-1 rounded text-xs" onclick="copyManifest(this)">Copy manifest</button>
+        </div>
+        <pre id="slack-manifest" class="mt-2 p-3 rounded bg-black/40 text-xs overflow-x-auto" style="max-height:300px"></pre>
       </div>
       <div class="card rounded p-5 flex flex-col gap-3">
         <label class="text-sm">Bot token <span class="text-gray-500">(xoxb-…)</span>
@@ -216,7 +220,10 @@ const $ = s => document.querySelector(s);
 function toast(msg, ok=true){const t=$('#toast');t.textContent=msg;
   t.className='fixed bottom-6 right-6 px-4 py-2 rounded text-sm '+(ok?'bg-[#13251c] text-[#3ddc97] border border-[#1f4031]':'bg-[#2a1414] text-red-300 border border-[#412020]');
   t.classList.remove('hidden');setTimeout(()=>t.classList.add('hidden'),3500);}
-async function api(path, opts){const r=await fetch(path,opts);let b={};try{b=await r.json()}catch(e){}
+// Resolve against location.origin (never contains credentials) — a relative
+// fetch() throws "Request cannot be constructed from a URL that includes
+// credentials" when the page was opened via a https://user:pass@host URL.
+async function api(path, opts){const r=await fetch(new URL(path, location.origin),opts);let b={};try{b=await r.json()}catch(e){}
   if(!r.ok||b.ok===false)throw new Error(b.error||('HTTP '+r.status));return b;}
 
 document.querySelectorAll('.nav-item').forEach(n=>n.onclick=()=>{
@@ -272,6 +279,45 @@ async function post(path,body,btn){btn.disabled=true;const t=btn.textContent;btn
   try{await api(path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});toast('Saved ✓');}
   catch(e){toast(e.message,false);}finally{btn.disabled=false;btn.textContent=t;}}
 const saveSlack=b=>post('/api/slack',{SLACK_BOT_TOKEN:$('#slack-bot').value,SLACK_APP_TOKEN:$('#slack-app').value,SLACK_HOME_CHANNEL:$('#slack-home').value},b);
+
+// Slack app manifest — "Create New App → From a manifest" pre-configures every
+// scope + event + socket mode in one paste. Includes files:read/files:write so
+// the bot can read shared files and upload attachments/reports.
+const SLACK_MANIFEST = {
+  display_information: { name: "SafeClaw", description: "AI email & Slack assistant", background_color: "#13251c" },
+  features: { bot_user: { display_name: "SafeClaw", always_online: true } },
+  oauth_config: { scopes: { bot: [
+    "app_mentions:read", "channels:history", "channels:read",
+    "chat:write", "chat:write.public", "commands",
+    "files:read", "files:write",
+    "groups:history", "groups:read",
+    "im:history", "im:read", "im:write",
+    "mpim:history", "mpim:read",
+    "reactions:read", "reactions:write",
+    "users:read", "users:read.email"
+  ] } },
+  settings: {
+    event_subscriptions: { bot_events: [
+      "app_mention", "message.channels", "message.groups",
+      "message.im", "message.mpim", "reaction_added", "file_shared"
+    ] },
+    interactivity: { is_enabled: true },
+    org_deploy_enabled: false,
+    socket_mode_enabled: true,
+    token_rotation_enabled: false
+  }
+};
+document.getElementById('slack-manifest').textContent = JSON.stringify(SLACK_MANIFEST, null, 2);
+function copyManifest(b){
+  navigator.clipboard.writeText(JSON.stringify(SLACK_MANIFEST, null, 2))
+    .then(()=>{toast('Manifest copied — paste it in the JSON tab at api.slack.com/apps');})
+    .catch(()=>{ // clipboard API can fail on http / permission denial — fall back to select-for-copy
+      const pre=document.getElementById('slack-manifest');
+      const r=document.createRange(); r.selectNodeContents(pre);
+      const s=getSelection(); s.removeAllRanges(); s.addRange(r);
+      toast('Press ⌘C / Ctrl+C to copy the selected manifest', false);
+    });
+}
 const saveTelegram=b=>post('/api/telegram',{TELEGRAM_BOT_TOKEN:$('#tg-token').value,TELEGRAM_ALLOWED_USERS:$('#tg-users').value},b);
 async function loadGmailAccounts(btn){const key=$('#gm-key').value.trim();if(!key)return toast('Enter your Composio API key',false);
   btn.disabled=true;const t=btn.textContent;btn.textContent='Loading…';

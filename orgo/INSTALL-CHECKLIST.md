@@ -110,6 +110,8 @@
 
 ### Step 10 — Telegram (dedicated bot per box)  **[B]**
 - [ ] `<TELEGRAM_BOT_TOKEN>` + `TELEGRAM_ALLOWED_USERS=<TELEGRAM_NUMERIC_USER_ID>` in **actor `.env` ONLY** (numeric id via @userinfobot or the gateway log's `from.id` — NOT a Slack `U…` id)
+- [ ] **NOT via the dashboard Config page** (writes to default profile → crashes `--tui` gateway, learning #25); if already done: move TELEGRAM_* lines to actor `.env`, recycle `hd`+`gw`
+- [ ] **Bot reused from an old box?** That box's gateway must be DEAD first (Step 14 decommission) or revoke the token in @BotFather (learning #26 — the competing poller silently eats messages)
 - [ ] actor `gw` recycled; no getUpdates probes
 - [ ] Verify: gateway.log shows connected/polling, **0 conflicts**, `gbrain 88 tools` loaded (gbrain 0.42), secret-redaction on; allowed user's DM accepted (NOT `unauthorized`) → brain reply
 
@@ -144,6 +146,7 @@
 - [ ] `dream.log` → 11 phases (incl. `patterns`), no embed error; `hermes cron list` shows `gbrain-dream`
 
 ### Step 14 — Golden snapshot / clone next client  **[M]**
+- [ ] **Decommission any replaced box FIRST:** old box's own key → `tmux kill-server` via /bash → `DELETE /computers/{id}` → verify 404 → revoke its orgo key + delete its CF tunnel (else it steals the Telegram bot + tunnel from the new box)
 - [ ] `POST /computers/$CID/clone`
 - [ ] Re-run Step 0c on the clone (confirm always-on)
 - [ ] Parameterize: tunnel/DNS, hostnames, UI pass, **Console Hermes-link (`SAFECLAW_UI_USER`/`HERMES_DASH_URL`)**, Telegram, Slack tokens, **re-listed Composio ids (issue 24)**, embed/LLM keys, **gbrain HTTP bearer token (`/opt/brain/.hermes-token`)**

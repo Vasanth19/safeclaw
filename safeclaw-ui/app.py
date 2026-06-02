@@ -520,6 +520,23 @@ def api_selftest():
         return ok, (f"responds ({n} pages)" if ok else str(res)[:120] or "no reply")
     checks.append(_check("GBrain (knowledge brain)", _gbrain_check))
 
+    def _embeddings_check():
+        # "Installed but not initialized" guard: a brain with no embedding
+        # provider (or unembedded chunks) means semantic search + the dream
+        # embed phase silently don't work. Surface it on the SYSTEM TEST card.
+        ok, stats = _brain_call("get_stats", {}, timeout=30)
+        if not ok or not isinstance(stats, dict):
+            return False, "brain unreachable — cannot verify embeddings"
+        chunks = stats.get("chunk_count", 0)
+        embedded = stats.get("embedded_count", 0)
+        if chunks == 0:
+            return True, "no content yet (seed a page to verify embeddings)"
+        if embedded < chunks:
+            return False, (f"only {embedded}/{chunks} chunks embedded — embedding "
+                           "provider missing or its API key is dead")
+        return True, f"all {embedded}/{chunks} chunks embedded"
+    checks.append(_check("Embeddings (semantic search)", _embeddings_check))
+
     def _profiles_check():
         missing = [r for r in ("reader", "actor")
                    if not (_profiles_root() / r / "config.yaml").exists()]

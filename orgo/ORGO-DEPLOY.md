@@ -1,5 +1,20 @@
 # SafeClaw on orgo.ai — template deployment runbook
 
+> # ⛔ DEPRECATED — do NOT deploy from this document
+>
+> This is the **legacy Docker-era plan** (docker compose, ghcr.io brain image,
+> local Ollama embeddings). It was superseded by the **native, no-Docker stack**
+> proven on mark-agent and elise-losasso. Following this doc produces a box where
+> gbrain is installed but **never initialized** and **no embedding provider is
+> configured** — the Console shows zero brain pages and semantic search is dead.
+>
+> **Deploy from these instead:**
+> - **`ORGO-CLIENT-TEMPLATE.md`** — the full runbook (Step 2 = `gbrain init
+>   --pglite --embedding-model openrouter:…` — REQUIRED, never skip)
+> - **`INSTALL-CHECKLIST.md`** — the tick-box mirror
+>
+> Kept only as historical reference for the Docker approach.
+
 Going-forward client deploys as **template duplication**: build one golden
 snapshot, then "duplicate a workspace + configure" per customer. Each client =
 one orgo **workspace** (`client-<name>`) + one **computer** cloned from the

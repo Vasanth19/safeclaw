@@ -32,8 +32,16 @@ command -v node >/dev/null 2>&1 || { echo "FATAL: node not on PATH — run the N
 # ── 1. Hermes itself (official installer, pinned version) ──────────────────
 # Reference: legacy orgo/ORGO-DEPLOY.md — `curl … hermes-agent.nousresearch.com/install.sh | bash`.
 # We pass the version through to pin it rather than tracking latest.
+#
+# ⚠️ --skip-setup is REQUIRED (elise live-install): the installer's setup wizard
+# reads from /dev/tty (NOT stdin), so it launches whenever a terminal exists —
+# e.g. inside tmux — and blocks forever at "Choice [default 1]:". It only
+# auto-skips when there is no /dev/tty at all (bare orgo /bash, which is how the
+# mark install silently dodged this). We configure provider/model/keys ourselves
+# afterwards, so the wizard is never wanted. Note: `bash -s -- --skip-setup`
+# passes the flag through the curl|bash pipe.
 export HERMES_INSTALL_DIR="${HERMES_INSTALL_DIR:-/opt/hermes}"
-curl -fsSL https://hermes-agent.nousresearch.com/install.sh | HERMES_VERSION="${HERMES_VERSION}" bash
+curl -fsSL https://hermes-agent.nousresearch.com/install.sh | HERMES_VERSION="${HERMES_VERSION}" bash -s -- --skip-setup
 
 # Make hermes globally resolvable in every fresh shell (orgo /bash spawns a new
 # shell per call — do NOT rely on a PATH export persisting).
@@ -87,3 +95,35 @@ if [ "${NEEDS_PREBUILD}" = "1" ] && [ -d "${HERMES_INSTALL_DIR}/web" ]; then
 fi
 
 echo "[setup-hermes] DONE — hermes $(hermes --version), croniter installed."
+
+# ── 4. GBrain initialization guard ──────────────────────────────────────────
+# Installing Hermes (and even installing gbrain) is NOT enough — the brain must
+# be INITIALIZED with an embedding provider or the box silently degrades:
+# Console shows 0 brain pages, dream's embed phase no-ops, semantic search dead.
+GBRAIN_HOME="${GBRAIN_HOME:-/opt/brain}"
+if [ ! -f "${GBRAIN_HOME}/.gbrain/config.json" ]; then
+  cat <<'WARN'
+
+══════════════════════════════════════════════════════════════════════════
+⚠️  GBRAIN IS NOT INITIALIZED YET — the install is NOT finished.
+
+   REQUIRED NEXT STEP (ORGO-CLIENT-TEMPLATE.md Step 2):
+
+     export GBRAIN_HOME=/opt/brain
+     export OPENROUTER_API_KEY=<key>      # embeddings provider — REQUIRED
+     gbrain init --pglite --embedding-model openrouter:openai/text-embedding-3-small
+     echo "OPENROUTER_API_KEY=<key>" >> /opt/brain/.env
+
+   Then continue with the sync repo + HTTP server (Steps 2/2c) before
+   wiring any Hermes profile to the brain.
+══════════════════════════════════════════════════════════════════════════
+WARN
+elif ! grep -q '"embedding_model"' "${GBRAIN_HOME}/.gbrain/config.json"; then
+  echo ""
+  echo "⚠️  GBrain is initialized but has NO embedding provider configured."
+  echo "   Semantic search and the dream embed phase will not work."
+  echo "   Fix: re-init with --embedding-model openrouter:openai/text-embedding-3-small"
+  echo "   (or set the embedding model per gbrain docs) + put the key in ${GBRAIN_HOME}/.env"
+else
+  echo "[setup-hermes] GBrain initialized with embeddings: $(grep -o '"embedding_model"[^,]*' "${GBRAIN_HOME}/.gbrain/config.json")"
+fi

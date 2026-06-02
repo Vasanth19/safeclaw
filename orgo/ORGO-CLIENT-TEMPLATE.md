@@ -427,6 +427,14 @@ This same pool is added to the reader and actor profiles in Step 3.
 
 ## Step 2 — GBrain init (PGLite) + EMBEDDINGS + sync repo  **[BOX]**
 
+> **🚨 INSTALLED ≠ INITIALIZED.** Step 1 only puts the `gbrain` binary on disk.
+> Until `gbrain init` runs **with an embedding provider**, the box silently
+> degrades: the Console dashboard shows **0 brain pages**, `gbrain` CLI says
+> "No brain configured", the dream embed phase no-ops, and semantic search is
+> dead. This step is REQUIRED on every box — never skip it, never defer it.
+> (setup-hermes.sh now prints a guard warning if it detects this state; the
+> Console SYSTEM TEST card has an "Embeddings" check that fails on it.)
+
 GBrain initialises as PGLite (serverless, on-box). **Embeddings are now required**
 because the nightly `dream` (Step 4) runs an `embed` phase, and Ollama Cloud has
 **no** embeddings endpoint.
@@ -519,6 +527,15 @@ echo BRAIN_HTTP_UP'
 ```
 
 **2c-b. Mint a bearer token for Hermes.**
+
+> **🚨 ORDER FIX (found live on elise-losasso): mint the token BEFORE starting
+> the HTTP server (i.e. run 2c-b's `gbrain auth create` first, or stop the
+> `brain` tmux session around it).** `gbrain auth create` is a CLI **write** —
+> it needs the PGLite writer lock that the just-started `gbrain serve --http`
+> already holds. Running it with the server up doesn't error: it **hangs**, the
+> orgo /bash call 504s, the retries pile up more hung copies, and the box's
+> whole /bash executor wedges for several minutes (every later call 504s until
+> the lock timeouts fire). Token first → then start the server.
 
 > **⚠️ `gbrain auth create` needs the `--name` flag** (issue 22b). A *positional*
 > name (`gbrain auth create hermes`) just prints usage and creates nothing.

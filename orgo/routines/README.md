@@ -38,3 +38,15 @@ orgo_bash 'HERMES_HOME=/root/.hermes/profiles/actor hermes cron create "15 * * *
   messages by id only for emails that pass the filter.
 - **Cadence floor is hourly.** glm-4.7 under the ~90-tool reader load takes
   minutes per step; a run can take 10–30 min. 15/30-min schedules will overlap.
+- **🚨 hermes cron kills `--no-agent` scripts after 120s by default.** A run that
+  finds nothing finishes in ~100s, but any run that actually ingests emails takes
+  5–15+ min and gets killed — i.e. the routine only "succeeds" when there's nothing
+  to do. Fix: set `cron.script_timeout_seconds: 1800` in the **actor** profile's
+  `config.yaml` (also overridable via `HERMES_CRON_SCRIPT_TIMEOUT` env). The config
+  cache is mtime-keyed, so the running gateway picks it up without restart.
+  Found live on mark-agent: 3 of the first 10 scheduled runs died at 120s.
+- **Transient MCP failures produce silent fake zeros.** One mark-agent run lost the
+  Composio Gmail MCP connection and the agent reported `0 listed` instead of an
+  error (it even suggested installing CLI mail tools). The prompt now opens with a
+  tool-availability check that outputs `INGEST ERROR: gmail MCP tools unavailable`
+  instead of a fake zero — grep cron output for `INGEST ERROR` when auditing.

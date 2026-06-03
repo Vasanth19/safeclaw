@@ -428,10 +428,14 @@ This same pool is added to the reader and actor profiles in Step 3.
 ## Step 2 — GBrain init (PGLite) + EMBEDDINGS + sync repo  **[BOX]**
 
 > **🚨 INSTALLED ≠ INITIALIZED.** Step 1 only puts the `gbrain` binary on disk.
-> Until `gbrain init` runs **with an embedding provider**, the box silently
-> degrades: the Console dashboard shows **0 brain pages**, `gbrain` CLI says
-> "No brain configured", the dream embed phase no-ops, and semantic search is
-> dead. This step is REQUIRED on every box — never skip it, never defer it.
+> Until `gbrain init` runs **with an embedding provider (the OpenRouter API key)**,
+> the brain is **not active at all**: Hermes and the agents **cannot connect to
+> it** (the gbrain MCP has nothing to serve), the Console dashboard shows
+> **0 brain pages**, `gbrain` CLI says "No brain configured", the dream embed
+> phase no-ops, and semantic search is dead. This step is REQUIRED on every box —
+> never skip it, never defer it. The OpenRouter key comes from the credential
+> staging (`workspace.env` / `~/.gsai/secrets.env`) and goes into BOTH the init
+> shell and `/opt/brain/.env`.
 > (setup-hermes.sh now prints a guard warning if it detects this state; the
 > Console SYSTEM TEST card has an "Embeddings" check that fails on it.)
 

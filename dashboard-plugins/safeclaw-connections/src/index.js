@@ -44,6 +44,8 @@
     var formS = useState({ provider: "", agent: "", label: "", account: "", name: "" });
     var form = formS[0], setForm = formS[1];
     var busyS = useState(false); var busy = busyS[0], setBusy = busyS[1];
+    // OAuth onboarding state — drives the in-dashboard "Connect with OAuth" flow
+    var oauthS = useState({ phase: "idle", msg: "" }); var oauth = oauthS[0], setOauth = oauthS[1];
 
     function reload() {
       setSt({ status: "loading", err: null });
@@ -86,6 +88,67 @@
     function remove(id) {
       fetch(BASE + "/connections/" + id, { method: "DELETE" })
         .then(function () { reload(); });
+    }
+
+    // ── OAuth onboarding (in-dashboard, on-box) ──
+    // Mint a Composio OAuth link server-side, open it for the user to approve,
+    // poll until the connected account is ACTIVE, then register it through the
+    // same scope-locked POST /connections path. The COMPOSIO_API_KEY never
+    // reaches the browser — we only ever receive the provider's redirect_url.
+    function registerAccount(accountId) {
+      var id = form.provider + "-" + form.label;
+      var body = {
+        id: id, provider: form.provider, agent: form.agent, label: form.label,
+        display_name: form.name || form.label, composio_account_id: accountId,
+      };
+      fetch(BASE + "/connections", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }).then(function (r) {
+        return r.json().then(function (b) {
+          if (!r.ok) throw new Error((b && b.detail) || ("HTTP " + r.status));
+          return b;
+        });
+      }).then(function () {
+        setOauth({ phase: "idle", msg: "" });
+        setForm({ provider: "", agent: "", label: "", account: "", name: "" });
+        reload();
+      }).catch(function (e) {
+        setOauth({ phase: "error", msg: "Authorized, but registering failed: " + e.message });
+      });
+    }
+
+    function pollStatus(accountId, tries) {
+      if (!accountId) { setOauth({ phase: "error", msg: "No connection id returned by Composio." }); return; }
+      if (tries > 60) { setOauth({ phase: "error", msg: "Timed out waiting for approval (~2.5 min). Retry, or paste the account id manually." }); return; }
+      getJSON("/connect-status?connected_account_id=" + encodeURIComponent(accountId))
+        .then(function (s) {
+          if (s.active) { setOauth({ phase: "registering", msg: "Authorized — registering connection…" }); registerAccount(accountId); return; }
+          if (s.status === "FAILED" || s.status === "EXPIRED") {
+            setOauth({ phase: "error", msg: "Connection " + String(s.status).toLowerCase() + ". Please retry." });
+            return;
+          }
+          setTimeout(function () { pollStatus(accountId, tries + 1); }, 2500);
+        })
+        .catch(function (e) { setOauth({ phase: "error", msg: e.message }); });
+    }
+
+    function startOAuth() {
+      if (!form.provider || !form.agent || !form.label) return;
+      setOauth({ phase: "linking", msg: "Creating a secure connection link…" });
+      fetch(BASE + "/connect-link", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ provider: form.provider, agent: form.agent, label: form.label }),
+      }).then(function (r) {
+        return r.json().then(function (b) {
+          if (!r.ok) throw new Error((b && b.detail) || ("HTTP " + r.status));
+          return b;
+        });
+      }).then(function (link) {
+        if (link.redirect_url) window.open(link.redirect_url, "_blank", "noopener");
+        setOauth({ phase: "waiting", msg: "Approve access in the new tab — this updates automatically when you're done." });
+        pollStatus(link.connected_account_id, 0);
+      }).catch(function (e) { setOauth({ phase: "error", msg: e.message }); });
     }
 
     // ── connection cards ──
@@ -159,14 +222,37 @@
             selectedProvider && selectedProvider.needs_account_id &&
               h("input", {
                 className: "border border-border bg-background px-2 py-1.5 text-sm",
-                placeholder: "Composio connected_account_id", value: form.account,
+                placeholder: selectedProvider.supports_oauth_link
+                  ? "or paste connected_account_id (optional)"
+                  : "Composio connected_account_id",
+                value: form.account,
                 onChange: function (e) { setForm(Object.assign({}, form, { account: e.target.value })); },
               }),
-            h(C.Button, {
-              onClick: submit, disabled: busy || !form.provider || !form.agent || !form.label,
-              className: "border border-border bg-foreground/10 px-3 py-1.5 text-sm hover:bg-foreground/20 cursor-pointer",
-            }, busy ? "Connecting…" : "Connect"),
+            // Primary action for Composio providers: mint + approve OAuth on-box.
+            selectedProvider && selectedProvider.supports_oauth_link &&
+              h(C.Button, {
+                onClick: startOAuth,
+                disabled: !form.provider || !form.agent || !form.label
+                  || oauth.phase === "linking" || oauth.phase === "waiting" || oauth.phase === "registering",
+                className: "border border-border bg-foreground/10 px-3 py-1.5 text-sm hover:bg-foreground/20 cursor-pointer",
+              }, oauth.phase === "waiting" ? "Waiting for approval…"
+                : oauth.phase === "linking" ? "Opening…"
+                  : oauth.phase === "registering" ? "Finishing…"
+                    : "Connect with OAuth"),
+            // Register a pasted id, or connect non-OAuth providers directly.
+            (!selectedProvider || !selectedProvider.supports_oauth_link || form.account) &&
+              h(C.Button, {
+                onClick: submit,
+                disabled: busy || !form.provider || !form.agent || !form.label
+                  || (selectedProvider && selectedProvider.needs_account_id && !form.account),
+                className: "border border-border bg-foreground/10 px-3 py-1.5 text-sm hover:bg-foreground/20 cursor-pointer",
+              }, busy ? "Connecting…" : (selectedProvider && selectedProvider.supports_oauth_link ? "Register pasted id" : "Connect")),
           ),
+          // OAuth progress / error line
+          oauth.phase !== "idle" && oauth.msg &&
+            h("p", {
+              className: "text-[11px] " + (oauth.phase === "error" ? "text-destructive" : "text-muted-foreground"),
+            }, oauth.phase === "error" ? "⚠ " + oauth.msg : oauth.msg),
           selectedProvider && form.agent &&
             h("p", { className: "text-[11px] text-muted-foreground" },
               "This will be granted scope ",

@@ -146,5 +146,11 @@ bash scripts/smoke-brain.sh                 # brain /health + gbrain stats
   `docs.orgo.ai/llms-full.txt` (the `VERIFY` markers in `provision-client.py`).
 - Optional: hosted embeddings (drop host Ollama) — only after confirming the
   GBrain image accepts an API-keyed OpenAI-compatible embeddings endpoint.
-- Connections frontend bundle is pure-SDK (no build needed); add esbuild
-  minification if desired.
+- Connections frontend bundle is pure-SDK (no npm imports). `dist/` is
+  gitignored, so run `dashboard-plugins/safeclaw-connections/build.sh` once at
+  provision time (it copies src→dist, or esbuild-minifies if available) so the
+  plugin manifest's `entry: dist/index.js` resolves. Re-run after any src edit.
+- In-dashboard Composio OAuth onboarding (Connections tab → "Connect with
+  OAuth") needs `COMPOSIO_API_KEY` + `COMPOSIO_USER_ID` in the dashboard process
+  env. The key stays server-side; clients only get the provider redirect_url.
+  This replaces the standalone Netlify connect page — onboarding stays on-box.

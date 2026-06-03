@@ -39,8 +39,12 @@ Truth:    provider catalog below decides which agents a provider may bind to
 
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 import re
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -92,6 +96,16 @@ PROVIDERS: dict[str, dict[str, Any]] = {
             "actor": {"scope": "draft", "mcp_prefix": "gmail"},
         },
         "needs_account_id": True,
+        # ── OAuth onboarding (in-dashboard, on-box) ──────────────────────────
+        # toolkit_slug + auth_config_env let the operator mint a fresh Composio
+        # OAuth link from the dashboard itself (POST /connect-link) instead of
+        # creating the connected account in Composio's external console and
+        # pasting the ca_… id by hand. auth_config_env names the env var that
+        # holds a pre-created Composio auth config id; if it is unset we fall
+        # back to Composio managed auth via toolkit_slug. The COMPOSIO_API_KEY
+        # never leaves the server — only the redirect_url is handed to the UI.
+        "toolkit_slug": "gmail",
+        "auth_config_env": "COMPOSIO_AUTHCONFIG_GMAIL",
     },
     "slack": {
         "label": "Slack",
@@ -320,6 +334,10 @@ async def list_providers():
             "backend": meta["backend"],
             "multi": meta["multi"],
             "needs_account_id": meta.get("needs_account_id", False),
+            # True when the operator can mint an OAuth link in-dashboard
+            # (POST /connect-link) rather than pasting a connected-account id.
+            "supports_oauth_link": meta["backend"] == "composio"
+            and bool(meta.get("toolkit_slug") or meta.get("auth_config_env")),
             "bindings": [
                 {
                     "agent": agent,
@@ -433,3 +451,210 @@ async def render_preview():
         if env_var:
             env_vars[env_var] = conn.get("composio_account_id", "")
     return {"mcp_servers": by_agent, "env_vars": env_vars}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Composio OAuth onboarding — in-dashboard, on-box
+# ─────────────────────────────────────────────────────────────────────────────
+# Ports the standalone Netlify `connect.js` flow into the dashboard so the whole
+# "connect your accounts" experience lives on the Orgo box behind the loopback
+# dashboard — no public page, no client touching a Composio console. The
+# operator (or the client, via the authenticated tunnel/orgo desktop) clicks
+# "Connect", we mint a fresh Composio OAuth link server-side, they approve it at
+# Google, we poll until the connected account is ACTIVE, then register it
+# through the existing scope-locked POST /connections path.
+#
+# Security posture (stricter than the public Netlify page it replaces):
+#   • COMPOSIO_API_KEY is read from the server env and NEVER returned to the
+#     browser — the client only ever receives the provider's redirect_url.
+#   • The OAuth link binds to (provider, agent); the scope is still DERIVED
+#     server-side by _derive_scope — a link can't request more than its
+#     boundary allows.
+#   • user_id is the single per-client COMPOSIO_USER_ID (the same id the Reader/
+#     Actor MCP servers send as x-composio-user-id), so the resulting
+#     connected_account_id is usable by the rendered config as-is.
+
+COMPOSIO_API_BASE = "https://backend.composio.dev/api/v3"
+
+
+def _composio_api_key() -> str:
+    key = os.environ.get("COMPOSIO_API_KEY", "").strip()
+    if not key:
+        # Fail fast and loud — no silent fallback. Mirrors connect.js's
+        # "missing a server-side Composio key" guard.
+        raise HTTPException(
+            500,
+            "COMPOSIO_API_KEY is not set in the dashboard environment. OAuth "
+            "onboarding cannot mint connection links without it.",
+        )
+    return key
+
+
+def _composio_user_id() -> str:
+    uid = os.environ.get("COMPOSIO_USER_ID", "").strip()
+    if not uid:
+        raise HTTPException(
+            500,
+            "COMPOSIO_USER_ID is not set in the dashboard environment. It is "
+            "required so the new connected account is owned by the same Composio "
+            "user the Reader/Actor MCP servers authenticate as.",
+        )
+    return uid
+
+
+def _composio_call(method: str, path: str,
+                   body: dict[str, Any] | None = None) -> tuple[int, Any]:
+    """Blocking Composio v3 request. Call via asyncio.to_thread from routes.
+
+    Returns (status_code, parsed_json_or_raw_text). Never raises for HTTP error
+    status — the caller decides how to surface it (so we can sanitize messages
+    and never leak the api key). Raises only on transport failure.
+    """
+    url = f"{COMPOSIO_API_BASE}{path}"
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method)
+    req.add_header("x-api-key", _composio_api_key())
+    req.add_header("Accept", "application/json")
+    if data is not None:
+        req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            raw = resp.read().decode("utf-8", "replace")
+            status = resp.status
+    except urllib.error.HTTPError as e:  # 4xx/5xx — read the body, don't raise
+        raw = e.read().decode("utf-8", "replace")
+        status = e.code
+    except urllib.error.URLError as e:
+        raise HTTPException(502, f"Could not reach Composio: {e.reason}")
+    try:
+        return status, (json.loads(raw) if raw else {})
+    except json.JSONDecodeError:
+        return status, raw
+
+
+async def _resolve_auth_config_id(provider: str) -> str:
+    """The Composio auth_config id to mint the OAuth link against.
+
+    Prefers an operator-provided env var (auth_config_env) so each client can
+    pin its own pre-created auth config; otherwise creates a managed-auth config
+    from the provider's toolkit_slug (the connect.js fallback path).
+    """
+    pmeta = PROVIDERS[provider]
+    env_name = pmeta.get("auth_config_env")
+    if env_name:
+        preset = os.environ.get(env_name, "").strip()
+        if preset:
+            return preset
+
+    slug = pmeta.get("toolkit_slug")
+    if not slug:
+        raise HTTPException(
+            422,
+            f"provider {provider!r} has no auth config: set "
+            f"{env_name or 'its auth_config_env'} or give it a toolkit_slug.",
+        )
+    status, data = await asyncio.to_thread(
+        _composio_call, "POST", "/auth_configs",
+        {
+            "toolkit": {"slug": slug},
+            "auth_config": {
+                "type": "use_composio_managed_auth",
+                "credentials": {},
+                "restrict_to_following_tools": [],
+            },
+        },
+    )
+    auth_config_id = (data or {}).get("auth_config", {}).get("id") \
+        if isinstance(data, dict) else None
+    if status >= 300 or not auth_config_id:
+        raise HTTPException(
+            502,
+            f"Could not create a Composio auth config for {provider!r}. "
+            f"Composio returned HTTP {status}.",
+        )
+    return auth_config_id
+
+
+# ── Schemas ──────────────────────────────────────────────────────────────────
+class ConnectLinkRequest(BaseModel):
+    provider: str
+    agent: str
+    label: str = Field(..., description="slug used for the alias, e.g. hyphenlabs")
+
+
+# ── Routes ───────────────────────────────────────────────────────────────────
+@router.post("/connect-link")
+async def create_connect_link(body: ConnectLinkRequest):
+    """Mint a fresh Composio OAuth link for (provider, agent).
+
+    Returns {redirect_url, connected_account_id, status}. The browser opens
+    redirect_url; the user approves at the provider; the UI then polls
+    GET /connect-status?connected_account_id=… until ACTIVE, and finally
+    registers the account through POST /connections (which locks the scope).
+    """
+    pmeta = PROVIDERS.get(body.provider)
+    if not pmeta:
+        raise HTTPException(422, f"unknown provider: {body.provider!r}")
+    if pmeta["backend"] != "composio":
+        raise HTTPException(
+            422,
+            f"{pmeta['label']} is not a Composio provider — OAuth links only "
+            f"apply to Composio integrations (it uses the {pmeta['backend']!r} "
+            f"backend, configured elsewhere).",
+        )
+    if not LABEL_RE.match(body.label):
+        raise HTTPException(422, f"invalid label {body.label!r}: "
+                                 f"lowercase letters, digits, hyphens (≤33).")
+    # Validates the (provider, agent) binding and that scope is allowed at all.
+    _derive_scope(body.provider, body.agent)
+
+    # Fail fast on missing server-side secrets before doing any work — and so the
+    # guard holds even when the network call is stubbed in tests.
+    _composio_api_key()
+    user_id = _composio_user_id()
+    auth_config_id = await _resolve_auth_config_id(body.provider)
+    alias = f"{body.provider}-{body.label}"
+
+    status, data = await asyncio.to_thread(
+        _composio_call, "POST", "/connected_accounts/link",
+        {"auth_config_id": auth_config_id, "user_id": user_id, "alias": alias},
+    )
+    redirect_url = data.get("redirect_url") if isinstance(data, dict) else None
+    if status >= 300 or not redirect_url:
+        raise HTTPException(
+            502,
+            f"Could not create a {pmeta['label']} connection link "
+            f"(Composio HTTP {status}). Check the auth config and try again.",
+        )
+    return {
+        "redirect_url": redirect_url,
+        "connected_account_id": data.get("id"),
+        "status": data.get("status", "INITIATED"),
+        "provider": body.provider,
+        "agent": body.agent,
+        "label": body.label,
+    }
+
+
+@router.get("/connect-status")
+async def connect_status(connected_account_id: str):
+    """Poll a Composio connected account until the user finishes OAuth.
+
+    The UI calls this on an interval after opening the redirect_url. When status
+    is ACTIVE the returned connected_account_id is ready to register via
+    POST /connections.
+    """
+    if not re.match(r"^[A-Za-z0-9_-]{4,128}$", connected_account_id):
+        raise HTTPException(400, "invalid connected_account_id")
+    status, data = await asyncio.to_thread(
+        _composio_call, "GET", f"/connected_accounts/{connected_account_id}",
+    )
+    if status >= 300:
+        raise HTTPException(
+            502, f"Composio returned HTTP {status} for that connection.")
+    conn_status = data.get("status") if isinstance(data, dict) else None
+    return {
+        "connected_account_id": connected_account_id,
+        "status": conn_status,            # INITIATED | ACTIVE | FAILED | EXPIRED
+        "active": conn_status == "ACTIVE",
+    }

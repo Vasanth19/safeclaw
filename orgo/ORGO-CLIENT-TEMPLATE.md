@@ -73,7 +73,12 @@
 **What the client gets:**
 - A stable Console URL `https://safeclaw-<CLIENT>.growthsystems.ai` (basic-auth):
   Chat working, plus links to the Hermes dashboard.
-- A Hermes dashboard URL `https://hermes-<CLIENT>.growthsystems.ai` (dashboard + Chat tab).
+- A Hermes dashboard URL `https://hermes-<CLIENT>.growthsystems.ai` (dashboard +
+  Chat tab + **Connections** and **Settings** tabs — Step 7b).
+- A **self-serve connect page**: the operator shares one credential-embedded URL
+  (`https://user:pass@hermes-<CLIENT>…/connections`); the customer clicks each
+  connector and OAuths their own accounts — no Composio console, no tokens, no
+  `.env`. Each client runs in its **own isolated Composio project** (Step 11a).
 - A dedicated Telegram bot (their own, from @BotFather) for interactive chat.
 - **Slack** wired with a **trust split** ported from the VPS (the better setup):
   a custom stdio MCP whose tools differ by mode — reader can list/read channels,
@@ -94,7 +99,7 @@
 | **Ollama Cloud API key(s)** | LLM inference (`glm-4.7` — the proven agentic model; **NOT** kimi-k2.5, see Step 1). Off-box; keeps the box light. Bring **at least two keys** so the credential pool can fail over on a 429 (Step 1 "Credential pool"). |
 | **GBrain source** | The brain engine is cloned + built from `https://github.com/garrytan/gbrain` (bun). No separate account needed; the box clones it in Step 1. |
 | **Embeddings key (OpenRouter or OpenAI)** | **NOW REQUIRED — no longer deferred.** GBrain's nightly `dream` has an `embed` phase; Ollama Cloud has **no** `/v1/embeddings` endpoint, so embeddings must come from OpenRouter/OpenAI (`openrouter:openai/text-embedding-3-small`, 1536 dims). **⚠️ Budget note (issue 7):** gbrain **0.42 auto-sets `chat_model = openrouter:openai/gpt-5.2`**, so dream's LLM phases (synthesize/extract/patterns) **bill the same OpenRouter key** — not just embeddings. Expect real OpenRouter spend on every nightly dream; size the key's budget accordingly. |
-| **Composio account + API key** | OAuth + MCP for the Gmail trust split (`ak_…`). |
+| **Composio ORG API key** | **Operator-side only — NEVER goes on the box.** Held on your Mac / admin agent; it can create projects across every client. `scripts/provision-composio.py` uses it to create this client's **isolated project** and writes only the per-client **project key** (`COMPOSIO_API_KEY=ak_…`) + reader/actor MCP URLs into `client.env` (Step 11a). The Gmail trust split (reader read-only, actor draft-only) is enforced at that project's MCP allowlists. |
 | **Telegram bot PER CLIENT** | One dedicated bot from **@BotFather** per box. Telegram allows exactly one `getUpdates` consumer — a second poller = permanent conflict. |
 | **Slack app PER CLIENT** | One Slack app per workspace (Step 11a). Produces `xoxb-` bot token, `xapp-` app token, `T…` workspace id, `U…` user id. |
 
@@ -1034,6 +1039,37 @@ tmux new-session -d -s gw "export HERMES_HOME=$A HERMES_ALLOW_ROOT_GATEWAY=1 \
 echo GW_UP'
 ```
 
+### Step 7b — Install the SafeClaw dashboard plugins (Connections + Settings)  **[BOX]**
+
+The dashboard tabs the operator and customer actually use are shipped as
+plugins in the repo (`dashboard-plugins/`). Build each bundle (their `dist/` is
+gitignored — `build.sh` regenerates it) and symlink it into `~/.hermes/plugins`,
+then recycle the dashboard so the tabs appear.
+
+```bash
+orgo_bash 'set -e; export PATH=/tmp/node-v20.18.1-linux-x64/bin:$PATH
+mkdir -p /root/.hermes/plugins
+for p in safeclaw-memory safeclaw-personas safeclaw-connections safeclaw-settings; do
+  src=/opt/safeclaw/dashboard-plugins/$p
+  [ -x "$src/build.sh" ] && bash "$src/build.sh"        # src → dist/index.js
+  ln -sfn "$src" /root/.hermes/plugins/$p
+done
+# recycle the dashboard (tmux hd) so the new tabs register
+tmux kill-session -t hd 2>/dev/null; sleep 2
+tmux new-session -d -s hd /opt/launch-hermes-dash.sh
+echo PLUGINS_LINKED'
+```
+
+The dashboard now serves, after Personas, a **Connections** tab (the customer
+clicks each connector — server-side OAuth, no Composio console) and a
+**Settings** tab (the operator's one-screen setup state + the client handoff
+URL). Both honor the Reader/Actor trust split: a connection can only ever get
+its boundary's scope (Reader=read-only, Actor=draft), never a send tool.
+
+> **Verify:** load `https://hermes-<CLIENT>.growthsystems.ai` → tabs **Memory ·
+> Personas · Connections · Settings** are present. Settings → checklist reflects
+> live state (brain alive, Composio project key set after Step 11a).
+
 > **Host-header gotcha:** the dashboard rejects foreign `Host` headers with
 > **400 "Invalid Host header"**. The Cloudflare ingress for the hermes hostname
 > **MUST** set `originRequest.httpHostHeader: localhost` (Step 8). `--host
@@ -1317,13 +1353,53 @@ see one, `TELEGRAM_ALLOWED_USERS` has the wrong numeric id.
 
 ---
 
-## Step 11 — Composio Gmail trust split  **[BOX]**
+## Step 11 — Composio project-per-client + Gmail trust split  **[MAC] then [BOX]**
 
 Two Composio MCP servers per Gmail account:
 - **reader** (read-only): `GMAIL_FETCH_EMAILS`, `GMAIL_LIST_THREADS`,
   `GMAIL_GET_PROFILE`, `GMAIL_FETCH_MESSAGE_BY_THREAD_ID`, `GMAIL_GET_ATTACHMENT`.
 - **actor** (draft, **NO SEND**): `GMAIL_CREATE_EMAIL_DRAFT`,
   `GMAIL_REPLY_TO_THREAD` + fetch.
+
+### 11a. Unified path (recommended) — operator-side project provisioning  **[MAC]**
+
+> **🔑 The org key never touches the box.** You hold one agency **Composio Org
+> key** (it can create/modify projects across *every* client). Run the
+> provisioner **on your Mac / the admin agent**. It creates an isolated Composio
+> **project** for this client, builds the reader/actor MCP servers, and emits an
+> env fragment containing only the per-client **project key** + MCP URLs — the
+> things that are safe to put on the box. The org key is used solely to create
+> the project and is never written or echoed. (See `scripts/provision-composio.py`.)
+
+```bash
+# [MAC] — org key stays local; only the printed fragment goes to the box.
+COMPOSIO_ORG_API_KEY=ak_org_… \
+  python3 scripts/provision-composio.py --client <CLIENT> --platforms gmail
+# → prints:
+#   COMPOSIO_API_KEY=ak_<project-scoped>
+#   COMPOSIO_USER_ID=client:<CLIENT>
+#   COMPOSIO_READER_MCP_URL=https://…
+#   COMPOSIO_ACTOR_MCP_URL=https://…
+#   # project_id=proj_… (Composio console reference)
+```
+
+Paste those four lines into the box's `client.env` (Step 6 Console env), then
+restart the actor gateway. The **customer never sees Composio** — they connect
+their own Google account later by clicking the connector on the **Connections**
+tab (Step 7b), and the dashboard's `safeclaw-connections` plugin mints the OAuth
+link server-side using this project key. The Composio **org** key, by design,
+is on neither the box nor the customer's screen.
+
+> What 11a does NOT do yet: it provisions the project + auth config + reader/
+> actor MCP servers. Binding a *specific connected account* to each server still
+> happens when the customer OAuths (Connections tab) — the MCP URL template
+> carries `user_id`; `connected_account_id` is appended per connection.
+
+### 11b. Manual / Console path (fallback or extra Gmail accounts)  **[BOX]**
+
+If you are not using 11a (or are adding a second mailbox to an existing
+project), use the Console Gmail panel or the manual wiring below — both operate
+against whatever project key is already in `client.env`.
 
 **Primary path — the Console Gmail panel.** Use `POST /api/gmail/wire` (the Gmail
 panel button): it provisions BOTH Composio MCP servers, maps each connected Gmail
@@ -1669,10 +1745,38 @@ orgo_bash 'HERMES_HOME=/root/.hermes hermes chat -q "what do you know about <CLI
 orgo_bash 'tail -5 /opt/brain/dream.log'   # 11 phases completed, no embed error
 ```
 
+### Step 13b — Hand off to the customer (the click-click-click finish)  **[MAC]**
+
+This is the last operator action and the whole point of the productized flow:
+the customer connects their own accounts without ever seeing Composio, a token,
+or an `.env`.
+
+1. Open the **Settings** tab (`…/settings`) → **Client handoff link**. It shows a
+   one-click URL deep-linked to the Connections page:
+   `https://<user>:<password>@hermes-<CLIENT>.growthsystems.ai/connections`
+   (Settings builds this only when a plaintext access password is on the box —
+   otherwise use the URL you recorded when you set the Caddy basic-auth at Step 6;
+   the box stores only a bcrypt hash, never the plaintext.)
+2. Send that link to the customer over a **private channel** (it embeds the
+   access credential — see the memory note on credential-embedded URLs).
+3. The customer opens it, lands on **Connections**, and clicks **Connect** on
+   each connector they want (Gmail, etc.). Each click mints a fresh Composio
+   OAuth link **server-side** (project key never leaves the box), they approve at
+   Google, and the account is bound — Reader gets read-only scope, Actor gets
+   draft-only. No send tool is ever grantable from that page.
+4. Back in **Settings → Setup checklist**, the "accounts connected" row flips
+   green as they finish. That is "done."
+
+> **Trust split holds end-to-end:** the customer-facing page can only create
+> connections within the boundary's scope. Sending still requires the actor's
+> human-approval gate — clicking a connector never grants send/exfiltration.
+
 **The deliverable, panel by panel:**
 
 | Surface | What the operator must see |
 |---------|----------------------------|
+| `…/connections` (customer) | One card per connector; **Connect with OAuth** opens Google consent, polls, and binds the account. Reader=read-only, Actor=draft — no send. |
+| `…/settings` (operator) | Setup checklist all green; Composio project key set; brain alive; **handoff link** ready to copy. |
 | `https://safeclaw-<CLIENT>.growthsystems.ai` | Console loads (200 with auth); the **Console Quick Chat** gives a brain-backed reply (this is the *reliable* in-browser chat — `POST /api/chat` → `hermes chat -q`); sidebar **Hermes Dashboard link points at THIS client** (`hermes-<CLIENT>…`, not a hard-coded box). |
 | `https://hermes-<CLIENT>.growthsystems.ai` | Dashboard loads (200) and the **Chat tab is present** (`--tui`). **Note:** the dashboard's *terminal* chat (`/api/pty`) 401s through the tunnel **until the CF zone WebSocket pre-flight is done (Step 8d: WebSockets ON, Bot Fight Mode OFF)** — verify with the Step 8d curl (expect 101). The **Console Quick Chat** works regardless (no WebSocket). |
 | **Telegram** | DM the bot from the allowed user → brain-backed reply; **0 conflicts** in `actor/logs/gateway.log`. |

@@ -94,6 +94,11 @@
 - [ ] tmux `gw`: actor `hermes gateway run` (hosts Telegram + Slack Socket Mode + cron)
 - [ ] Verify: `curl -H "Host: localhost" :9119/` → 200
 
+### Step 7b — SafeClaw dashboard plugins (Connections + Settings tabs)  **[B]**
+- [ ] For each of `safeclaw-memory` `safeclaw-personas` `safeclaw-connections` `safeclaw-settings`: run its `build.sh` (src→`dist/index.js`; dist is gitignored) + `ln -sfn /opt/safeclaw/dashboard-plugins/<p> ~/.hermes/plugins/<p>`
+- [ ] Recycle tmux `hd`; Verify: dashboard shows tabs **Memory · Personas · Connections · Settings**
+- [ ] **Settings** tab → Setup checklist renders live (brain alive; Composio project key set after 11a); **Connections** tab → "Connect with OAuth" per provider (server-side link mint)
+
 ### Step 8 — Cloudflare named tunnel (TWO hostnames, ONE tunnel)  **[M]→[B]**
 - [ ] `[M]` `cloudflared tunnel create safeclaw-<CLIENT>` → capture **UUID** `<TUNNEL_ID>`
 - [ ] `[M]` route DNS for both hostnames **BY UUID, never by name** (name can route to the WRONG tunnel — issue 18); no new API token
@@ -118,8 +123,10 @@
 - [ ] actor `gw` recycled; no getUpdates probes
 - [ ] Verify: gateway.log shows connected/polling, **0 conflicts**, `gbrain 88 tools` loaded (gbrain 0.42), secret-redaction on; allowed user's DM accepted (NOT `unauthorized`) → brain reply
 
-### Step 11 — Composio Gmail trust split  **[B]**
-- [ ] **RE-LIST IDs LIVE before wiring (issue 24):** `GET /api/v3/connected_accounts` (gmail account + its `user_id`) and `GET /api/v3/mcp/servers` (reader/actor server URLs) — `user_id`/`connected_account_id` go stale; do NOT trust docs/memory
+### Step 11 — Composio project-per-client + Gmail trust split  **[M]→[B]**
+- [ ] **11a (recommended) [M]:** `COMPOSIO_ORG_API_KEY=ak_org_… python3 scripts/provision-composio.py --client <CLIENT> --platforms gmail` → creates this client's **isolated Composio project** + reader/actor MCP servers; **org key stays on the Mac**, never the box
+- [ ] **11a:** paste ONLY the printed fragment (`COMPOSIO_API_KEY`=project key, `COMPOSIO_USER_ID`, `COMPOSIO_READER_MCP_URL`, `COMPOSIO_ACTOR_MCP_URL`) into `client.env`; recycle `gw`
+- [ ] **11b (fallback/extra mailbox) [B]:** **RE-LIST IDs LIVE before wiring (issue 24):** `GET /api/v3/connected_accounts` (gmail account + its `user_id`) and `GET /api/v3/mcp/servers` (reader/actor server URLs) — `user_id`/`connected_account_id` go stale; do NOT trust docs/memory
 - [ ] Two Composio MCP servers created (`<READER_MCP_BASE_URL>` read-only, `<ACTOR_MCP_BASE_URL>` draft **NO SEND**) — Console `/api/gmail/wire` is the primary path
 - [ ] reader MCP (read-only) + actor MCP (draft, **NO SEND**) written into each profile `config.yaml`
 - [ ] URL has BOTH `user_id` (the `pg-test-…` string) + `connected_account_id`; `x-api-key` header in config (not via `mcp add --url`)
@@ -147,6 +154,11 @@
 - [ ] Gmail round-trip ✓ (drafts only, never sends)
 - [ ] Slack round-trip ✓ (actor posts, reader read-only, 1 Socket Mode)
 - [ ] `dream.log` → 11 phases (incl. `patterns`), no embed error; `hermes cron list` shows `gbrain-dream`
+
+### Step 13b — Customer handoff (click-click-click)  **[M]**
+- [ ] **Settings** tab → **Client handoff link**: copy the one-click `https://user:pass@hermes-<CLIENT>…/connections` (Settings builds it when a plaintext access pw is on the box; else use the URL recorded at Step 6) — share over a **private** channel only (it embeds the credential)
+- [ ] Customer opens it → **Connections** page → clicks **Connect** per connector → OAuths their own Google account (project key never leaves the box; Reader=read-only, Actor=draft, no send)
+- [ ] Settings → Setup checklist "accounts connected" row goes green = **done**
 
 ### Step 14 — Golden snapshot / clone next client  **[M]**
 - [ ] **Decommission any replaced box FIRST:** old box's own key → `tmux kill-server` via /bash → `DELETE /computers/{id}` → verify 404 → revoke its orgo key + delete its CF tunnel (else it steals the Telegram bot + tunnel from the new box)

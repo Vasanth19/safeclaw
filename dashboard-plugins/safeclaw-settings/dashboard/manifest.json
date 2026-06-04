@@ -1,0 +1,13 @@
+{
+  "name": "safeclaw-settings",
+  "label": "Settings",
+  "description": "One place for the operator's setup state — Composio project + trust-split MCP readiness, GBrain health, connected-account count, and the client handoff URL (the one-click link you share so the customer just opens the Connections page and clicks each connector). Read-only and status-only: it never displays secret values, only whether each piece is configured.",
+  "icon": "Settings",
+  "version": "0.1.0",
+  "tab": {
+    "path": "/settings",
+    "position": "after:connections"
+  },
+  "entry": "dist/index.js",
+  "api": "plugin_api.py"
+}

@@ -95,7 +95,7 @@
 - [ ] Verify: `curl -H "Host: localhost" :9119/` → 200
 
 ### Step 7b — SafeClaw dashboard plugins (Connections + Settings tabs)  **[B]**
-- [ ] For each of `safeclaw-memory` `safeclaw-personas` `safeclaw-connections` `safeclaw-settings`: run its `build.sh` (src→`dist/index.js`; dist is gitignored) + `ln -sfn /opt/safeclaw/dashboard-plugins/<p> ~/.hermes/plugins/<p>`
+- [ ] For each of `safeclaw-memory` `safeclaw-personas` (ONLY these — the connect page is in the Console, not a Hermes plugin): `ln -sfn /opt/safeclaw/dashboard-plugins/<p> ~/.hermes/plugins/<p>`
 - [ ] Recycle tmux `hd`; Verify: dashboard shows tabs **Memory · Personas · Connections · Settings**
 - [ ] **Settings** tab → Setup checklist renders live (brain alive; Composio project key set after 11a); **Connections** tab → "Connect with OAuth" per provider (server-side link mint)
 
@@ -156,7 +156,7 @@
 - [ ] `dream.log` → 11 phases (incl. `patterns`), no embed error; `hermes cron list` shows `gbrain-dream`
 
 ### Step 13b — Customer handoff (click-click-click)  **[M]**
-- [ ] **Settings** tab → **Client handoff link**: copy the one-click `https://user:pass@hermes-<CLIENT>…/connections` (Settings builds it when a plaintext access pw is on the box; else use the URL recorded at Step 6) — share over a **private** channel only (it embeds the credential)
+- [ ] **Handoff URL = the Console connect page:** `https://user:pass@safeclaw-<CLIENT>…/connect-accounts` — share over a **private** channel only (it embeds the credential)
 - [ ] Customer opens it → **Connections** page → clicks **Connect** per connector → OAuths their own Google account (project key never leaves the box; Reader=read-only, Actor=draft, no send)
 - [ ] Settings → Setup checklist "accounts connected" row goes green = **done**
 

@@ -27,7 +27,7 @@ snapshot. Suffolk stays on its VPS — this track is for NEW clients.
 
 ```
 Hermes (native): gateway (Telegram poll + Slack socket) + web dashboard :9119 (loopback)
-  plugins:  safeclaw-memory · safeclaw-personas · safeclaw-connections · safeclaw-settings
+  plugins:  safeclaw-memory · safeclaw-personas   (connect page is in the Console, NOT a plugin)
   agents:   reader (read-only) · actor (draft-only)        ← trust split via personas
   skills:   slack-to-gdrive · …                            ← skills/ library
 docker compose (orgo/docker-compose.brain.yml):
@@ -158,6 +158,9 @@ bash scripts/smoke-brain.sh                 # brain /health + gbrain stats
   operator-side with the **org key** (never on the box), creates the client's
   isolated project + reader/actor MCP servers, and emits the `client.env`
   fragment (project key + MCP URLs only). See ORGO-CLIENT-TEMPLATE.md Step 11a.
-- `safeclaw-settings` plugin = the **Settings** tab: one-screen setup status +
+- Customer connect page lives in the **SafeClaw Console** at `/connect-accounts`
+  (`safeclaw-ui/templates/connect.html` + `/connect?service=X` mint route +
+  per-client `composio-services.json`). NOT a Hermes plugin. (Superseded note:)
+- ~~`safeclaw-settings` plugin = the **Settings** tab~~: one-screen setup status +
   the credential-embedded client handoff URL (deep-linked to `/connections`).
   Build + symlink it alongside the other plugins (Step 7b).

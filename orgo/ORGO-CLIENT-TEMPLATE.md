@@ -73,12 +73,13 @@
 **What the client gets:**
 - A stable Console URL `https://safeclaw-<CLIENT>.growthsystems.ai` (basic-auth):
   Chat working, plus links to the Hermes dashboard.
-- A Hermes dashboard URL `https://hermes-<CLIENT>.growthsystems.ai` (dashboard +
-  Chat tab + **Connections** and **Settings** tabs — Step 7b).
-- A **self-serve connect page**: the operator shares one credential-embedded URL
-  (`https://user:pass@hermes-<CLIENT>…/connections`); the customer clicks each
-  connector and OAuths their own accounts — no Composio console, no tokens, no
-  `.env`. Each client runs in its **own isolated Composio project** (Step 11a).
+- A Hermes dashboard URL `https://hermes-<CLIENT>.growthsystems.ai` (operator/
+  technical view: Chat, Sessions, Models, Logs, MCP… + Memory/Personas plugins).
+- A **self-serve connect page in the Console**: the operator shares one
+  credential-embedded URL
+  (`https://user:pass@safeclaw-<CLIENT>…/connect-accounts`); the customer clicks
+  each connector and OAuths their own accounts — no Composio console, no tokens,
+  no `.env`. Each card mints a fresh Composio OAuth link server-side (Step 6).
 - A dedicated Telegram bot (their own, from @BotFather) for interactive chat.
 - **Slack** wired with a **trust split** ported from the VPS (the better setup):
   a custom stdio MCP whose tools differ by mode — reader can list/read channels,
@@ -1049,26 +1050,27 @@ then recycle the dashboard so the tabs appear.
 ```bash
 orgo_bash 'set -e; export PATH=/tmp/node-v20.18.1-linux-x64/bin:$PATH
 mkdir -p /root/.hermes/plugins
-for p in safeclaw-memory safeclaw-personas safeclaw-connections safeclaw-settings; do
+for p in safeclaw-memory safeclaw-personas; do
   src=/opt/safeclaw/dashboard-plugins/$p
   [ -x "$src/build.sh" ] && bash "$src/build.sh"        # src → dist/index.js
   ln -sfn "$src" /root/.hermes/plugins/$p
 done
+# NOTE: the customer "connect your accounts" experience is NOT a Hermes plugin —
+# it lives in the SafeClaw Console at /connect-accounts (Step 6). Do NOT install
+# safeclaw-connections / safeclaw-settings as dashboard plugins.
 # recycle the dashboard (tmux hd) so the new tabs register
 tmux kill-session -t hd 2>/dev/null; sleep 2
 tmux new-session -d -s hd /opt/launch-hermes-dash.sh
 echo PLUGINS_LINKED'
 ```
 
-The dashboard now serves, after Personas, a **Connections** tab (the customer
-clicks each connector — server-side OAuth, no Composio console) and a
-**Settings** tab (the operator's one-screen setup state + the client handoff
-URL). Both honor the Reader/Actor trust split: a connection can only ever get
-its boundary's scope (Reader=read-only, Actor=draft), never a send tool.
+The dashboard now serves the **Memory** (3D brain) and **Personas** tabs. The
+customer-facing **connect-your-accounts** experience is NOT here — it lives in
+the **SafeClaw Console** at `/connect-accounts` (Step 6), so the customer never
+sees the technical dashboard.
 
 > **Verify:** load `https://hermes-<CLIENT>.growthsystems.ai` → tabs **Memory ·
-> Personas · Connections · Settings** are present. Settings → checklist reflects
-> live state (brain alive, Composio project key set after Step 11a).
+> Personas** are present.
 
 > **Host-header gotcha:** the dashboard rejects foreign `Host` headers with
 > **400 "Invalid Host header"**. The Cloudflare ingress for the hermes hostname
@@ -1751,12 +1753,12 @@ This is the last operator action and the whole point of the productized flow:
 the customer connects their own accounts without ever seeing Composio, a token,
 or an `.env`.
 
-1. Open the **Settings** tab (`…/settings`) → **Client handoff link**. It shows a
-   one-click URL deep-linked to the Connections page:
-   `https://<user>:<password>@hermes-<CLIENT>.growthsystems.ai/connections`
-   (Settings builds this only when a plaintext access password is on the box —
-   otherwise use the URL you recorded when you set the Caddy basic-auth at Step 6;
-   the box stores only a bcrypt hash, never the plaintext.)
+1. The handoff URL is the **Console connect page** (credential-embedded, one-click):
+   `https://<user>:<password>@safeclaw-<CLIENT>.growthsystems.ai/connect-accounts`
+   It serves `safeclaw-ui/templates/connect.html` (the per-client card page) and
+   each card's `/connect?service=X` route mints a fresh Composio OAuth link
+   server-side from `composio-services.json` + `COMPOSIO_API_KEY` (Step 6). The
+   API key never reaches the browser.
 2. Send that link to the customer over a **private channel** (it embeds the
    access credential — see the memory note on credential-embedded URLs).
 3. The customer opens it, lands on **Connections**, and clicks **Connect** on

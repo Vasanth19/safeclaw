@@ -1,0 +1,7 @@
+{
+  "gmail":        {"label":"Gmail",          "auth_config_id":"ac_REPLACE","user_id":"client:<slug>:gmail","alias":"<slug>-gmail"},
+  "calendar":     {"label":"Google Calendar","auth_config_id":"ac_REPLACE","user_id":"client:<slug>:calendar","alias":"<slug>-calendar"},
+  "googledocs":   {"label":"Google Docs",    "auth_config_id":"ac_REPLACE","user_id":"client:<slug>:googledocs","alias":"<slug>-googledocs"},
+  "googlesheets": {"label":"Google Sheets",  "auth_config_id":"ac_REPLACE","user_id":"client:<slug>:googlesheets","alias":"<slug>-googlesheets"},
+  "googletasks":  {"label":"Google Tasks",   "auth_config_id":"ac_REPLACE","user_id":"client:<slug>:googletasks","alias":"<slug>-googletasks"}
+}

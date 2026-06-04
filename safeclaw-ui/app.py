@@ -25,7 +25,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, redirect, render_template, request, Response
 
 # Reuse the existing onboarding credential validators (hit real upstream APIs).
 _REPO = Path(__file__).resolve().parents[1]
@@ -317,6 +317,50 @@ def _composio(method, path, key, body=None):
         return json.load(urllib.request.urlopen(r, timeout=25))
     except Exception as exc:
         return {"_error": str(exc)}
+
+
+# ── One-click Composio OAuth connect (the customer "connect your accounts" page) ──
+# Serves the per-client connect-cards page (templates/connect.html) and mints a
+# fresh Composio OAuth link per click — the on-box port of the old Netlify
+# connect.js. The per-service auth_config_id / user_id / alias map lives in a
+# per-client JSON (COMPOSIO_SERVICES_FILE, default /opt/safeclaw/composio-services.json)
+# so the same template serves every client; only the JSON + COMPOSIO_API_KEY differ.
+# The API key stays server-side — the browser only ever gets the redirect_url.
+def _composio_services() -> dict:
+    path = os.environ.get("COMPOSIO_SERVICES_FILE", "/opt/safeclaw/composio-services.json")
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+@app.get("/connect-accounts")
+def connect_accounts():
+    return render_template("connect.html")
+
+
+@app.get("/connect")
+def composio_connect():
+    service = (request.args.get("service") or "").strip()
+    svc = _composio_services().get(service)
+    if not svc:
+        return Response("Unknown service. Go back and choose one of the listed Connect buttons.",
+                        400, {"Content-Type": "text/plain; charset=utf-8"})
+    key = os.environ.get("COMPOSIO_API_KEY", "").strip()
+    if not key:
+        return Response("Setup is missing a server-side Composio key. Please contact your admin.",
+                        500, {"Content-Type": "text/plain; charset=utf-8"})
+    d = _composio("POST", "/connected_accounts/link", key, {
+        "auth_config_id": svc["auth_config_id"],
+        "user_id": svc["user_id"],
+        "alias": svc.get("alias", service),
+    })
+    url = d.get("redirect_url") if isinstance(d, dict) else None
+    if not url:
+        return Response(f"Could not create a {svc.get('label', service)} connection link. "
+                        f"Please contact your admin.", 502, {"Content-Type": "text/plain; charset=utf-8"})
+    return redirect(url, code=302)
 
 
 @app.get("/api/gmail/accounts")

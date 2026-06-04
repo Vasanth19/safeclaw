@@ -154,7 +154,12 @@
   <script>
     // Reflect existing Composio connections: badge connected services as
     // "Connected", expired ones as "Reconnect", leave the rest "Ready".
-    fetch('/api/composio/status').then(function (r) { return r.json(); }).then(function (status) {
+    // Build a credentials-free absolute URL: when the page is opened via a
+    // credential-embedded URL (user:pass@host), a relative fetch inherits those
+    // credentials and fetch() throws ("URL cannot include credentials"). Using
+    // location.host strips the userinfo; the browser still sends cached basic-auth.
+    var statusUrl = window.location.protocol + '//' + window.location.host + '/api/composio/status';
+    fetch(statusUrl).then(function (r) { return r.json(); }).then(function (status) {
       document.querySelectorAll('.connect-card').forEach(function (card) {
         var a = card.querySelector('a.btn[href*="service="]');
         if (!a) return;

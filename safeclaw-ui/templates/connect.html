@@ -151,5 +151,25 @@
       <strong>Privacy note:</strong> this page does not ask for passwords. Each button creates a fresh official OAuth consent link for that app through Composio when clicked. The page does not store Composio link tokens in the HTML.
     </div>
   </main>
+  <script>
+    // Reflect existing Composio connections: badge connected services as
+    // "Connected", expired ones as "Reconnect", leave the rest "Ready".
+    fetch('/api/composio/status').then(function (r) { return r.json(); }).then(function (status) {
+      document.querySelectorAll('.connect-card').forEach(function (card) {
+        var a = card.querySelector('a.btn[href*="service="]');
+        if (!a) return;
+        var m = a.getAttribute('href').match(/service=([a-z]+)/);
+        if (!m) return;
+        var s = status[m[1]];
+        var badge = card.querySelector('.badge');
+        if (s === 'ACTIVE') {
+          if (badge) { badge.textContent = '✓ Connected'; badge.classList.remove('pending'); badge.style.color = '#70f0b8'; badge.style.borderColor = 'rgba(112,240,184,.4)'; }
+          a.textContent = a.textContent.replace(/^Connect\b/, 'Reconnect');
+        } else if (s === 'EXPIRED') {
+          if (badge) { badge.textContent = 'Reconnect'; badge.classList.add('pending'); }
+        }
+      });
+    }).catch(function () { /* leave default "Ready" badges on any error */ });
+  </script>
 </body>
 </html>

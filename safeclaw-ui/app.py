@@ -363,6 +363,26 @@ def composio_connect():
     return redirect(url, code=302)
 
 
+@app.get("/api/composio/status")
+def composio_status():
+    """Per-service connection status for the connect page, keyed by service.
+    Returns e.g. {"gmail":"ACTIVE","calendar":"EXPIRED","googledocs":"ACTIVE"}.
+    The page uses this to badge already-connected services instead of "Ready"."""
+    key = os.environ.get("COMPOSIO_API_KEY", "").strip()
+    services = _composio_services()
+    if not key or not services:
+        return jsonify({})
+    d = _composio("GET", "/connected_accounts?limit=100", key)
+    by_uid = {}
+    if isinstance(d, dict):
+        for a in (d.get("items") or []):
+            uid = a.get("user_id")
+            if uid:
+                by_uid[uid] = a.get("status")
+    return jsonify({svc: by_uid.get((cfg or {}).get("user_id"))
+                    for svc, cfg in services.items()})
+
+
 @app.get("/api/gmail/accounts")
 def api_gmail_accounts():
     """List Gmail accounts connected to a Composio API key. Key alone is enough —

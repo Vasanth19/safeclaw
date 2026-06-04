@@ -21,8 +21,12 @@
 
   var BASE = "/api/plugins/safeclaw-settings";
 
+  // Dashboard /api/ routes require the X-Hermes-Session-Token header; the SDK's
+  // authedFetch injects it (a plain fetch() 401s).
+  var authedFetch = SDK.authedFetch || window.fetch.bind(window);
+
   function getJSON(path) {
-    return fetch(BASE + path).then(function (r) {
+    return authedFetch(BASE + path).then(function (r) {
       return r.json().then(function (b) {
         if (!r.ok) throw new Error((b && b.detail) || ("HTTP " + r.status));
         return b;

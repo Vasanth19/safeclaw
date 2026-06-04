@@ -21,8 +21,13 @@
 
   var BASE = "/api/plugins/safeclaw-connections";
 
+  // Dashboard /api/ routes require the X-Hermes-Session-Token header. The SDK's
+  // authedFetch injects it; a plain fetch() 401s. Fall back to fetch only if an
+  // older SDK lacks it.
+  var authedFetch = SDK.authedFetch || window.fetch.bind(window);
+
   function getJSON(path) {
-    return fetch(BASE + path).then(function (r) {
+    return authedFetch(BASE + path).then(function (r) {
       return r.json().then(function (b) {
         if (!r.ok) throw new Error((b && b.detail) || ("HTTP " + r.status));
         return b;
@@ -71,7 +76,7 @@
         label: form.label, display_name: form.name || form.label,
       };
       if (form.account) body.composio_account_id = form.account;
-      fetch(BASE + "/connections", {
+      authedFetch(BASE + "/connections", {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       }).then(function (r) {
@@ -86,7 +91,7 @@
     }
 
     function remove(id) {
-      fetch(BASE + "/connections/" + id, { method: "DELETE" })
+      authedFetch(BASE + "/connections/" + id, { method: "DELETE" })
         .then(function () { reload(); });
     }
 
@@ -101,7 +106,7 @@
         id: id, provider: form.provider, agent: form.agent, label: form.label,
         display_name: form.name || form.label, composio_account_id: accountId,
       };
-      fetch(BASE + "/connections", {
+      authedFetch(BASE + "/connections", {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       }).then(function (r) {
@@ -136,7 +141,7 @@
     function startOAuth() {
       if (!form.provider || !form.agent || !form.label) return;
       setOauth({ phase: "linking", msg: "Creating a secure connection link…" });
-      fetch(BASE + "/connect-link", {
+      authedFetch(BASE + "/connect-link", {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ provider: form.provider, agent: form.agent, label: form.label }),
       }).then(function (r) {

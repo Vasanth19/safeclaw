@@ -376,9 +376,14 @@ def composio_status():
     by_uid = {}
     if isinstance(d, dict):
         for a in (d.get("items") or []):
-            uid = a.get("user_id")
-            if uid:
-                by_uid[uid] = a.get("status")
+            uid, s = a.get("user_id"), a.get("status")
+            if not uid:
+                continue
+            # A user_id can have several accounts (e.g. a fresh pending one from a
+            # re-click). ACTIVE wins — never let a later non-active overwrite it.
+            if by_uid.get(uid) == "ACTIVE":
+                continue
+            by_uid[uid] = s
     return jsonify({svc: by_uid.get((cfg or {}).get("user_id"))
                     for svc, cfg in services.items()})
 

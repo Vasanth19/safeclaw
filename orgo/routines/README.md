@@ -10,7 +10,8 @@ See ORGO-CLIENT-TEMPLATE.md Step 5 for the registration pattern and the
 |--------|----------|-----------------|--------------|
 | `email-ingest.sh` | `15 * * * *` (hourly at :15) | reader (read-only Gmail) | Lists recent inbox mail from whatever Gmail tool is present (snippets only), LLM-filters to emails worth remembering, stores summary pages in gbrain under `emails/<date>-<subject>` with dedup. Generic across boxes; window + turn cap are args (`email-ingest.sh <WINDOW> <MAXTURNS>`, default `2h 60`). |
 | `ingest-retry.sh` | manual (backfills) | reader | Retry wrapper around `email-ingest.sh` that re-runs until a clean `INGEST RESULT` lands, to ride out transient MCP cold-starts. `ingest-retry.sh <WINDOW> <MAXTURNS> <ATTEMPTS>`. |
-| `calendar-collect.py` | manual / TBD | n/a (direct Composio) | Deterministic Google Calendar collector via Composio tool-execute; writes gbrain daily files at `daily/calendar/{YYYY}/{date}.md`, then `gbrain import` + `embed`. See `../FLEET-HARDENING-2026-06-13.md` §4. |
+| `calendar-collect.py` | called by `calendar-sync.sh` | n/a (direct Composio) | Deterministic Google Calendar collector via Composio tool-execute; writes gbrain daily files at `daily/calendar/{YYYY}/{date}.md`. Arg is days-back (default 365). Reads `COMPOSIO_API_KEY` from any of `/opt/brain/.env`, `/root/.hermes/.env`, `/opt/safeclaw/client.env` (varies by box). See `../FLEET-HARDENING-2026-06-13.md` §4. |
+| `calendar-sync.sh` | `30 5 * * *` (daily 05:30) | n/a (direct Composio) | Recurring wrapper: runs `calendar-collect.py <days>` (default 45) then `gbrain import` + `embed --stale`. Idempotent. Deploy `calendar-collect.py` to `/opt/brain/scripts/` and `calendar-sync.sh` to the actor `scripts/` dir; register with `hermes cron create "30 5 * * *" --name calendar-sync --script calendar-sync.sh --no-agent --deliver local`. |
 
 ## Deploying a routine to a box
 

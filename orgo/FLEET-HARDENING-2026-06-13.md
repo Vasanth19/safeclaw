@@ -125,11 +125,18 @@ Key implementation facts:
   connected_account_id are required; calendar also needs `arguments.calendarId:"primary"`.
   Paginate on `nextPageToken`.
 - Resolve the account from `GET /api/v3/connected_accounts?statuses=ACTIVE`, pick
-  `toolkit.slug=="googlecalendar"`, use its `id` + `user_id`. Composio key is read from
-  `/root/.hermes/.env`.
+  `toolkit.slug=="googlecalendar"`, use its `id` + `user_id`. The Composio key is read
+  from any of `/opt/brain/.env`, `/root/.hermes/.env`, `/opt/safeclaw/client.env`
+  (location varies by box — Matt's is in `client.env`).
 
-**Pilot result (Elise).** One run pulled a full year, 1,559 events across 335 daily
-pages, all embedded and semantically searchable.
+**Recurring sync.** `calendar-sync.sh` wraps the collector: it runs
+`calendar-collect.py <days>` (45 by default for incremental catch-up) then
+`gbrain import` + `embed --stale`, and is registered as a daily `hermes cron`
+(`30 5 * * *`, `--no-agent`). Idempotent — day files overwrite, import upserts.
+
+**Deployment status (2026-06-13).** Deployed, backfilled (365 days), and scheduled on
+all three calendar-connected boxes: Elise 335 day-pages, Matt 258 (438 events), Travis
+197 (403 events). Phil has no Composio, so no calendar.
 
 ### 4a. gbrain gotcha: `list` truncates at 50
 
@@ -144,15 +151,17 @@ loss. Use Postgres directly for any bulk operation:
 
 All four boxes: Postgres engine, supervised, gateway healthy, embeddings on.
 
-| Box | Pages | Chunks | Connectors live |
-|-----|-------|--------|-----------------|
-| Elise | 340 (5 email + 335 calendar) | 678 | gmail, calendar, docs, sheets, tasks |
-| Matt | 12 (email) | 13 | gmail, calendar, GHL |
-| Travis | 6 (email) | 8 | gmail, drive, sheets, tasks, GHL |
-| Phil | 0 | 1 | none (WhatsApp only) |
+| Box | Pages | Calendar | Connectors live |
+|-----|-------|----------|-----------------|
+| Elise | 5 email + 335 calendar | yes | gmail, calendar, docs, sheets, tasks |
+| Matt | 12 email + 258 calendar | yes | gmail, calendar, GHL |
+| Travis | 6 email + 197 calendar | yes | gmail, calendar, drive, sheets, tasks, GHL |
+| Phil | 0 | no | none (WhatsApp only) |
 
-Open items: Travis's Composio calendar connect did not complete (authorization expired
-before consent finished, needs a clean reconnect); Phil has no Composio wired yet;
-ingestion runs on demand and still needs a recurring schedule; a security tightening
-pass (scope-down, surgical approval gates, per-client credential isolation) is the next
-phase.
+Email ingestion is scheduled hourly and succeeding on Travis/Matt/Elise (Travis's cron
+was timing out at 120s until `cron.script_timeout_seconds: 1800` was added to his actor
+config and the schedule fixed to hourly). The calendar bridge is deployed, backfilled,
+and scheduled daily on all three.
+
+Open items: Phil has no Composio wired yet (no data source); a security tightening pass
+(scope-down, surgical approval gates, per-client credential isolation) is the next phase.

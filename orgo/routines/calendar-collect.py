@@ -11,9 +11,13 @@ COMPOSIO = "https://backend.composio.dev/api/v3"
 ROOT = "/opt/brain/repo/daily/calendar"
 
 def composio_key():
-    for line in open("/root/.hermes/.env"):
-        if line.startswith("COMPOSIO_API_KEY="):
-            return line.strip().split("=", 1)[1]
+    for f in ("/opt/brain/.env", "/root/.hermes/.env", "/opt/safeclaw/client.env", "/opt/ghl-mcp/.env"):
+        try:
+            for line in open(f):
+                if line.startswith("COMPOSIO_API_KEY="):
+                    return line.strip().split("=", 1)[1]
+        except FileNotFoundError:
+            continue
     raise SystemExit("no COMPOSIO_API_KEY")
 
 KEY = composio_key()

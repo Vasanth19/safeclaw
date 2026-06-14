@@ -8,7 +8,10 @@ See ORGO-CLIENT-TEMPLATE.md Step 5 for the registration pattern and the
 
 | Script | Schedule | Profile it runs | What it does |
 |--------|----------|-----------------|--------------|
-| `email-ingest.sh` | `15 * * * *` (hourly at :15) | reader (read-only Gmail) | Lists `category:primary` inbox mail from all connected inboxes (snippets only), LLM-filters to emails worth remembering, stores summary pages in gbrain under `emails/<date>-<subject>` with dedup. |
+| `email-ingest.sh` | `15 * * * *` (hourly at :15) | reader (read-only Gmail) | Lists recent inbox mail from whatever Gmail tool is present (snippets only), LLM-filters to emails worth remembering, stores summary pages in gbrain under `emails/<date>-<subject>` with dedup. Generic across boxes; window + turn cap are args (`email-ingest.sh <WINDOW> <MAXTURNS>`, default `2h 60`). |
+| `ingest-retry.sh` | manual (backfills) | reader | Retry wrapper around `email-ingest.sh` that re-runs until a clean `INGEST RESULT` lands, to ride out transient MCP cold-starts. `ingest-retry.sh <WINDOW> <MAXTURNS> <ATTEMPTS>`. |
+| `calendar-collect.py` | called by `calendar-sync.sh` | n/a (direct Composio) | Deterministic Google Calendar collector via Composio tool-execute; writes gbrain daily files at `daily/calendar/{YYYY}/{date}.md`. Arg is days-back (default 365). Reads `COMPOSIO_API_KEY` from any of `/opt/brain/.env`, `/root/.hermes/.env`, `/opt/safeclaw/client.env` (varies by box). See `../FLEET-HARDENING-2026-06-13.md` §4. |
+| `calendar-sync.sh` | `30 5 * * *` (daily 05:30) | n/a (direct Composio) | Recurring wrapper: runs `calendar-collect.py <days>` (default 45) then `gbrain import` + `embed --stale`. Idempotent. Deploy `calendar-collect.py` to `/opt/brain/scripts/` and `calendar-sync.sh` to the actor `scripts/` dir; register with `hermes cron create "30 5 * * *" --name calendar-sync --script calendar-sync.sh --no-agent --deliver local`. |
 
 ## Deploying a routine to a box
 
@@ -50,3 +53,21 @@ orgo_bash 'HERMES_HOME=/root/.hermes/profiles/actor hermes cron create "15 * * *
   error (it even suggested installing CLI mail tools). The prompt now opens with a
   tool-availability check that outputs `INGEST ERROR: gmail MCP tools unavailable`
   instead of a fake zero — grep cron output for `INGEST ERROR` when auditing.
+
+## Gotchas (learned across the fleet, 2026-06-13)
+
+- **`category:primary` returns zero on these mailboxes.** They do not have Gmail
+  category tabs enabled, so `in:inbox category:primary` matches nothing and every run
+  reported "0 listed". The query now uses `in:inbox -in:spam -in:trash newer_than:<W>`
+  and lets the content filter drop promo mail. Do NOT add `category:primary` back.
+- **The routine is generic about the Gmail server name.** Boxes name the Composio Gmail
+  server differently (`gmail`, `gmail_reader`, `gmail_elise`, ...). The prompt no longer
+  hard-references specific server names; it uses whatever Gmail tool is in the list.
+- **Keep the reader profile lean: gmail + gbrain only.** One box had the reader loading
+  five remote Composio servers (gmail + tasks + sheets + drive + chat); the cold-start
+  race made Gmail fail to register and the agent aborted on the availability check.
+  Trimming to two servers fixed it on the first try. Tasks/Sheets/Drive belong in the
+  actor profile, not the ingestion reader.
+- **`gbrain list -n N` truncates at ~50 rows** regardless of `-n`. Never count or bulk-
+  delete pages by piping it to grep; go to Postgres directly. See
+  `../FLEET-HARDENING-2026-06-13.md` §4a.

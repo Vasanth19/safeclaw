@@ -33,7 +33,13 @@
 
 ## 0. TL;DR
 
-- The orgo-native deployment is the **same product** (Hermes reader/actor trust split + GBrain brain) with a **radically simpler runtime**: no Docker, no Compose, no host-Ollama embeddings daemon, no Caddy/nginx, no Postgres+pgvector. It runs as five tmux sessions behind one Cloudflare named tunnel on an always-on orgo box.
+> **Update 2026-06-13:** the "no Postgres+pgvector" point below is now **out of date**.
+> The orgo brains were migrated off PGlite onto a supervised Postgres + pgvector
+> (non-Docker) after fleet-wide PGlite corruption crashes. Embeddings run on OpenRouter,
+> not host Ollama, and the two gateways were consolidated to one. Full changelog in
+> **`FLEET-HARDENING-2026-06-13.md`**.
+
+- The orgo-native deployment is the **same product** (Hermes reader/actor trust split + GBrain brain) with a **radically simpler runtime**: no Docker, no Compose, no Caddy/nginx. It now runs a **supervised Postgres + pgvector** (see the 2026-06-13 update above; PGlite was the original simplification and it did not survive concurrent writes), behind one Cloudflare named tunnel on an always-on orgo box.
 - The trust split moves from **two-Composio-MCP-servers + container isolation** to **two Hermes profiles** (separate `HERMES_HOME`, separate tool allowlists, separate `.env`). This is still architecturally enforced, but it is **config-level isolation, not container-level** — the single most important security delta to acknowledge.
 - The VPS build has **two strengths the orgo template currently lacks**: (1) the custom Slack MCP with a baked-in `SLACK_MCP_MODE` reader/actor **tool-allowlist split** (verified in source; **no** Socket Mode — that part is net-new work, not an existing strength), and (2) a hardened onboarding installer. **Both are being ported back into the orgo template** — orgo simplifies the runtime, it does not have to mean a weaker Slack or a worse setup UX.
 - Making orgo the MAIN deployment is mostly a **repo-hygiene and documentation** exercise: commit the five untracked dirs, promote `orgo/ORGO-CLIENT-TEMPLATE.md` to canonical, demote the Docker docs to a legacy folder (kept maintained for Suffolk/Hoover), and flip `main` to orgo-first **without re-pointing Suffolk's VPS checkout** (it tracks `feat/safeclaw-brain-gbrain` and must not break).

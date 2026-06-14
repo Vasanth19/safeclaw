@@ -41,3 +41,5 @@ done
 | Skill | Boundary | What it does |
 |-------|----------|--------------|
 | `slack-to-gdrive` | Actor | download Slack attachments → file into Google Drive by project |
+| `email-to-brain` | Reader | ingest important Gmail into the brain as deduped summary pages |
+| `calendar-to-brain` | Reader | pull Google Calendar through Composio into gbrain daily files |
